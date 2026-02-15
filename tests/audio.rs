@@ -1,4 +1,4 @@
-use q_asr::audio;
+use qasr::audio;
 
 #[test]
 fn test_load_wav() {

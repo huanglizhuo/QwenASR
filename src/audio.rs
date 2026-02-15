@@ -288,7 +288,8 @@ pub fn mel_spectrogram(samples: &[f32]) -> Option<(Vec<f32>, usize)> {
         return None;
     }
 
-    let mel_filters = build_mel_filters();
+    static MEL_FILTERS: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
+    let mel_filters = MEL_FILTERS.get_or_init(|| build_mel_filters());
 
     // Periodic Hann window
     let mut window = vec![0.0f32; WINDOW_SIZE];

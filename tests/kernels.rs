@@ -1,5 +1,5 @@
-use q_asr::kernels;
-use q_asr::kernels::generic;
+use qasr::kernels;
+use qasr::kernels::generic;
 
 fn max_abs_err(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max)

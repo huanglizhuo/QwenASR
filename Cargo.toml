@@ -3,12 +3,19 @@ name = "q-asr"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "qasr"
+crate-type = ["lib", "staticlib", "cdylib"]
+
 [dependencies]
 libc = "0.2"
 
 [features]
 default = ["blas"]
 blas = []
+vdsp = []       # macOS/iOS: use Accelerate vDSP (AMX acceleration)
+ios = []        # Enable C-FFI API, memory-conscious defaults
+android = []    # Enable JNI API, prefetch hints
 
 [profile.release]
 opt-level = 3

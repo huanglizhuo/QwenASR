@@ -19,6 +19,32 @@ extern "C" {
     );
 }
 
+// vDSP/vForce bindings (macOS Accelerate)
+#[cfg(all(feature = "vdsp", target_os = "macos"))]
+#[link(name = "Accelerate", kind = "framework")]
+extern "C" {
+    fn vDSP_dotpr(
+        a: *const f32, a_stride: i32,
+        b: *const f32, b_stride: i32,
+        result: *mut f32,
+        n: u64,
+    );
+    fn vDSP_vsmul(
+        a: *const f32, a_stride: i32,
+        scalar: *const f32,
+        c: *mut f32, c_stride: i32,
+        n: u64,
+    );
+    fn vDSP_vsma(
+        a: *const f32, a_stride: i32,
+        scalar: *const f32,
+        b: *const f32, b_stride: i32,
+        c: *mut f32, c_stride: i32,
+        n: u64,
+    );
+    fn vvexpf(dst: *mut f32, src: *const f32, n: *const i32);
+}
+
 #[cfg(all(feature = "blas", not(target_os = "macos")))]
 #[link(name = "openblas")]
 extern "C" {
@@ -40,6 +66,97 @@ const CBLAS_TRANS: i32 = 112;
 
 // Verbose flag
 pub static mut VERBOSE: i32 = 0;
+
+// ========================================================================
+// Profiling support
+// ========================================================================
+
+use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
+use std::time::Instant;
+
+static PROFILE_ENABLED: AtomicBool = AtomicBool::new(false);
+
+pub fn set_profile(enabled: bool) {
+    PROFILE_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+pub fn is_profiling() -> bool {
+    PROFILE_ENABLED.load(Ordering::Relaxed)
+}
+
+macro_rules! define_profile_counters {
+    ($($name:ident),+) => {
+        pub struct ProfileCounters {
+            $(pub $name: (AtomicU64, AtomicU64),)+ // (total_ns, call_count)
+        }
+
+        impl ProfileCounters {
+            pub const fn new() -> Self {
+                ProfileCounters {
+                    $($name: (AtomicU64::new(0), AtomicU64::new(0)),)+
+                }
+            }
+
+            pub fn reset(&self) {
+                $(
+                    self.$name.0.store(0, Ordering::Relaxed);
+                    self.$name.1.store(0, Ordering::Relaxed);
+                )+
+            }
+
+            pub fn report(&self) {
+                $(
+                    let ns = self.$name.0.load(Ordering::Relaxed);
+                    let calls = self.$name.1.load(Ordering::Relaxed);
+                    if calls > 0 {
+                        let ms = ns as f64 / 1_000_000.0;
+                        let avg = ms / calls as f64;
+                        eprintln!("[profile] {}: {:.1}ms ({} calls, {:.2}ms avg)",
+                                  stringify!($name), ms, calls, avg);
+                    }
+                )+
+            }
+        }
+    }
+}
+
+define_profile_counters!(
+    rms_norm, layer_norm, silu, gelu, swiglu,
+    bf16_matvec, bf16_to_f32_conv, attention_bidir, attention_causal,
+    linear_f32, softmax_op, conv2d_op, rope
+);
+
+pub static PROF: ProfileCounters = ProfileCounters::new();
+
+pub struct ProfileGuard {
+    start: Instant,
+    counter: &'static (AtomicU64, AtomicU64),
+}
+
+impl ProfileGuard {
+    #[inline]
+    pub fn new(counter: &'static (AtomicU64, AtomicU64)) -> Option<Self> {
+        if PROFILE_ENABLED.load(Ordering::Relaxed) {
+            Some(ProfileGuard { start: Instant::now(), counter })
+        } else {
+            None
+        }
+    }
+}
+
+impl Drop for ProfileGuard {
+    #[inline]
+    fn drop(&mut self) {
+        let ns = self.start.elapsed().as_nanos() as u64;
+        self.counter.0.fetch_add(ns, Ordering::Relaxed);
+        self.counter.1.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+// Convenience: unused ProfileTimer alias removed
+
+pub fn profile_reset() { PROF.reset(); }
+pub fn profile_report() { PROF.report(); }
 
 pub fn set_verbose(v: i32) {
     unsafe { VERBOSE = v; }
@@ -105,16 +222,28 @@ fn pool_worker(pool: Arc<ThreadPool>, tid: usize) {
     loop {
         let (fn_ptr, fn_call, n_threads);
         {
-            let mut state = pool.state.lock().unwrap();
+            let mut state = match pool.state.lock() {
+                Ok(s) => s,
+                Err(p) => p.into_inner(), // recover from poisoned mutex
+            };
             while !state.shutdown && state.generation == last_gen {
-                state = pool.work_cv.wait(state).unwrap();
+                state = match pool.work_cv.wait(state) {
+                    Ok(s) => s,
+                    Err(p) => p.into_inner(),
+                };
             }
             if state.shutdown {
                 return;
             }
             last_gen = state.generation;
-            fn_ptr = state.fn_ptr.unwrap();
-            fn_call = state.fn_call.unwrap();
+            fn_ptr = match state.fn_ptr {
+                Some(p) => p,
+                None => continue, // spurious wake or cleared — retry
+            };
+            fn_call = match state.fn_call {
+                Some(f) => f,
+                None => continue,
+            };
             n_threads = state.n_threads;
         }
 
@@ -123,7 +252,10 @@ fn pool_worker(pool: Arc<ThreadPool>, tid: usize) {
 
         // Signal done
         {
-            let mut state = pool.state.lock().unwrap();
+            let mut state = match pool.state.lock() {
+                Ok(s) => s,
+                Err(p) => p.into_inner(),
+            };
             state.n_done += 1;
             pool.done_cv.notify_one();
         }
@@ -157,7 +289,10 @@ pub fn set_threads(n: usize) {
     if n > 1 {
         let pool = get_pool();
         ensure_workers(pool, n);
-        pool.state.lock().unwrap().n_threads = n;
+        match pool.state.lock() {
+            Ok(mut s) => s.n_threads = n,
+            Err(p) => p.into_inner().n_threads = n,
+        }
     }
     if verbose() >= 2 {
         eprintln!("Thread pool: {} threads", n);
@@ -192,7 +327,10 @@ fn parallel_for<F: Fn(usize, usize) + Send + Sync>(f: F) {
     }
 
     {
-        let mut state = pool.state.lock().unwrap();
+        let mut state = match pool.state.lock() {
+            Ok(s) => s,
+            Err(p) => p.into_inner(),
+        };
         state.fn_ptr = Some(&f as *const F as *const ());
         state.fn_call = Some(trampoline::<F>);
         state.n_done = 0;
@@ -205,9 +343,15 @@ fn parallel_for<F: Fn(usize, usize) + Send + Sync>(f: F) {
 
     // Wait for workers
     {
-        let mut state = pool.state.lock().unwrap();
+        let mut state = match pool.state.lock() {
+            Ok(s) => s,
+            Err(p) => p.into_inner(),
+        };
         while state.n_done < n_threads - 1 {
-            state = pool.done_cv.wait(state).unwrap();
+            state = match pool.done_cv.wait(state) {
+                Ok(s) => s,
+                Err(p) => p.into_inner(),
+            };
         }
         state.fn_ptr = None;
         state.fn_call = None;
@@ -224,6 +368,13 @@ pub fn bf16_to_f32(bf16: u16) -> f32 {
 }
 
 pub fn bf16_to_f32_buf(dst: &mut [f32], src: &[u16]) {
+    #[cfg(target_arch = "aarch64")]
+    { unsafe { neon::bf16_to_f32_buf(dst, src); } return; }
+
+    #[cfg(target_arch = "x86_64")]
+    { unsafe { avx::bf16_to_f32_buf(dst, src); } return; }
+
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     for i in 0..src.len() {
         dst[i] = bf16_to_f32(src[i]);
     }
@@ -253,6 +404,13 @@ fn argmax_bf16_range(x: &[f32], w_bf16: *const u16, in_dim: usize, start: usize,
 
 #[inline]
 pub fn dot_f32(a: &[f32], b: &[f32], n: usize) -> f32 {
+    #[cfg(all(feature = "vdsp", target_os = "macos"))]
+    {
+        let mut result = 0.0f32;
+        unsafe { vDSP_dotpr(a.as_ptr(), 1, b.as_ptr(), 1, &mut result, n as u64); }
+        return result;
+    }
+
     #[cfg(target_arch = "aarch64")]
     { return unsafe { neon::dot_f32(a, b, n) }; }
 
@@ -265,6 +423,12 @@ pub fn dot_f32(a: &[f32], b: &[f32], n: usize) -> f32 {
 
 #[inline]
 pub fn vec_scale_inplace(dst: &mut [f32], scale: f32, n: usize) {
+    #[cfg(all(feature = "vdsp", target_os = "macos"))]
+    {
+        unsafe { vDSP_vsmul(dst.as_ptr(), 1, &scale, dst.as_mut_ptr(), 1, n as u64); }
+        return;
+    }
+
     #[cfg(target_arch = "aarch64")]
     { unsafe { neon::vec_scale_inplace(dst, scale, n); } return; }
 
@@ -277,6 +441,12 @@ pub fn vec_scale_inplace(dst: &mut [f32], scale: f32, n: usize) {
 
 #[inline]
 pub fn vec_axpy_inplace(dst: &mut [f32], src: &[f32], alpha: f32, n: usize) {
+    #[cfg(all(feature = "vdsp", target_os = "macos"))]
+    {
+        unsafe { vDSP_vsma(src.as_ptr(), 1, &alpha, dst.as_ptr(), 1, dst.as_mut_ptr(), 1, n as u64); }
+        return;
+    }
+
     #[cfg(target_arch = "aarch64")]
     { unsafe { neon::vec_axpy_inplace(dst, src, alpha, n); } return; }
 
@@ -439,12 +609,26 @@ fn bf16_matvec_threaded(y: &mut [f32], x: &[f32], w_bf16: *const u16, bias: Opti
 }
 
 pub fn linear_nobias_bf16(y: &mut [f32], x: &[f32], w_bf16: *const u16, seq_len: usize, in_dim: usize, out_dim: usize) {
+    let _pg = ProfileGuard::new(&PROF.bf16_matvec);
     if seq_len == 1 {
         bf16_matvec_threaded(y, x, w_bf16, None, in_dim, out_dim);
         return;
     }
     let w_f32 = bf16_to_f32_view(w_bf16, out_dim * in_dim);
     linear_nobias(y, x, &w_f32, seq_len, in_dim, out_dim);
+}
+
+/// Like linear_nobias_bf16 but reuses a caller-provided scratch buffer for bf16→f32 conversion.
+pub fn linear_nobias_bf16_scratch(y: &mut [f32], x: &[f32], w_bf16: *const u16, seq_len: usize, in_dim: usize, out_dim: usize, scratch: &mut [f32]) {
+    let _pg = ProfileGuard::new(&PROF.bf16_matvec);
+    if seq_len == 1 {
+        bf16_matvec_threaded(y, x, w_bf16, None, in_dim, out_dim);
+        return;
+    }
+    let n = out_dim * in_dim;
+    let src = unsafe { std::slice::from_raw_parts(w_bf16, n) };
+    bf16_to_f32_buf(&mut scratch[..n], src);
+    linear_nobias(y, x, &scratch[..n], seq_len, in_dim, out_dim);
 }
 
 pub fn linear_bf16(y: &mut [f32], x: &[f32], w_bf16: *const u16, b: Option<&[f32]>, seq_len: usize, in_dim: usize, out_dim: usize) {
@@ -617,6 +801,7 @@ pub fn conv2d(out: &mut [f32], input: &[f32], weight: &[f32], bias: Option<&[f32
 
 pub fn layer_norm(out: &mut [f32], x: &[f32], weight: &[f32], bias: &[f32],
                   seq_len: usize, hidden: usize, eps: f32) {
+    let _pg = ProfileGuard::new(&PROF.layer_norm);
     for s in 0..seq_len {
         let x_row = &x[s * hidden..(s + 1) * hidden];
         let out_row = &mut out[s * hidden..(s + 1) * hidden];
@@ -637,15 +822,24 @@ pub fn layer_norm(out: &mut [f32], x: &[f32], weight: &[f32], bias: &[f32],
 }
 
 pub fn rms_norm(out: &mut [f32], x: &[f32], weight: &[f32], seq_len: usize, hidden: usize, eps: f32) {
+    let _pg = ProfileGuard::new(&PROF.rms_norm);
     for s in 0..seq_len {
         let x_row = &x[s * hidden..(s + 1) * hidden];
         let out_row = &mut out[s * hidden..(s + 1) * hidden];
 
-        let sum_sq: f32 = x_row.iter().map(|&v| v * v).sum();
-        let rms_inv = 1.0 / (sum_sq / hidden as f32 + eps).sqrt();
+        #[cfg(target_arch = "aarch64")]
+        { unsafe { neon::rms_norm_row(out_row, x_row, weight, hidden, eps); } continue; }
 
-        for i in 0..hidden {
-            out_row[i] = x_row[i] * rms_inv * weight[i];
+        #[cfg(target_arch = "x86_64")]
+        { unsafe { avx::rms_norm_row(out_row, x_row, weight, hidden, eps); } continue; }
+
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+        {
+            let sum_sq: f32 = x_row.iter().map(|&v| v * v).sum();
+            let rms_inv = 1.0 / (sum_sq / hidden as f32 + eps).sqrt();
+            for i in 0..hidden {
+                out_row[i] = x_row[i] * rms_inv * weight[i];
+            }
         }
     }
 }
@@ -679,6 +873,14 @@ pub fn silu(x: &mut [f32], n: usize) {
 }
 
 pub fn gelu(x: &mut [f32], n: usize) {
+    let _pg = ProfileGuard::new(&PROF.gelu);
+    #[cfg(target_arch = "aarch64")]
+    { unsafe { neon::gelu_inplace(x, n); } return; }
+
+    #[cfg(target_arch = "x86_64")]
+    { unsafe { avx::gelu_inplace(x, n); } return; }
+
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     for i in 0..n {
         let val = x[i];
         let x3 = val * val * val;
@@ -688,9 +890,18 @@ pub fn gelu(x: &mut [f32], n: usize) {
 }
 
 pub fn swiglu_multiply(out: &mut [f32], gate_up: &[f32], seq_len: usize, intermediate: usize) {
+    let _pg = ProfileGuard::new(&PROF.swiglu);
     for s in 0..seq_len {
-        let gu = &gate_up[s * 2 * intermediate..];
+        let gu = &gate_up[s * 2 * intermediate..s * 2 * intermediate + 2 * intermediate];
         let o = &mut out[s * intermediate..(s + 1) * intermediate];
+
+        #[cfg(target_arch = "aarch64")]
+        { unsafe { neon::swiglu_interleaved(o, gu, intermediate); } continue; }
+
+        #[cfg(target_arch = "x86_64")]
+        { unsafe { avx::swiglu_interleaved(o, gu, intermediate); } continue; }
+
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
         for j in 0..intermediate {
             let g = gu[2 * j];
             let u = gu[2 * j + 1];
@@ -713,9 +924,24 @@ pub fn softmax(x: &mut [f32], rows: usize, cols: usize) {
     for r in 0..rows {
         let row = &mut x[r * cols..(r + 1) * cols];
         let max_val = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        for c in 0..cols {
+            row[c] -= max_val;
+        }
+
+        #[cfg(all(feature = "vdsp", target_os = "macos"))]
+        {
+            let n = cols as i32;
+            unsafe { vvexpf(row.as_mut_ptr(), row.as_ptr(), &n); }
+        }
+        #[cfg(not(all(feature = "vdsp", target_os = "macos")))]
+        {
+            for c in 0..cols {
+                row[c] = row[c].exp();
+            }
+        }
+
         let mut sum = 0.0f32;
         for c in 0..cols {
-            row[c] = (row[c] - max_val).exp();
             sum += row[c];
         }
         let inv_sum = 1.0 / sum;
@@ -729,12 +955,13 @@ pub fn softmax(x: &mut [f32], rows: usize, cols: usize) {
 // Attention Operations
 // ========================================================================
 
-pub fn bidirectional_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
-                               _seq: usize, n_heads: usize, head_dim: usize, scale: f32,
-                               window_starts: &[i32], n_windows: usize) {
+fn bidirectional_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
+                                  n_heads: usize, head_dim: usize, scale: f32,
+                                  window_starts: &[i32], n_windows: usize,
+                                  head_start: usize, head_end: usize) {
     let hidden = n_heads * head_dim;
 
-    for h in 0..n_heads {
+    for h in head_start..head_end {
         for w in 0..n_windows {
             let ws = window_starts[w] as usize;
             let we = window_starts[w + 1] as usize;
@@ -775,6 +1002,43 @@ pub fn bidirectional_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
             }
         }
     }
+}
+
+pub fn bidirectional_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
+                               seq: usize, n_heads: usize, head_dim: usize, scale: f32,
+                               window_starts: &[i32], n_windows: usize) {
+    let _pg = ProfileGuard::new(&PROF.attention_bidir);
+    let n_threads = get_num_threads();
+    let hidden = n_heads * head_dim;
+
+    if n_threads > 1 && n_heads >= 2 {
+        let out_ptr = out.as_mut_ptr() as usize;
+        let q_ptr = q.as_ptr() as usize;
+        let k_ptr = k.as_ptr() as usize;
+        let v_ptr = v.as_ptr() as usize;
+        let ws_ptr = window_starts.as_ptr() as usize;
+
+        parallel_for(|tid, nt| {
+            let chunk = (n_heads + nt - 1) / nt;
+            let h0 = tid * chunk;
+            let h1 = (h0 + chunk).min(n_heads);
+            if h0 >= h1 { return; }
+
+            let out_local = unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut f32, seq * hidden) };
+            let q_local = unsafe { std::slice::from_raw_parts(q_ptr as *const f32, seq * hidden) };
+            let k_local = unsafe { std::slice::from_raw_parts(k_ptr as *const f32, seq * hidden) };
+            let v_local = unsafe { std::slice::from_raw_parts(v_ptr as *const f32, seq * hidden) };
+            let ws_local = unsafe { std::slice::from_raw_parts(ws_ptr as *const i32, n_windows + 1) };
+
+            bidirectional_attention_heads(out_local, q_local, k_local, v_local,
+                                         n_heads, head_dim, scale,
+                                         ws_local, n_windows, h0, h1);
+        });
+        return;
+    }
+
+    bidirectional_attention_heads(out, q, k, v, n_heads, head_dim, scale,
+                                 window_starts, n_windows, 0, n_heads);
 }
 
 fn causal_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
@@ -830,6 +1094,7 @@ fn causal_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
 pub fn causal_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
                          seq_q: usize, seq_k: usize, n_heads: usize, n_kv_heads: usize,
                          head_dim: usize, scale: f32, q_offset: usize) {
+    let _pg = ProfileGuard::new(&PROF.attention_causal);
     let n_threads = get_num_threads();
     if n_threads > 1 && n_heads >= 2 && (seq_q >= 2 || seq_k >= 128) {
         let out_ptr = out.as_mut_ptr() as usize;

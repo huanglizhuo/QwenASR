@@ -1,6 +1,12 @@
-use q_asr::context::QwenCtx;
-use q_asr::transcribe;
-use q_asr::kernels;
+use qasr::context::QwenCtx;
+use qasr::transcribe;
+use qasr::kernels;
+
+use std::sync::Mutex;
+
+// Global mutex to serialize regression tests — the thread pool is a global singleton
+// and doesn't support concurrent callers from different threads.
+static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
 fn setup_model() -> Option<QwenCtx> {
     let model_dir = "qwen3-asr-0.6b";
@@ -32,6 +38,7 @@ fn levenshtein(a: &str, b: &str) -> usize {
 
 #[test]
 fn test_offline_jfk() {
+    let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let mut ctx = match setup_model() {
         Some(c) => c,
         None => return,
@@ -54,6 +61,7 @@ fn test_offline_jfk() {
 
 #[test]
 fn test_offline_test_speech() {
+    let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let mut ctx = match setup_model() {
         Some(c) => c,
         None => return,
@@ -77,6 +85,7 @@ fn test_offline_test_speech() {
 
 #[test]
 fn test_segmented_mode() {
+    let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let mut ctx = match setup_model() {
         Some(c) => c,
         None => return,
@@ -100,6 +109,7 @@ fn test_segmented_mode() {
 
 #[test]
 fn test_streaming_mode() {
+    let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let mut ctx = match setup_model() {
         Some(c) => c,
         None => return,
@@ -111,7 +121,7 @@ fn test_streaming_mode() {
         return;
     }
 
-    let samples = q_asr::audio::load_wav(wav);
+    let samples = qasr::audio::load_wav(wav);
     assert!(samples.is_some());
     let samples = samples.unwrap();
 

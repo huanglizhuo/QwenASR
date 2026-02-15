@@ -1,4 +1,4 @@
-use q_asr::tokenizer::QwenTokenizer;
+use qasr::tokenizer::QwenTokenizer;
 
 fn get_tokenizer() -> Option<QwenTokenizer> {
     let path = "qwen3-asr-0.6b/vocab.json";

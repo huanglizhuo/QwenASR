@@ -53,7 +53,7 @@ fn transcribe_segment(
 
     // Encoder
     let t0 = get_time_ms();
-    let (enc_output, enc_seq_len) = ctx.encoder.forward(cfg, &mel, mel_frames)?;
+    let (enc_output, enc_seq_len) = ctx.encoder.forward(cfg, &mel, mel_frames, Some(&mut ctx.enc_bufs))?;
     let enc_ms = elapsed_ms(t0);
 
     if kernels::verbose() >= 2 {
@@ -474,7 +474,7 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         while enc_cache.len() * enc_window_samples < full_end {
             let ws = enc_cache.len() * enc_window_samples;
             let (mel, mel_frames) = audio::mel_spectrogram(&audio_samples[ws..ws + enc_window_samples])?;
-            let (win_enc, win_seq) = ctx.encoder.forward(&cfg, &mel, mel_frames)?;
+            let (win_enc, win_seq) = ctx.encoder.forward(&cfg, &mel, mel_frames, Some(&mut ctx.enc_bufs))?;
             enc_cached_seq_total += win_seq;
             enc_cache.push(EncWindow { seq_len: win_seq, enc_output: win_enc });
         }
@@ -485,7 +485,7 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         if full_end < audio_cursor {
             let _partial_samples = audio_cursor - full_end;
             if let Some((mel, mel_frames)) = audio::mel_spectrogram(&audio_samples[full_end..audio_cursor]) {
-                if let Some((enc, seq)) = ctx.encoder.forward(&cfg, &mel, mel_frames) {
+                if let Some((enc, seq)) = ctx.encoder.forward(&cfg, &mel, mel_frames, Some(&mut ctx.enc_bufs)) {
                     partial_seq = seq;
                     partial_enc = enc;
                 }

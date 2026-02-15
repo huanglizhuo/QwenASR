@@ -10,6 +10,10 @@ mod encoder;
 mod decoder;
 mod context;
 mod transcribe;
+#[cfg(any(feature = "ios", feature = "android"))]
+mod c_api;
+#[cfg(feature = "android")]
+mod jni_api;
 
 use config::*;
 use context::QwenCtx;
@@ -38,6 +42,7 @@ fn usage(prog: &str) {
     eprintln!("  --skip-silence              Drop long silent spans before inference");
     eprintln!("  --prompt <text>            System prompt for biasing");
     eprintln!("  --language <lang>          Force output language");
+    eprintln!("  --profile     Print per-operation timing breakdown");
     eprintln!("  --debug       Debug output (per-layer details)");
     eprintln!("  --silent      No status output (only transcription on stdout)");
     eprintln!("  -h            Show this help");
@@ -69,6 +74,7 @@ fn main() {
     let mut force_language: Option<String> = None;
     let mut past_text_mode: i32 = -1; // -1 auto, 0 off, 1 on
     let mut skip_silence = false;
+    let mut profile = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -130,6 +136,9 @@ fn main() {
             "--stdin" => {
                 use_stdin = true;
             }
+            "--profile" => {
+                profile = true;
+            }
             "--debug" => {
                 verbosity = 2;
             }
@@ -168,6 +177,10 @@ fn main() {
     }
 
     kernels::set_verbose(verbosity);
+    if profile {
+        kernels::set_profile(true);
+        kernels::profile_reset();
+    }
     let emit_tokens = verbosity > 0;
 
     // Initialize thread pool
@@ -279,5 +292,9 @@ fn main() {
                 audio_s, infer_s, audio_s / infer_s
             );
         }
+    }
+
+    if profile {
+        kernels::profile_report();
     }
 }

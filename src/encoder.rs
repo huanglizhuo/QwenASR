@@ -23,6 +23,53 @@ pub struct EncLayer {
     pub ffn_norm_bias: Vec<f32>,
 }
 
+pub struct EncoderBuffers {
+    pub x_norm: Vec<f32>,
+    pub q: Vec<f32>,
+    pub k: Vec<f32>,
+    pub v: Vec<f32>,
+    pub attn_out: Vec<f32>,
+    pub proj_out: Vec<f32>,
+    pub ffn_mid: Vec<f32>,
+    pub ffn_out: Vec<f32>,
+    pub cap_tokens: usize,
+}
+
+impl EncoderBuffers {
+    pub fn new() -> Self {
+        EncoderBuffers {
+            x_norm: Vec::new(),
+            q: Vec::new(),
+            k: Vec::new(),
+            v: Vec::new(),
+            attn_out: Vec::new(),
+            proj_out: Vec::new(),
+            ffn_mid: Vec::new(),
+            ffn_out: Vec::new(),
+            cap_tokens: 0,
+        }
+    }
+
+    pub fn ensure(&mut self, total_tokens: usize, d_model: usize, ffn_dim: usize) {
+        if total_tokens <= self.cap_tokens {
+            return;
+        }
+        let mut new_cap = if self.cap_tokens > 0 { self.cap_tokens } else { 256 };
+        while new_cap < total_tokens {
+            new_cap *= 2;
+        }
+        self.x_norm.resize(new_cap * d_model, 0.0);
+        self.q.resize(new_cap * d_model, 0.0);
+        self.k.resize(new_cap * d_model, 0.0);
+        self.v.resize(new_cap * d_model, 0.0);
+        self.attn_out.resize(new_cap * d_model, 0.0);
+        self.proj_out.resize(new_cap * d_model, 0.0);
+        self.ffn_mid.resize(new_cap * ffn_dim, 0.0);
+        self.ffn_out.resize(new_cap * d_model, 0.0);
+        self.cap_tokens = new_cap;
+    }
+}
+
 pub struct Encoder {
     pub conv1_weight: Vec<f32>,
     pub conv1_bias: Vec<f32>,
@@ -130,7 +177,7 @@ impl Encoder {
 
     /// Run encoder forward pass on mel spectrogram.
     /// mel: [128, mel_frames], returns [total_tokens, output_dim].
-    pub fn forward(&self, cfg: &QwenConfig, mel: &[f32], mel_frames: usize) -> Option<(Vec<f32>, usize)> {
+    pub fn forward(&self, cfg: &QwenConfig, mel: &[f32], mel_frames: usize, enc_bufs: Option<&mut EncoderBuffers>) -> Option<(Vec<f32>, usize)> {
         let d_model = cfg.enc_d_model;
         let n_heads = cfg.enc_heads;
         let head_dim = cfg.enc_head_dim;
@@ -242,66 +289,61 @@ impl Encoder {
         }
         window_starts[n_windows] = total_tokens as i32;
 
-        // Transformer layers
-        let mut x_norm = vec![0.0f32; total_tokens * d_model];
-        let mut q = vec![0.0f32; total_tokens * d_model];
-        let mut k = vec![0.0f32; total_tokens * d_model];
-        let mut v = vec![0.0f32; total_tokens * d_model];
-        let mut attn_out = vec![0.0f32; total_tokens * d_model];
-        let mut proj_out = vec![0.0f32; total_tokens * d_model];
-        let mut ffn_mid = vec![0.0f32; total_tokens * ffn_dim];
-        let mut ffn_out = vec![0.0f32; total_tokens * d_model];
+        // Transformer layer scratch buffers (reusable or fresh)
+        let mut _owned_bufs;
+        let bufs: &mut EncoderBuffers = match enc_bufs {
+            Some(b) => { b.ensure(total_tokens, d_model, ffn_dim); b }
+            None => { _owned_bufs = EncoderBuffers::new(); _owned_bufs.ensure(total_tokens, d_model, ffn_dim); &mut _owned_bufs }
+        };
 
         let scale = 1.0 / (head_dim as f32).sqrt();
+        let td = total_tokens * d_model;
+        let tf = total_tokens * ffn_dim;
 
         for layer in &self.layers {
             // Self-attention
-            kernels::layer_norm(&mut x_norm, &x, &layer.attn_norm_weight, &layer.attn_norm_bias,
+            kernels::layer_norm(&mut bufs.x_norm[..td], &x, &layer.attn_norm_weight, &layer.attn_norm_bias,
                               total_tokens, d_model, 1e-5);
 
-            kernels::linear(&mut q, &x_norm, &layer.wq_weight, Some(&layer.wq_bias),
+            kernels::linear(&mut bufs.q[..td], &bufs.x_norm[..td], &layer.wq_weight, Some(&layer.wq_bias),
                           total_tokens, d_model, d_model);
-            kernels::linear(&mut k, &x_norm, &layer.wk_weight, Some(&layer.wk_bias),
+            kernels::linear(&mut bufs.k[..td], &bufs.x_norm[..td], &layer.wk_weight, Some(&layer.wk_bias),
                           total_tokens, d_model, d_model);
-            kernels::linear(&mut v, &x_norm, &layer.wv_weight, Some(&layer.wv_bias),
+            kernels::linear(&mut bufs.v[..td], &bufs.x_norm[..td], &layer.wv_weight, Some(&layer.wv_bias),
                           total_tokens, d_model, d_model);
 
-            kernels::bidirectional_attention(&mut attn_out, &q, &k, &v,
+            kernels::bidirectional_attention(&mut bufs.attn_out[..td], &bufs.q[..td], &bufs.k[..td], &bufs.v[..td],
                                            total_tokens, n_heads, head_dim, scale,
                                            &window_starts, n_windows);
 
-            kernels::linear(&mut proj_out, &attn_out, &layer.wo_weight, Some(&layer.wo_bias),
+            kernels::linear(&mut bufs.proj_out[..td], &bufs.attn_out[..td], &layer.wo_weight, Some(&layer.wo_bias),
                           total_tokens, d_model, d_model);
-            kernels::add_inplace(&mut x, &proj_out, total_tokens * d_model);
+            kernels::add_inplace(&mut x, &bufs.proj_out[..td], td);
 
             // FFN
-            kernels::layer_norm(&mut x_norm, &x, &layer.ffn_norm_weight, &layer.ffn_norm_bias,
+            kernels::layer_norm(&mut bufs.x_norm[..td], &x, &layer.ffn_norm_weight, &layer.ffn_norm_bias,
                               total_tokens, d_model, 1e-5);
 
-            kernels::linear(&mut ffn_mid, &x_norm, &layer.fc1_weight, Some(&layer.fc1_bias),
+            kernels::linear(&mut bufs.ffn_mid[..tf], &bufs.x_norm[..td], &layer.fc1_weight, Some(&layer.fc1_bias),
                           total_tokens, d_model, ffn_dim);
-            kernels::gelu(&mut ffn_mid, total_tokens * ffn_dim);
-            kernels::linear(&mut ffn_out, &ffn_mid, &layer.fc2_weight, Some(&layer.fc2_bias),
+            kernels::gelu(&mut bufs.ffn_mid[..tf], tf);
+            kernels::linear(&mut bufs.ffn_out[..td], &bufs.ffn_mid[..tf], &layer.fc2_weight, Some(&layer.fc2_bias),
                           total_tokens, ffn_dim, d_model);
-            kernels::add_inplace(&mut x, &ffn_out, total_tokens * d_model);
+            kernels::add_inplace(&mut x, &bufs.ffn_out[..td], td);
         }
 
-        // Final LayerNorm (in-place)
-        {
-            let mut tmp = vec![0.0f32; total_tokens * d_model];
-            kernels::layer_norm(&mut tmp, &x, &self.ln_post_weight, &self.ln_post_bias,
-                              total_tokens, d_model, 1e-5);
-            x = tmp;
-        }
+        // Final LayerNorm: use x_norm as temp, then swap into x
+        kernels::layer_norm(&mut bufs.x_norm[..td], &x, &self.ln_post_weight, &self.ln_post_bias,
+                          total_tokens, d_model, 1e-5);
+        x[..td].copy_from_slice(&bufs.x_norm[..td]);
 
-        // Projection: proj1 (GELU) -> proj2
-        let mut proj_mid = vec![0.0f32; total_tokens * d_model];
-        kernels::linear(&mut proj_mid, &x, &self.proj1_weight, Some(&self.proj1_bias),
+        // Projection: proj1 (GELU) -> proj2 (reuse scratch buffers)
+        kernels::linear(&mut bufs.q[..td], &x, &self.proj1_weight, Some(&self.proj1_bias),
                        total_tokens, d_model, d_model);
-        kernels::gelu(&mut proj_mid, total_tokens * d_model);
+        kernels::gelu(&mut bufs.q[..td], td);
 
         let mut enc_output = vec![0.0f32; total_tokens * output_dim];
-        kernels::linear(&mut enc_output, &proj_mid, &self.proj2_weight, Some(&self.proj2_bias),
+        kernels::linear(&mut enc_output, &bufs.q[..td], &self.proj2_weight, Some(&self.proj2_bias),
                        total_tokens, d_model, output_dim);
 
         Some((enc_output, total_tokens))

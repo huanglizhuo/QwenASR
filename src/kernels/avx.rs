@@ -2,6 +2,26 @@
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+pub unsafe fn bf16_to_f32_buf(dst: &mut [f32], src: &[u16]) {
+    let n = src.len();
+    let mut i = 0usize;
+
+    while i + 8 <= n {
+        let raw = _mm_loadu_si128(src.as_ptr().add(i) as *const __m128i);
+        let wide = _mm256_cvtepu16_epi32(raw);
+        let shifted = _mm256_slli_epi32(wide, 16);
+        _mm256_storeu_ps(dst.as_mut_ptr().add(i), _mm256_castsi256_ps(shifted));
+        i += 8;
+    }
+
+    while i < n {
+        dst[i] = f32::from_bits((src[i] as u32) << 16);
+        i += 1;
+    }
+}
+
 /// Convert 8 BF16 values (in a __m128i) to 8 f32 values (in a __m256).
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
@@ -348,5 +368,149 @@ pub unsafe fn vec_scale_add(dst: &mut [f32], src: &[f32], correction: f32, n: us
     while i < n {
         dst[i] = dst[i] * correction + src[i];
         i += 1;
+    }
+}
+
+/// AVX2-accelerated RMS norm for a single row.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2", enable = "fma")]
+pub unsafe fn rms_norm_row(out: &mut [f32], x: &[f32], weight: &[f32], hidden: usize, eps: f32) {
+    let mut i = 0usize;
+    let mut acc0 = _mm256_setzero_ps();
+    let mut acc1 = _mm256_setzero_ps();
+
+    while i + 16 <= hidden {
+        let x0 = _mm256_loadu_ps(x.as_ptr().add(i));
+        let x1 = _mm256_loadu_ps(x.as_ptr().add(i + 8));
+        acc0 = _mm256_fmadd_ps(x0, x0, acc0);
+        acc1 = _mm256_fmadd_ps(x1, x1, acc1);
+        i += 16;
+    }
+    while i + 8 <= hidden {
+        let xv = _mm256_loadu_ps(x.as_ptr().add(i));
+        acc0 = _mm256_fmadd_ps(xv, xv, acc0);
+        i += 8;
+    }
+
+    let mut sum_sq = hsum_ps(_mm256_add_ps(acc0, acc1));
+    while i < hidden {
+        sum_sq += x[i] * x[i];
+        i += 1;
+    }
+
+    let rms_inv = 1.0 / (sum_sq / hidden as f32 + eps).sqrt();
+    let rms_v = _mm256_set1_ps(rms_inv);
+
+    i = 0;
+    while i + 8 <= hidden {
+        let xv = _mm256_loadu_ps(x.as_ptr().add(i));
+        let wv = _mm256_loadu_ps(weight.as_ptr().add(i));
+        _mm256_storeu_ps(out.as_mut_ptr().add(i), _mm256_mul_ps(_mm256_mul_ps(xv, rms_v), wv));
+        i += 8;
+    }
+    while i < hidden {
+        out[i] = x[i] * rms_inv * weight[i];
+        i += 1;
+    }
+}
+
+/// Fast exp approximation using AVX2+FMA (~1e-4 relative error for |x| < 88).
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2", enable = "fma")]
+#[inline]
+unsafe fn fast_exp_avx(x: __m256) -> __m256 {
+    let log2e = _mm256_set1_ps(1.442695041);
+    let ln2 = _mm256_set1_ps(0.6931471806);
+
+    let val = _mm256_mul_ps(x, log2e);
+    let val = _mm256_min_ps(val, _mm256_set1_ps(126.0));
+    let val = _mm256_max_ps(val, _mm256_set1_ps(-126.0));
+
+    let ipart = _mm256_cvtps_epi32(val);
+    let fpart = _mm256_sub_ps(val, _mm256_cvtepi32_ps(ipart));
+
+    let exp_i = _mm256_castsi256_ps(_mm256_slli_epi32(
+        _mm256_add_epi32(ipart, _mm256_set1_epi32(127)), 23));
+
+    let f = _mm256_mul_ps(fpart, ln2);
+    let c2 = _mm256_set1_ps(0.5);
+    let c3 = _mm256_set1_ps(1.0 / 6.0);
+    let c4 = _mm256_set1_ps(1.0 / 24.0);
+    let c5 = _mm256_set1_ps(1.0 / 120.0);
+
+    let mut p = _mm256_fmadd_ps(c5, f, c4);
+    p = _mm256_fmadd_ps(p, f, c3);
+    p = _mm256_fmadd_ps(p, f, c2);
+    p = _mm256_fmadd_ps(p, f, _mm256_set1_ps(1.0));
+    p = _mm256_fmadd_ps(p, f, _mm256_set1_ps(1.0));
+
+    _mm256_mul_ps(exp_i, p)
+}
+
+/// AVX2-accelerated GELU (tanh approximation).
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2", enable = "fma")]
+pub unsafe fn gelu_inplace(x: &mut [f32], n: usize) {
+    let half = _mm256_set1_ps(0.5);
+    let one = _mm256_set1_ps(1.0);
+    let two = _mm256_set1_ps(2.0);
+    let coeff = _mm256_set1_ps(0.7978845608028654);
+    let c3 = _mm256_set1_ps(0.044715);
+    let mut i = 0usize;
+
+    while i + 8 <= n {
+        let v = _mm256_loadu_ps(x.as_ptr().add(i));
+        let v2 = _mm256_mul_ps(v, v);
+        let v3 = _mm256_mul_ps(v2, v);
+        let inner = _mm256_mul_ps(coeff, _mm256_fmadd_ps(c3, v3, v));
+        let exp2x = fast_exp_avx(_mm256_mul_ps(two, inner));
+        let tanh_v = _mm256_sub_ps(one, _mm256_div_ps(two, _mm256_add_ps(exp2x, one)));
+        let result = _mm256_mul_ps(half, _mm256_mul_ps(v, _mm256_add_ps(one, tanh_v)));
+        _mm256_storeu_ps(x.as_mut_ptr().add(i), result);
+        i += 8;
+    }
+
+    while i < n {
+        let val = x[i];
+        let x3 = val * val * val;
+        let inner = 0.7978845608028654f32 * (val + 0.044715 * x3);
+        x[i] = 0.5 * val * (1.0 + inner.tanh());
+        i += 1;
+    }
+}
+
+/// AVX2-accelerated SwiGLU with interleaved gate/up.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2", enable = "fma")]
+pub unsafe fn swiglu_interleaved(out: &mut [f32], gate_up: &[f32], n: usize) {
+    let one = _mm256_set1_ps(1.0);
+    let mut j = 0usize;
+
+    while j + 8 <= n {
+        // Load 16 floats: [g0,u0,g1,u1,g2,u2,g3,u3] x2
+        let lo = _mm256_loadu_ps(gate_up.as_ptr().add(2 * j));
+        let hi = _mm256_loadu_ps(gate_up.as_ptr().add(2 * j + 8));
+
+        // Deinterleave using shuffle + permute
+        let shuf_lo = _mm256_shuffle_ps(lo, hi, 0b10_00_10_00); // g0,g1,g4,g5,g2,g3,g6,g7
+        let shuf_hi = _mm256_shuffle_ps(lo, hi, 0b11_01_11_01); // u0,u1,u4,u5,u2,u3,u6,u7
+        let gates = _mm256_permutevar8x32_ps(shuf_lo, _mm256_setr_epi32(0,1,4,5,2,3,6,7));
+        let ups = _mm256_permutevar8x32_ps(shuf_hi, _mm256_setr_epi32(0,1,4,5,2,3,6,7));
+
+        let neg_g = _mm256_sub_ps(_mm256_setzero_ps(), gates);
+        let exp_ng = fast_exp_avx(neg_g);
+        let denom = _mm256_add_ps(one, exp_ng);
+        let silu_g = _mm256_div_ps(gates, denom);
+
+        _mm256_storeu_ps(out.as_mut_ptr().add(j), _mm256_mul_ps(silu_g, ups));
+        j += 8;
+    }
+
+    while j < n {
+        let g = gate_up[2 * j];
+        let u = gate_up[2 * j + 1];
+        let g_silu = g / (1.0 + (-g).exp());
+        out[j] = g_silu * u;
+        j += 1;
     }
 }

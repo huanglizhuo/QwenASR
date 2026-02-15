@@ -35,17 +35,119 @@ cd ..
 
 ## Build
 
+### macOS (CLI)
+
 ```bash
 RUSTFLAGS="-C target-cpu=native" cargo build --release
 ```
 
 The `target-cpu=native` flag enables NEON (Apple Silicon) or AVX2+FMA (x86_64) SIMD acceleration. The binary is at `target/release/q-asr`.
 
-To build without BLAS (pure Rust fallback for all matmul):
+For additional performance on Apple Silicon, enable vDSP (uses the AMX coprocessor via Accelerate):
 
 ```bash
-cargo build --release --no-default-features
+RUSTFLAGS="-C target-cpu=native" cargo build --release --features vdsp
 ```
+
+### Linux (CLI)
+
+Install OpenBLAS first:
+
+```bash
+# Debian/Ubuntu
+sudo apt install libopenblas-dev
+
+# Fedora/RHEL
+sudo dnf install openblas-devel
+```
+
+Then build:
+
+```bash
+RUSTFLAGS="-C target-cpu=native" cargo build --release
+```
+
+### Without BLAS
+
+To build with pure Rust fallback for all matmul (no BLAS dependency):
+
+```bash
+RUSTFLAGS="-C target-cpu=native" cargo build --release --no-default-features
+```
+
+### iOS (Static Library)
+
+Produces a static library (`libqasr.a`) and C header for integration via the C-FFI API.
+
+```bash
+# Device (arm64)
+cargo build --release --target aarch64-apple-ios --features ios
+
+# Simulator (arm64 Apple Silicon host)
+cargo build --release --target aarch64-apple-ios-sim --features ios
+```
+
+The static library is at `target/aarch64-apple-ios/release/libqasr.a`. Link it into your Xcode project along with the Accelerate framework. The C-FFI API is defined in `src/c_api.rs`:
+
+```c
+// Load model, returns opaque handle
+void *qasr_load_model(const char *model_dir, int n_threads, int verbosity);
+
+// Transcribe a WAV file on disk
+const char *qasr_transcribe_file(void *engine, const char *wav_path);
+
+// Transcribe raw PCM float samples (16kHz mono)
+const char *qasr_transcribe_pcm(void *engine, const float *samples, int n_samples);
+
+// Transcribe in-memory WAV data
+const char *qasr_transcribe_wav_buffer(void *engine, const uint8_t *data, int len);
+
+// Configuration
+void qasr_set_segment_sec(void *engine, float sec);
+void qasr_set_language(void *engine, const char *lang);
+
+// Free returned strings and engine
+void qasr_free_string(const char *s);
+void qasr_free(void *engine);
+```
+
+### Android (Shared Library)
+
+Requires the Android NDK. Install [cargo-ndk](https://github.com/nicohman/cargo-ndk) for convenience:
+
+```bash
+cargo install cargo-ndk
+rustup target add aarch64-linux-android
+```
+
+Build the shared library:
+
+```bash
+cargo ndk -t arm64-v8a build --release --features android
+```
+
+The `.so` is at `target/aarch64-linux-android/release/libqasr.so`. The JNI API maps to the Java class `com.qasr.QAsrEngine`:
+
+```java
+public class QAsrEngine {
+    static { System.loadLibrary("qasr"); }
+    public native boolean loadModel(String modelDir, int nThreads);
+    public native String transcribePcm(float[] samples);
+    public native String transcribeWav(byte[] wavData);
+    public native void setSegmentSec(float sec);
+    public native void setLanguage(String language);
+    public native void free();
+}
+```
+
+### Feature Flags
+
+| Feature | Description |
+|---------|-------------|
+| `blas` (default) | Link BLAS (Accelerate on macOS/iOS, OpenBLAS on Linux) |
+| `vdsp` | Use Accelerate vDSP/vForce for AMX acceleration (macOS/iOS) |
+| `ios` | Enable C-FFI API for iOS integration |
+| `android` | Enable JNI API for Android integration |
 
 ## Usage
 
@@ -102,6 +204,7 @@ Process audio in 2-second chunks with incremental output:
 | `--skip-silence` | Drop long silent spans before inference | off |
 | `--prompt <text>` | System prompt for biasing | — |
 | `--language <lang>` | Force output language (e.g., `en`, `zh`, `ja`) | auto |
+| `--profile` | Print per-operation timing breakdown | off |
 | `--debug` | Verbose per-layer output | off |
 | `--silent` | No status output, only transcription on stdout | off |
 
@@ -139,11 +242,15 @@ src/
   decoder.rs       28-layer GQA decoder + KV cache
   context.rs       Top-level state (QwenCtx)
   transcribe.rs    Offline / segmented / streaming orchestration
+  c_api.rs         C-FFI API for iOS integration (feature: ios)
+  jni_api.rs       JNI API for Android integration (feature: android)
   kernels/
-    mod.rs         BLAS bindings, thread pool, dispatch
+    mod.rs         BLAS/vDSP bindings, thread pool, profiling, dispatch
     generic.rs     Portable f32 fallbacks
     neon.rs        ARM NEON SIMD (aarch64)
     avx.rs         x86 AVX2+FMA SIMD
+.cargo/
+  config.toml      Cross-compilation targets (iOS, Android)
 tests/
   kernels.rs       Kernel numerical correctness
   audio.rs         Audio pipeline verification

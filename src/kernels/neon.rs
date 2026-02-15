@@ -3,6 +3,26 @@
 use core::arch::aarch64::*;
 
 #[cfg(target_arch = "aarch64")]
+pub unsafe fn bf16_to_f32_buf(dst: &mut [f32], src: &[u16]) {
+    let n = src.len();
+    let mut i = 0usize;
+
+    while i + 8 <= n {
+        let raw = vld1q_u16(src.as_ptr().add(i));
+        let lo = vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(raw), 16));
+        let hi = vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(raw), 16));
+        vst1q_f32(dst.as_mut_ptr().add(i), lo);
+        vst1q_f32(dst.as_mut_ptr().add(i + 4), hi);
+        i += 8;
+    }
+
+    while i < n {
+        dst[i] = f32::from_bits((src[i] as u32) << 16);
+        i += 1;
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
 pub unsafe fn bf16_matvec_fused(y: &mut [f32], x: &[f32], w_bf16: *const u16, bias: Option<&[f32]>, in_dim: usize, out_dim: usize) {
     let mut o = 0usize;
 
@@ -294,6 +314,146 @@ pub unsafe fn vec_scale_add(dst: &mut [f32], src: &[f32], correction: f32, n: us
     }
     while i < n {
         dst[i] = dst[i] * correction + src[i];
+        i += 1;
+    }
+}
+
+/// NEON-accelerated RMS norm for a single row.
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn rms_norm_row(out: &mut [f32], x: &[f32], weight: &[f32], hidden: usize, eps: f32) {
+    // Sum of squares
+    let mut i = 0usize;
+    let mut acc0 = vdupq_n_f32(0.0);
+    let mut acc1 = vdupq_n_f32(0.0);
+    while i + 8 <= hidden {
+        let x0 = vld1q_f32(x.as_ptr().add(i));
+        let x1 = vld1q_f32(x.as_ptr().add(i + 4));
+        acc0 = vfmaq_f32(acc0, x0, x0);
+        acc1 = vfmaq_f32(acc1, x1, x1);
+        i += 8;
+    }
+    let mut sum_sq = vaddvq_f32(vaddq_f32(acc0, acc1));
+    while i < hidden {
+        sum_sq += x[i] * x[i];
+        i += 1;
+    }
+
+    let rms_inv = 1.0 / (sum_sq / hidden as f32 + eps).sqrt();
+    let rms_v = vdupq_n_f32(rms_inv);
+
+    // Scale: out = x * rms_inv * weight
+    i = 0;
+    while i + 8 <= hidden {
+        let x0 = vld1q_f32(x.as_ptr().add(i));
+        let x1 = vld1q_f32(x.as_ptr().add(i + 4));
+        let w0 = vld1q_f32(weight.as_ptr().add(i));
+        let w1 = vld1q_f32(weight.as_ptr().add(i + 4));
+        vst1q_f32(out.as_mut_ptr().add(i), vmulq_f32(vmulq_f32(x0, rms_v), w0));
+        vst1q_f32(out.as_mut_ptr().add(i + 4), vmulq_f32(vmulq_f32(x1, rms_v), w1));
+        i += 8;
+    }
+    while i < hidden {
+        out[i] = x[i] * rms_inv * weight[i];
+        i += 1;
+    }
+}
+
+/// Fast exp approximation using NEON (7th-order polynomial, ~1e-4 relative error for |x| < 88).
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn fast_exp_neon(x: float32x4_t) -> float32x4_t {
+    // exp(x) ≈ 2^(x * log2e) using integer trick + polynomial refinement
+    let log2e = vdupq_n_f32(1.442695041);
+    let ln2 = vdupq_n_f32(0.6931471806);
+
+    let val = vmulq_f32(x, log2e);
+    // Clamp to prevent overflow
+    let val = vminq_f32(val, vdupq_n_f32(126.0));
+    let val = vmaxq_f32(val, vdupq_n_f32(-126.0));
+
+    // Integer part
+    let ipart = vcvtq_s32_f32(val);
+    let fpart = vsubq_f32(val, vcvtq_f32_s32(ipart));
+
+    // 2^ipart using bit manipulation
+    let exp_i = vreinterpretq_f32_s32(vshlq_n_s32(vaddq_s32(ipart, vdupq_n_s32(127)), 23));
+
+    // 2^fpart using polynomial: 1 + fpart*ln2*(1 + fpart*ln2/2*(1 + fpart*ln2/3*(1 + ...)))
+    let f = vmulq_f32(fpart, ln2);
+    let c2 = vdupq_n_f32(0.5);
+    let c3 = vdupq_n_f32(1.0 / 6.0);
+    let c4 = vdupq_n_f32(1.0 / 24.0);
+    let c5 = vdupq_n_f32(1.0 / 120.0);
+
+    let mut p = vfmaq_f32(c4, c5, f);
+    p = vfmaq_f32(c3, p, f);
+    p = vfmaq_f32(c2, p, f);
+    p = vfmaq_f32(vdupq_n_f32(1.0), p, f);
+    p = vfmaq_f32(vdupq_n_f32(1.0), p, f);
+
+    vmulq_f32(exp_i, p)
+}
+
+/// NEON-accelerated SwiGLU: out[j] = silu(gate[2j]) * gate[2j+1] for interleaved gate/up.
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn swiglu_interleaved(out: &mut [f32], gate_up: &[f32], n: usize) {
+    let one = vdupq_n_f32(1.0);
+    let mut j = 0usize;
+
+    while j + 4 <= n {
+        // Load interleaved: [g0,u0, g1,u1, g2,u2, g3,u3]
+        let pair0 = vld1q_f32(gate_up.as_ptr().add(2 * j));
+        let pair1 = vld1q_f32(gate_up.as_ptr().add(2 * j + 4));
+
+        // Deinterleave: gates = [g0,g1,g2,g3], ups = [u0,u1,u2,u3]
+        let gates = vuzp1q_f32(pair0, pair1);
+        let ups = vuzp2q_f32(pair0, pair1);
+
+        // silu(gate) = gate / (1 + exp(-gate))
+        let neg_g = vnegq_f32(gates);
+        let exp_ng = fast_exp_neon(neg_g);
+        let denom = vaddq_f32(one, exp_ng);
+        let silu_g = vdivq_f32(gates, denom);
+
+        vst1q_f32(out.as_mut_ptr().add(j), vmulq_f32(silu_g, ups));
+        j += 4;
+    }
+
+    while j < n {
+        let g = gate_up[2 * j];
+        let u = gate_up[2 * j + 1];
+        let g_silu = g / (1.0 + (-g).exp());
+        out[j] = g_silu * u;
+        j += 1;
+    }
+}
+
+/// NEON-accelerated GELU (tanh approximation).
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn gelu_inplace(x: &mut [f32], n: usize) {
+    let half = vdupq_n_f32(0.5);
+    let one = vdupq_n_f32(1.0);
+    let coeff = vdupq_n_f32(0.7978845608028654); // sqrt(2/pi)
+    let c3 = vdupq_n_f32(0.044715);
+    let mut i = 0usize;
+
+    while i + 4 <= n {
+        let v = vld1q_f32(x.as_ptr().add(i));
+        let v3 = vmulq_f32(vmulq_f32(v, v), v);
+        let inner = vmulq_f32(coeff, vfmaq_f32(v, c3, v3)); // coeff * (v + c3 * v^3)
+        // tanh(x) ≈ (1 - 2/(exp(2x)+1)) = approximate via fast_exp
+        let exp2x = fast_exp_neon(vmulq_f32(vdupq_n_f32(2.0), inner));
+        let tanh_v = vsubq_f32(one, vdivq_f32(vdupq_n_f32(2.0), vaddq_f32(exp2x, one)));
+        let result = vmulq_f32(half, vmulq_f32(v, vaddq_f32(one, tanh_v)));
+        vst1q_f32(x.as_mut_ptr().add(i), result);
+        i += 4;
+    }
+
+    while i < n {
+        let val = x[i];
+        let x3 = val * val * val;
+        let inner = 0.7978845608028654f32 * (val + 0.044715 * x3);
+        x[i] = 0.5 * val * (1.0 + inner.tanh());
         i += 1;
     }
 }

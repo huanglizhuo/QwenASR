@@ -3,6 +3,7 @@
 use crate::config::*;
 use crate::decoder::*;
 use crate::encoder::*;
+use crate::encoder::EncoderBuffers;
 use crate::kernels;
 use crate::safetensors::MultiSafetensors;
 use crate::tokenizer::QwenTokenizer;
@@ -21,6 +22,9 @@ pub struct QwenCtx {
 
     // Decoder buffers
     pub dec_bufs: DecoderBuffers,
+
+    // Encoder scratch buffers (reusable across calls)
+    pub enc_bufs: EncoderBuffers,
 
     // RoPE cache
     pub rope_cache: RopeCache,
@@ -103,6 +107,7 @@ impl QwenCtx {
             model_dir: model_dir.to_string(),
             kv_cache,
             dec_bufs,
+            enc_bufs: EncoderBuffers::new(),
             rope_cache: RopeCache::new(),
             token_cb: None,
             segment_sec: 0.0,

@@ -308,6 +308,9 @@ pub struct DecoderBuffers {
     pub pref_gate_up: Vec<f32>,
     pub pref_gate: Vec<f32>,
     pub pref_seq_cap: usize,
+
+    // Reusable scratch for BF16→F32 conversion in prefill path
+    pub bf16_scratch: Vec<f32>,
 }
 
 impl DecoderBuffers {
@@ -316,6 +319,9 @@ impl DecoderBuffers {
         let q_dim = cfg.dec_heads * cfg.dec_head_dim;
         let kv_dim = cfg.dec_kv_heads * cfg.dec_head_dim;
         let intermediate = cfg.dec_intermediate;
+
+        // Largest weight matrix is gate_up_fused: 2 * intermediate * hidden
+        let max_weight = (2 * intermediate * dim).max(q_dim * dim).max(kv_dim * dim);
 
         DecoderBuffers {
             x: vec![0.0f32; dim],
@@ -338,6 +344,7 @@ impl DecoderBuffers {
             pref_gate_up: Vec::new(),
             pref_gate: Vec::new(),
             pref_seq_cap: 0,
+            bf16_scratch: vec![0.0f32; max_weight],
         }
     }
 
@@ -416,9 +423,9 @@ pub fn decoder_prefill(
         let k = &mut bufs.pref_k[..seq_len * kv_dim];
         let v = &mut bufs.pref_v[..seq_len * kv_dim];
 
-        kernels::linear_nobias_bf16(q, x_norm, layer.wq_weight_bf16, seq_len, dim, q_dim);
-        kernels::linear_nobias_bf16(k, x_norm, layer.wk_weight_bf16, seq_len, dim, kv_dim);
-        kernels::linear_nobias_bf16(v, x_norm, layer.wv_weight_bf16, seq_len, dim, kv_dim);
+        kernels::linear_nobias_bf16_scratch(q, x_norm, layer.wq_weight_bf16, seq_len, dim, q_dim, &mut bufs.bf16_scratch);
+        kernels::linear_nobias_bf16_scratch(k, x_norm, layer.wk_weight_bf16, seq_len, dim, kv_dim, &mut bufs.bf16_scratch);
+        kernels::linear_nobias_bf16_scratch(v, x_norm, layer.wv_weight_bf16, seq_len, dim, kv_dim, &mut bufs.bf16_scratch);
 
         kernels::rms_norm_per_head(q, &layer.q_norm_weight, seq_len, n_heads, head_dim, eps);
         kernels::rms_norm_per_head(k, &layer.k_norm_weight, seq_len, n_kv_heads, head_dim, eps);
@@ -444,7 +451,7 @@ pub fn decoder_prefill(
                                  head_dim, scale, start_pos);
 
         let proj_out = &mut bufs.pref_proj_out[..seq_len * dim];
-        kernels::linear_nobias_bf16(proj_out, attn_out, layer.wo_weight_bf16, seq_len, q_dim, dim);
+        kernels::linear_nobias_bf16_scratch(proj_out, attn_out, layer.wo_weight_bf16, seq_len, q_dim, dim, &mut bufs.bf16_scratch);
         kernels::add_inplace(&mut bufs.pref_x[..seq_len * dim], proj_out, seq_len * dim);
 
         // Post-attention RMSNorm + SwiGLU MLP
@@ -452,13 +459,13 @@ pub fn decoder_prefill(
         kernels::rms_norm(x_norm2, &bufs.pref_x[..seq_len * dim], &layer.post_attn_norm, seq_len, dim, eps);
 
         let gate_up = &mut bufs.pref_gate_up[..seq_len * 2 * intermediate];
-        kernels::linear_nobias_bf16(gate_up, x_norm2, layer.gate_up_fused_bf16.as_ptr(), seq_len, dim, 2 * intermediate);
+        kernels::linear_nobias_bf16_scratch(gate_up, x_norm2, layer.gate_up_fused_bf16.as_ptr(), seq_len, dim, 2 * intermediate, &mut bufs.bf16_scratch);
 
         let gate = &mut bufs.pref_gate[..seq_len * intermediate];
         kernels::swiglu_multiply(gate, gate_up, seq_len, intermediate);
 
         let ffn_out = &mut bufs.pref_ffn_out[..seq_len * dim];
-        kernels::linear_nobias_bf16(ffn_out, gate, layer.down_weight_bf16, seq_len, intermediate, dim);
+        kernels::linear_nobias_bf16_scratch(ffn_out, gate, layer.down_weight_bf16, seq_len, intermediate, dim, &mut bufs.bf16_scratch);
         kernels::add_inplace(&mut bufs.pref_x[..seq_len * dim], ffn_out, seq_len * dim);
     }
 

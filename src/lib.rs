@@ -9,3 +9,7 @@ pub mod encoder;
 pub mod decoder;
 pub mod context;
 pub mod transcribe;
+#[cfg(any(feature = "ios", feature = "android"))]
+pub mod c_api;
+#[cfg(feature = "android")]
+pub mod jni_api;
