@@ -1,0 +1,21 @@
+[package]
+name = "q-asr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CPU-only Qwen3-ASR speech recognition (pure Rust)"
+keywords = ["asr", "speech-recognition", "qwen", "inference"]
+categories = ["multimedia::audio"]
+
+[lib]
+name = "qasr"
+
+[dependencies]
+libc = "0.2"
+
+[features]
+default = ["blas"]
+blas = []
+vdsp = []
+ios = []
+android = []

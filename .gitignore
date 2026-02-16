@@ -2,3 +2,9 @@
 /qwen3-asr-0.6b
 /bench/results/
 /qwen3-aligner-0.6b
+
+/flutter/qasr/rust/target
+
+# Flutter / FRB generated files
+/flutter/qasr/rust/src/frb_generated.rs
+/flutter/qasr/lib/src/rust/frb_generated*.dart

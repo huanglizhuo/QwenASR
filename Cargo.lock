@@ -14,3 +14,10 @@ version = "0.1.0"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "qasr-cli"
+version = "0.1.0"
+dependencies = [
+ "q-asr",
+]
