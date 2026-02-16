@@ -67,15 +67,24 @@ impl QwenCtx {
 
         let ms = MultiSafetensors::open(model_dir)?;
 
-        // Detect model variant
-        let has_layer_18 = ms.has_tensor("thinker.audio_tower.layers.18.self_attn.q_proj.weight");
-        let cfg = QwenConfig::detect(has_layer_18);
+        // Detect model variant from tensor shapes
+        let info = crate::config::DetectInfo {
+            has_enc_layer_18: ms.has_tensor("thinker.audio_tower.layers.18.self_attn.q_proj.weight"),
+            lm_head_shape: ms.find("thinker.lm_head.weight").map(|(_, t)| t.shape.as_slice()),
+            embed_tokens_shape: ms.find("thinker.model.embed_tokens.weight").map(|(_, t)| t.shape.as_slice()),
+            gate_proj_shape: ms.find("thinker.model.layers.0.mlp.gate_proj.weight").map(|(_, t)| t.shape.as_slice()),
+        };
+        let cfg = QwenConfig::detect(&info);
 
         if kernels::verbose() >= 1 {
-            if has_layer_18 {
-                eprintln!("Detected: Qwen3-ASR-1.7B");
-            } else {
-                eprintln!("Detected: Qwen3-ASR-0.6B");
+            let variant = if cfg.dec_hidden >= 2048 { "1.7B" } else { "0.6B" };
+            let model_type = if cfg.is_aligner() { "ForcedAligner" } else { "ASR" };
+            eprintln!("Detected: Qwen3-{}-{}", model_type, variant);
+            if cfg.is_aligner() {
+                eprintln!("  classify_num={}, timestamp_segment_time={:.0}ms",
+                          cfg.classify_num, cfg.timestamp_segment_time);
+                eprintln!("  encoder: {}d {}L, decoder: {}d {}L",
+                          cfg.enc_d_model, cfg.enc_layers, cfg.dec_hidden, cfg.dec_layers);
             }
         }
 

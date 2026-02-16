@@ -258,6 +258,43 @@ tests/
   regression.rs    End-to-end transcription tests
 ```
 
+## Benchmarking
+
+A shell-based benchmark suite lives in `bench/` for comparing performance and accuracy across code changes or against other binaries (e.g. the C reference).
+
+```bash
+# Run all modes (offline, segmented, streaming) against bench/samples/audio.wav
+bench/run.sh --label before-optimization
+
+# Rebuild after changes, run again
+RUSTFLAGS="-C target-cpu=native" cargo build --release
+bench/run.sh --label after-optimization
+
+# Compare the two runs
+bench/compare.sh before-optimization after-optimization
+```
+
+Results are saved as JSON in `bench/results/<label>/`. Each result file contains timing breakdowns, per-op profile data, and WER/CER accuracy against the reference transcript.
+
+Options for `bench/run.sh`:
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--binary PATH` | Path to ASR binary | `./target/release/q-asr` |
+| `--model-dir DIR` | Model directory | `qwen3-asr-0.6b` |
+| `--samples-dir DIR` | Audio samples directory | `bench/samples` |
+| `--label NAME` | Label for this run | git short rev or timestamp |
+| `--modes LIST` | Comma-separated modes | `offline,segmented,streaming` |
+| `--threads N` | Thread count | all CPUs |
+| `--runs N` | Repeat each test N times, keep best | 1 |
+
+To compare against the C reference:
+
+```bash
+bench/run.sh --binary /path/to/qwen_asr --label c-reference
+bench/compare.sh c-reference after-optimization
+```
+
 ## Performance
 
 Benchmarks on Apple M-series (10 cores), Qwen3-ASR-0.6B:

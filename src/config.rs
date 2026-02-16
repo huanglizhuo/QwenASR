@@ -17,6 +17,7 @@ pub const TOKEN_AUDIO_START: i32 = 151669;
 pub const TOKEN_AUDIO_END: i32 = 151670;
 pub const TOKEN_AUDIO_PAD: i32 = 151676;
 pub const TOKEN_ASR_TEXT: i32 = 151704;
+pub const TOKEN_TIMESTAMP: i32 = 151705;
 
 // Conv2D stem constants
 pub const CONV_HIDDEN: usize = 480;
@@ -46,6 +47,10 @@ pub struct QwenConfig {
     pub vocab_size: usize,
     pub dec_rms_norm_eps: f32,
     pub dec_rope_theta: f32,
+
+    // Forced aligner fields (0 = normal ASR model)
+    pub classify_num: usize,
+    pub timestamp_segment_time: f32,
 }
 
 impl Default for QwenConfig {
@@ -70,36 +75,80 @@ impl Default for QwenConfig {
             vocab_size: VOCAB_SIZE,
             dec_rms_norm_eps: 1e-6,
             dec_rope_theta: 1e6,
+            classify_num: 0,
+            timestamp_segment_time: 0.0,
         }
     }
 }
 
 impl QwenConfig {
-    /// Detect model variant by probing for encoder layer 18 in safetensors.
-    /// Returns configured QwenConfig for 0.6B or 1.7B.
-    pub fn detect(has_layer_18: bool) -> Self {
+    /// Returns the effective lm_head output dimension.
+    pub fn lm_head_dim(&self) -> usize {
+        if self.classify_num > 0 { self.classify_num } else { self.vocab_size }
+    }
+
+    /// Whether this config is for a forced aligner model.
+    pub fn is_aligner(&self) -> bool {
+        self.classify_num > 0
+    }
+}
+
+/// Tensor shape info passed from safetensors for model detection.
+pub struct DetectInfo<'a> {
+    pub has_enc_layer_18: bool,
+    /// Shape of thinker.lm_head.weight (if present)
+    pub lm_head_shape: Option<&'a [i64]>,
+    /// Shape of thinker.model.embed_tokens.weight
+    pub embed_tokens_shape: Option<&'a [i64]>,
+    /// Shape of thinker.model.layers.0.mlp.gate_proj.weight
+    pub gate_proj_shape: Option<&'a [i64]>,
+}
+
+impl QwenConfig {
+    /// Detect model variant from safetensors tensor shapes.
+    /// Handles ASR 0.6B, ASR 1.7B, and ForcedAligner 0.6B (which has 1.7B encoder + 0.6B decoder).
+    pub fn detect(info: &DetectInfo) -> Self {
         let mut cfg = Self::default();
 
-        if has_layer_18 {
-            // 1.7B model
+        // Determine decoder hidden size from embed_tokens shape [vocab_size, hidden_dim]
+        let dec_hidden = info.embed_tokens_shape
+            .and_then(|s| if s.len() == 2 { Some(s[1] as usize) } else { None })
+            .unwrap_or(if info.has_enc_layer_18 { 2048 } else { 1024 });
+
+        // Determine decoder intermediate from gate_proj shape [intermediate, hidden]
+        let dec_intermediate = info.gate_proj_shape
+            .and_then(|s| if s.len() == 2 { Some(s[0] as usize) } else { None })
+            .unwrap_or(if dec_hidden >= 2048 { 6144 } else { 3072 });
+
+        // Encoder architecture: 24 layers = "large" encoder, 18 layers = "small" encoder
+        if info.has_enc_layer_18 {
+            // Large encoder (used by both 1.7B ASR and aligner 0.6B)
             cfg.enc_d_model = 1024;
             cfg.enc_layers = 24;
             cfg.enc_heads = 16;
             cfg.enc_head_dim = 64;
             cfg.enc_ffn_dim = 4096;
-            cfg.enc_output_dim = 2048;
-            cfg.dec_hidden = 2048;
-            cfg.dec_intermediate = 6144;
         } else {
-            // 0.6B model
+            // Small encoder (0.6B ASR)
             cfg.enc_d_model = 896;
             cfg.enc_layers = 18;
             cfg.enc_heads = 14;
             cfg.enc_head_dim = 64;
             cfg.enc_ffn_dim = 3584;
-            cfg.enc_output_dim = 1024;
-            cfg.dec_hidden = 1024;
-            cfg.dec_intermediate = 3072;
+        }
+
+        // enc_output_dim always matches dec_hidden (proj projects encoder output to decoder space)
+        cfg.enc_output_dim = dec_hidden;
+        cfg.dec_hidden = dec_hidden;
+        cfg.dec_intermediate = dec_intermediate;
+
+        // Detect forced aligner: lm_head has shape [classify_num, hidden_dim]
+        // where classify_num != vocab_size (typically 5000)
+        if let Some(shape) = info.lm_head_shape {
+            if shape.len() == 2 && (shape[0] as usize) != VOCAB_SIZE {
+                cfg.classify_num = shape[0] as usize;
+                cfg.timestamp_segment_time = 80.0; // 80ms per time bin
+            }
         }
 
         cfg.enc_chunk_size = cfg.enc_n_window * 2;

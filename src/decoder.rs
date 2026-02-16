@@ -26,6 +26,8 @@ pub struct Decoder {
     pub tok_embeddings_bf16: *const u16,
     pub layers: Vec<DecLayer>,
     pub norm: Vec<f32>,
+    /// Separate lm_head for forced aligner (None = tied weights with tok_embeddings)
+    pub lm_head_bf16: Option<*const u16>,
 }
 
 unsafe impl Send for Decoder {}
@@ -102,10 +104,20 @@ impl Decoder {
 
         let norm = load_f32(ms, "thinker.model.norm.weight")?;
 
+        // Load separate lm_head if present (forced aligner has untied lm_head)
+        let lm_head_bf16 = if cfg.classify_num > 0 {
+            let ptr = load_bf16_direct(ms, "thinker.lm_head.weight")?;
+            Some(ptr)
+        } else {
+            // For normal ASR, lm_head is tied with tok_embeddings (no separate weight)
+            ms.get_bf16_direct("thinker.lm_head.weight")
+        };
+
         Some(Decoder {
             tok_embeddings_bf16,
             layers,
             norm,
+            lm_head_bf16,
         })
     }
 }
@@ -561,7 +573,45 @@ pub fn decoder_forward(
         let tmp: Vec<f32> = bufs.x[..dim].to_vec();
         kernels::rms_norm(&mut bufs.x[..dim], &tmp, &decoder.norm, 1, dim, eps);
     }
-    kernels::argmax_matvec_bf16(&bufs.x[..dim], decoder.tok_embeddings_bf16, dim, cfg.vocab_size) as i32
+    let lm_weight = decoder.lm_head_bf16.unwrap_or(decoder.tok_embeddings_bf16);
+    let lm_out_dim = cfg.lm_head_dim();
+    kernels::argmax_matvec_bf16(&bufs.x[..dim], lm_weight, dim, lm_out_dim) as i32
+}
+
+/// Decoder prefill that returns per-position logits (for forced aligner).
+/// Returns `[seq_len × out_dim]` logits where out_dim = classify_num.
+pub fn decoder_prefill_logits(
+    decoder: &Decoder,
+    cfg: &QwenConfig,
+    kv_cache: &mut KvCache,
+    rope: &mut RopeCache,
+    bufs: &mut DecoderBuffers,
+    input_embeds: &[f32],
+    seq_len: usize,
+) -> Vec<f32> {
+    let dim = cfg.dec_hidden;
+    let eps = cfg.dec_rms_norm_eps;
+    let out_dim = cfg.lm_head_dim();
+
+    // Run the standard prefill to get hidden states
+    decoder_prefill(decoder, cfg, kv_cache, rope, bufs, input_embeds, seq_len);
+
+    // After prefill, pref_x contains the final hidden states for all positions.
+    // Apply final RMS norm and lm_head projection.
+    let x = &bufs.pref_x[..seq_len * dim];
+    let mut x_norm = vec![0.0f32; seq_len * dim];
+    kernels::rms_norm(&mut x_norm, x, &decoder.norm, seq_len, dim, eps);
+
+    let lm_weight = decoder.lm_head_bf16.unwrap_or(decoder.tok_embeddings_bf16);
+
+    // Project each position through lm_head: [seq_len × dim] × [out_dim × dim]^T → [seq_len × out_dim]
+    let mut logits = vec![0.0f32; seq_len * out_dim];
+    kernels::linear_nobias_bf16_scratch(
+        &mut logits, &x_norm, lm_weight,
+        seq_len, dim, out_dim, &mut bufs.bf16_scratch,
+    );
+
+    logits
 }
 
 /// Convert a token embedding from bf16 to f32.

@@ -10,6 +10,7 @@ mod encoder;
 mod decoder;
 mod context;
 mod transcribe;
+mod align;
 #[cfg(any(feature = "ios", feature = "android"))]
 mod c_api;
 #[cfg(feature = "android")]
@@ -42,6 +43,9 @@ fn usage(prog: &str) {
     eprintln!("  --skip-silence              Drop long silent spans before inference");
     eprintln!("  --prompt <text>            System prompt for biasing");
     eprintln!("  --language <lang>          Force output language");
+    eprintln!("\nAlignment mode (requires ForcedAligner model):");
+    eprintln!("  --align <text>             Align transcript to audio (word-level timestamps)");
+    eprintln!("  --align-language <lang>    Language for word splitting (default: English)");
     eprintln!("  --profile     Print per-operation timing breakdown");
     eprintln!("  --debug       Debug output (per-layer details)");
     eprintln!("  --silent      No status output (only transcription on stdout)");
@@ -75,6 +79,8 @@ fn main() {
     let mut past_text_mode: i32 = -1; // -1 auto, 0 off, 1 on
     let mut skip_silence = false;
     let mut profile = false;
+    let mut align_text: Option<String> = None;
+    let mut align_language: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -132,6 +138,14 @@ fn main() {
             "--language" => {
                 i += 1;
                 force_language = args.get(i).cloned();
+            }
+            "--align" => {
+                i += 1;
+                align_text = args.get(i).cloned();
+            }
+            "--align-language" => {
+                i += 1;
+                align_language = args.get(i).cloned();
             }
             "--stdin" => {
                 use_stdin = true;
@@ -235,6 +249,65 @@ fn main() {
             );
             std::process::exit(1);
         }
+    }
+
+    // Alignment mode
+    if let Some(ref atext) = align_text {
+        let lang = align_language.as_deref().unwrap_or("English");
+        let lang_normalized = match normalize_language(lang) {
+            Some(l) => l,
+            None => {
+                eprintln!("Unsupported --align-language: {}", lang);
+                eprintln!("Supported languages: {}", SUPPORTED_LANGUAGES.join(","));
+                std::process::exit(1);
+            }
+        };
+
+        let samples = if use_stdin {
+            audio::read_pcm_stdin()
+        } else {
+            audio::load_wav(input_wav.as_ref().unwrap())
+        };
+        let samples = match samples {
+            Some(s) => s,
+            None => {
+                eprintln!("Failed to load audio");
+                std::process::exit(1);
+            }
+        };
+
+        match align::forced_align(&mut ctx, &samples, atext, &lang_normalized) {
+            Some(results) => {
+                // Output JSON array
+                println!("[");
+                for (i, r) in results.iter().enumerate() {
+                    let comma = if i + 1 < results.len() { "," } else { "" };
+                    // Escape the text for JSON
+                    let escaped = r.text.replace('\\', "\\\\").replace('"', "\\\"");
+                    println!(
+                        "  {{\"text\": \"{}\", \"start\": {:.0}, \"end\": {:.0}}}{}",
+                        escaped, r.start_ms, r.end_ms, comma
+                    );
+                }
+                println!("]");
+            }
+            None => {
+                eprintln!("Alignment failed");
+                std::process::exit(1);
+            }
+        }
+
+        if verbosity >= 1 {
+            eprintln!(
+                "Alignment: {:.0} ms (encoding: {:.0}ms, decoding: {:.0}ms)",
+                ctx.perf_total_ms, ctx.perf_encode_ms, ctx.perf_decode_ms
+            );
+        }
+
+        if profile {
+            kernels::profile_report();
+        }
+        return;
     }
 
     // Set token callback
