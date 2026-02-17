@@ -1,5 +1,16 @@
 //! CPU-only Qwen3-ASR speech recognition in pure Rust.
 //!
+//! BLAS and SIMD optimizations are selected automatically at compile time based
+//! on the target platform — Accelerate + NEON on macOS/aarch64, OpenBLAS + AVX2
+//! on Linux/x86_64, etc. For best performance on x86_64, build with:
+//!
+//! ```bash
+//! RUSTFLAGS="-C target-cpu=native" cargo build --release
+//! ```
+//!
+//! **Important:** Always build in release mode (`--release`). Debug builds are
+//! 10–50x slower and unusable for real-time inference.
+//!
 //! # Quick Start
 //!
 //! ```rust,no_run

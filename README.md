@@ -35,6 +35,9 @@ cd ..
 
 ## Build
 
+**Important:** Always build in release mode (`--release`). Debug builds are
+10–50x slower and unusable for real-time inference.
+
 ### macOS (CLI)
 
 ```bash

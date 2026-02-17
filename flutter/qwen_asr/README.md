@@ -4,6 +4,10 @@ On-device Qwen3-ASR speech-to-text for Flutter. Runs entirely on the device
 using a pure Rust inference engine — no cloud services, no server, no network
 required. Supports iOS, Android, and macOS.
 
+The native Rust engine is compiled in release mode automatically by the Flutter
+build pipeline. If building the Rust library manually, always use `--release` —
+debug builds are 10–50x slower and unusable for real-time inference.
+
 ## Setup
 
 Add the dependency:

@@ -9,6 +9,32 @@ for minimal RAM usage; SIMD kernels (NEON / AVX2+FMA) accelerate inference.
 - Rust 1.70+
 - BLAS: Accelerate (macOS, linked automatically) or OpenBLAS (Linux)
 
+## Building
+
+Platform-specific optimizations are detected automatically at compile time:
+
+| Platform | BLAS | SIMD |
+|----------|------|------|
+| macOS (Apple Silicon) | Accelerate + vDSP | NEON (always available) |
+| macOS (Intel) | Accelerate + vDSP | AVX2+FMA |
+| Linux (x86_64) | OpenBLAS | AVX2+FMA |
+| Linux (aarch64) | OpenBLAS | NEON |
+| Other | OpenBLAS | Generic scalar fallback |
+
+For best performance, build with native CPU tuning so the compiler can emit
+AVX2+FMA instructions on x86_64:
+
+```bash
+RUSTFLAGS="-C target-cpu=native" cargo build --release
+```
+
+On AArch64 (Apple Silicon, ARM Linux) NEON is baseline — no extra flags needed,
+though `-C target-cpu=native` is still recommended for other micro-architecture
+tuning.
+
+**Important:** Always use `--release` mode. Debug builds are 10-50x slower due
+to missing optimizations and are not usable for real-time inference.
+
 ## Model Download
 
 ```bash
