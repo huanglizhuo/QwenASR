@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["crates/qasr", "crates/qasr-cli"]
-exclude = ["flutter/qasr/rust"]  # Cargokit builds independently
+members = ["crates/qwen-asr", "crates/qwen-asr-cli"]
+exclude = ["flutter/qwen_asr/rust"]  # Cargokit builds independently
 
 [workspace.package]
 version = "0.1.0"

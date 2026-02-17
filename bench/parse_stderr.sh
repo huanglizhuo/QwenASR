@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Parse q-asr stderr output into key=value pairs.
+# Parse qwen-asr stderr output into key=value pairs.
 # Usage: bench/parse_stderr.sh < stderr_file
 #
 # Expected stderr lines:

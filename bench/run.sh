@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Defaults
-BINARY="$PROJECT_DIR/target/release/q-asr"
+BINARY="$PROJECT_DIR/target/release/qwen-asr"
 MODEL_DIR="$PROJECT_DIR/qwen3-asr-0.6b"
 SAMPLES_DIR="$SCRIPT_DIR/samples"
 LABEL=""
@@ -18,7 +18,7 @@ usage() {
     cat >&2 <<EOF
 Usage: bench/run.sh [options]
 
-  --binary PATH       Path to ASR binary (default: ./target/release/q-asr)
+  --binary PATH       Path to ASR binary (default: ./target/release/qwen-asr)
   --model-dir DIR     Model directory (default: qwen3-asr-0.6b)
   --samples-dir DIR   Audio samples directory (default: bench/samples)
   --label NAME        Label for this run (default: git short rev or timestamp)
@@ -258,7 +258,7 @@ for wav in "${WAV_FILES[@]}"; do
         OUT_FILE="$RESULT_DIR/${base}_${mode}.json"
         cat > "$OUT_FILE" <<ENDJSON
 {
-  "version": "q-asr-bench-v1",
+  "version": "qwen-asr-bench-v1",
   "label": "$(json_str "$LABEL")",
   "binary": "$(json_str "$BINARY")",
   "git_rev": "$(json_str "$GIT_REV")",
@@ -349,7 +349,7 @@ for m, v in by_mode.items():
     }
 
 summary = {
-    'version': 'q-asr-bench-v1',
+    'version': 'qwen-asr-bench-v1',
     'label': results[0]['label'],
     'git_rev': results[0]['git_rev'],
     'timestamp': results[0]['timestamp'],

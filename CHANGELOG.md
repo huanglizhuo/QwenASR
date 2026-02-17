@@ -15,14 +15,14 @@
 ### Features
 
 - **Built-in profiling** — `--profile` flag prints per-operation timing breakdown (call count, total/avg time)
-- **iOS support** — Static library target with C-FFI API (`src/c_api.rs`): `qasr_load_model`, `qasr_transcribe_file`, `qasr_transcribe_pcm`, `qasr_free`
-- **Android support** — Shared library target with JNI API (`src/jni_api.rs`) for `com.qasr.QAsrEngine` Java class
+- **iOS support** — Static library target with C-FFI API (`src/c_api.rs`): `qwen_asr_load_model`, `qwen_asr_transcribe_file`, `qwen_asr_transcribe_pcm`, `qwen_asr_free`
+- **Android support** — Shared library target with JNI API (`src/jni_api.rs`) for `com.qwenasr.QAsrEngine` Java class
 - **Feature flags** — `blas` (default), `vdsp`, `ios`, `android` for platform-specific builds
 - **Cross-compilation config** — `.cargo/config.toml` with tuned CPU targets for iOS (`apple-a14`) and Android (`cortex-a76`)
 
 ### Changed
 
-- Library crate renamed to `qasr` (was `q-asr`) for valid Rust identifier in imports
+- Library crate renamed to `qwen_asr` (was `q-asr`) for valid Rust identifier in imports
 - Library target now produces `lib`, `staticlib`, and `cdylib` outputs
 - Thread pool workers recover from poisoned mutex instead of panicking
 - Regression tests serialized via `Mutex` to prevent thread pool race conditions

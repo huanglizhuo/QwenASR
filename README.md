@@ -1,4 +1,4 @@
-# q-asr
+# qwen-asr
 
 Pure Rust, CPU-only inference engine for [Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-0.6B) speech-to-text models. Zero runtime Rust crate dependencies (only `libc`). Ported from [antirez/qwen-asr](https://github.com/antirez/qwen-asr).
 
@@ -41,7 +41,7 @@ cd ..
 RUSTFLAGS="-C target-cpu=native" cargo build --release
 ```
 
-The `target-cpu=native` flag enables NEON (Apple Silicon) or AVX2+FMA (x86_64) SIMD acceleration. The binary is at `target/release/q-asr`.
+The `target-cpu=native` flag enables NEON (Apple Silicon) or AVX2+FMA (x86_64) SIMD acceleration. The binary is at `target/release/qwen-asr`.
 
 For additional performance on Apple Silicon, enable vDSP (uses the AMX coprocessor via Accelerate):
 
@@ -77,7 +77,7 @@ RUSTFLAGS="-C target-cpu=native" cargo build --release --no-default-features
 
 ### iOS (Static Library)
 
-Produces a static library (`libqasr.a`) and C header for integration via the C-FFI API.
+Produces a static library (`libqwen_asr.a`) and C header for integration via the C-FFI API.
 
 ```bash
 # Device (arm64)
@@ -87,28 +87,28 @@ cargo build --release --target aarch64-apple-ios --features ios
 cargo build --release --target aarch64-apple-ios-sim --features ios
 ```
 
-The static library is at `target/aarch64-apple-ios/release/libqasr.a`. Link it into your Xcode project along with the Accelerate framework. The C-FFI API is defined in `src/c_api.rs`:
+The static library is at `target/aarch64-apple-ios/release/libqwen_asr.a`. Link it into your Xcode project along with the Accelerate framework. The C-FFI API is defined in `src/c_api.rs`:
 
 ```c
 // Load model, returns opaque handle
-void *qasr_load_model(const char *model_dir, int n_threads, int verbosity);
+void *qwen_asr_load_model(const char *model_dir, int n_threads, int verbosity);
 
 // Transcribe a WAV file on disk
-const char *qasr_transcribe_file(void *engine, const char *wav_path);
+const char *qwen_asr_transcribe_file(void *engine, const char *wav_path);
 
 // Transcribe raw PCM float samples (16kHz mono)
-const char *qasr_transcribe_pcm(void *engine, const float *samples, int n_samples);
+const char *qwen_asr_transcribe_pcm(void *engine, const float *samples, int n_samples);
 
 // Transcribe in-memory WAV data
-const char *qasr_transcribe_wav_buffer(void *engine, const uint8_t *data, int len);
+const char *qwen_asr_transcribe_wav_buffer(void *engine, const uint8_t *data, int len);
 
 // Configuration
-void qasr_set_segment_sec(void *engine, float sec);
-void qasr_set_language(void *engine, const char *lang);
+void qwen_asr_set_segment_sec(void *engine, float sec);
+void qwen_asr_set_language(void *engine, const char *lang);
 
 // Free returned strings and engine
-void qasr_free_string(const char *s);
-void qasr_free(void *engine);
+void qwen_asr_free_string(const char *s);
+void qwen_asr_free(void *engine);
 ```
 
 ### Android (Shared Library)
@@ -126,11 +126,11 @@ Build the shared library:
 cargo ndk -t arm64-v8a build --release --features android
 ```
 
-The `.so` is at `target/aarch64-linux-android/release/libqasr.so`. The JNI API maps to the Java class `com.qasr.QAsrEngine`:
+The `.so` is at `target/aarch64-linux-android/release/libqwen_asr.so`. The JNI API maps to the Java class `com.qwenasr.QAsrEngine`:
 
 ```java
 public class QAsrEngine {
-    static { System.loadLibrary("qasr"); }
+    static { System.loadLibrary("qwen_asr"); }
     public native boolean loadModel(String modelDir, int nThreads);
     public native String transcribePcm(float[] samples);
     public native String transcribeWav(byte[] wavData);
@@ -152,23 +152,23 @@ public class QAsrEngine {
 ## Usage
 
 ```
-q-asr -d <model_dir> (-i <input.wav> | --stdin) [options]
+qwen-asr -d <model_dir> (-i <input.wav> | --stdin) [options]
 ```
 
 ### Basic Examples
 
 ```bash
 # Transcribe a WAV file
-./target/release/q-asr -d qwen3-asr-0.6b -i audio.wav
+./target/release/qwen-asr -d qwen3-asr-0.6b -i audio.wav
 
 # Pipe audio from stdin
-cat audio.wav | ./target/release/q-asr -d qwen3-asr-0.6b --stdin
+cat audio.wav | ./target/release/qwen-asr -d qwen3-asr-0.6b --stdin
 
 # Raw s16le 16kHz mono from stdin
-ffmpeg -i video.mp4 -f s16le -ar 16000 -ac 1 - | ./target/release/q-asr -d qwen3-asr-0.6b --stdin
+ffmpeg -i video.mp4 -f s16le -ar 16000 -ac 1 - | ./target/release/qwen-asr -d qwen3-asr-0.6b --stdin
 
 # Silent mode (only transcript on stdout, no status on stderr)
-./target/release/q-asr -d qwen3-asr-0.6b -i audio.wav --silent
+./target/release/qwen-asr -d qwen3-asr-0.6b -i audio.wav --silent
 ```
 
 ### Segmented Mode
@@ -176,7 +176,7 @@ ffmpeg -i video.mp4 -f s16le -ar 16000 -ac 1 - | ./target/release/q-asr -d qwen3
 Split long audio at silence boundaries for better accuracy and lower memory:
 
 ```bash
-./target/release/q-asr -d qwen3-asr-0.6b -i long_audio.wav -S 30
+./target/release/qwen-asr -d qwen3-asr-0.6b -i long_audio.wav -S 30
 ```
 
 ### Streaming Mode
@@ -184,7 +184,7 @@ Split long audio at silence boundaries for better accuracy and lower memory:
 Process audio in 2-second chunks with incremental output:
 
 ```bash
-./target/release/q-asr -d qwen3-asr-0.6b -i audio.wav --stream
+./target/release/qwen-asr -d qwen3-asr-0.6b -i audio.wav --stream
 ```
 
 ### All Options
@@ -280,7 +280,7 @@ Options for `bench/run.sh`:
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--binary PATH` | Path to ASR binary | `./target/release/q-asr` |
+| `--binary PATH` | Path to ASR binary | `./target/release/qwen-asr` |
 | `--model-dir DIR` | Model directory | `qwen3-asr-0.6b` |
 | `--samples-dir DIR` | Audio samples directory | `bench/samples` |
 | `--label NAME` | Label for this run | git short rev or timestamp |
