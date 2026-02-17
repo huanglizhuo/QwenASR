@@ -16,6 +16,9 @@ name = "qwen_asr"
 [dependencies]
 libc = "0.2"
 
+[package.metadata.docs.rs]
+no-default-features = true
+
 [features]
 default = ["blas", "vdsp"]
 blas = []
