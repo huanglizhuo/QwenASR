@@ -1,5 +1,9 @@
 # qwen_asr
 
+> **Work in Progress** — This library is still under active development. Use it
+> at your own risk. APIs may change and some features may be incomplete or
+> unstable. I will continue to improve it over time.
+
 On-device Qwen3-ASR speech-to-text for Flutter. Runs entirely on the device
 using a pure Rust inference engine — no cloud services, no server, no network
 required. Supports iOS, Android, and macOS.
