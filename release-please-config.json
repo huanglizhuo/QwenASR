@@ -6,15 +6,5 @@
     "flutter/qwen_asr": {
       "release-type": "dart"
     }
-  },
-  "plugins": [
-    {
-      "type": "linked-versions",
-      "groupName": "QwenASR",
-      "components": [
-        "crates/qwen-asr",
-        "flutter/qwen_asr"
-      ]
-    }
-  ]
+  }
 }
