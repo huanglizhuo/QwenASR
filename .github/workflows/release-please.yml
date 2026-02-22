@@ -17,6 +17,7 @@ jobs:
       - id: release
         uses: googleapis/release-please-action@v4
         with:
+          token: ${{ secrets.PAT }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
@@ -28,7 +29,7 @@ jobs:
 
       # --- 1. Publish Rust Crate ---
       - name: Setup Rust
-        if: ${{ steps.release.outputs['crates/qwen-asr--release_created'] || steps.release.outputs['flutter/qwen_asr--release_created'] }}
+        if: ${{ steps.release.outputs['crates/qwen-asr--release_created'] }}
         uses: dtolnay/rust-toolchain@stable
         
       - name: Publish to crates.io
@@ -37,36 +38,3 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish
-
-      # --- 2. Publish Flutter Package ---
-      - name: Setup Flutter
-        if: ${{ steps.release.outputs['flutter/qwen_asr--release_created'] }}
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-
-      - name: Setup Dart for OIDC Publishing
-        if: ${{ steps.release.outputs['flutter/qwen_asr--release_created'] }}
-        uses: dart-lang/setup-dart@v1
-        with:
-          sdk: 'stable'
-          core-credentials: true
-
-      - name: Install dependencies
-        if: ${{ steps.release.outputs['flutter/qwen_asr--release_created'] }}
-        working-directory: flutter/qwen_asr
-        run: flutter pub get
-
-      - name: Install flutter_rust_bridge_codegen
-        if: ${{ steps.release.outputs['flutter/qwen_asr--release_created'] }}
-        run: cargo install flutter_rust_bridge_codegen
-
-      - name: Generate Rust Bindings
-        if: ${{ steps.release.outputs['flutter/qwen_asr--release_created'] }}
-        working-directory: flutter/qwen_asr
-        run: flutter_rust_bridge_codegen generate
-
-      - name: Publish to pub.dev
-        if: ${{ steps.release.outputs['flutter/qwen_asr--release_created'] }}
-        working-directory: flutter/qwen_asr
-        run: dart pub publish --force

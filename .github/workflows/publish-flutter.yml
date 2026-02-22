@@ -1,0 +1,45 @@
+name: Publish to pub.dev
+
+on:
+  push:
+    tags:
+      - 'qwen_asr-v[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  publish:
+    permissions:
+      id-token: write # Required for authentication using OIDC
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Setup Dart for OIDC Publishing
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: 'stable'
+          core-credentials: true
+
+      - name: Install dependencies
+        working-directory: flutter/qwen_asr
+        run: flutter pub get
+
+      - name: Install flutter_rust_bridge_codegen
+        run: cargo install flutter_rust_bridge_codegen
+
+      - name: Generate Rust Bindings
+        working-directory: flutter/qwen_asr
+        run: flutter_rust_bridge_codegen generate
+
+      - name: Publish to pub.dev
+        working-directory: flutter/qwen_asr
+        run: dart pub publish --force
