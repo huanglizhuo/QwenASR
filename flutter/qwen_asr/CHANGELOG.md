@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/huanglizhuo/QwenASR/compare/qwen_asr-v0.2.2...qwen_asr-v0.2.3) (2026-02-22)
+
+
+### Bug Fixes
+
+* remove non-existent flutter_rust_bridge_codegen dependency ([176cfa7](https://github.com/huanglizhuo/QwenASR/commit/176cfa7aad0a775bb6b8db487ea8c6c7b39f7758))
+
 ## [0.2.2](https://github.com/huanglizhuo/QwenASR/compare/qwen_asr-v0.2.1...qwen_asr-v0.2.2) (2026-02-22)
 
 
