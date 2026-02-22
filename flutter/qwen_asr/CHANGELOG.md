@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.5](https://github.com/huanglizhuo/QwenASR/compare/qwen_asr-v0.2.4...qwen_asr-v0.2.5) (2026-02-22)
+
+
+### Bug Fixes
+
+* publish 0.2.3 with tag-driven flow ([3637ec8](https://github.com/huanglizhuo/QwenASR/commit/3637ec80f5519ecbd0a034f6c1f23f78156cd0fe))
+* publish 0.2.3 with tag-driven flow ([e7bbd18](https://github.com/huanglizhuo/QwenASR/commit/e7bbd18dc009c3bd87f32e2346c196f65c618b19))
+
 ## [0.2.4](https://github.com/huanglizhuo/QwenASR/compare/qwen_asr-v0.2.3...qwen_asr-v0.2.4) (2026-02-22)
 
 
