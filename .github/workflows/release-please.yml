@@ -28,7 +28,7 @@ jobs:
 
       # --- 1. Publish Rust Crate ---
       - name: Setup Rust
-        if: ${{ steps.release.outputs['crates/qwen-asr--release_created'] }}
+        if: ${{ steps.release.outputs['crates/qwen-asr--release_created'] || steps.release.outputs['flutter/qwen_asr--release_created'] }}
         uses: dtolnay/rust-toolchain@stable
         
       - name: Publish to crates.io
@@ -57,10 +57,14 @@ jobs:
         working-directory: flutter/qwen_asr
         run: flutter pub get
 
+      - name: Install flutter_rust_bridge_codegen
+        if: ${{ steps.release.outputs['flutter/qwen_asr--release_created'] }}
+        run: cargo install flutter_rust_bridge_codegen
+
       - name: Generate Rust Bindings
         if: ${{ steps.release.outputs['flutter/qwen_asr--release_created'] }}
         working-directory: flutter/qwen_asr
-        run: flutter pub run flutter_rust_bridge_codegen generate
+        run: flutter_rust_bridge_codegen generate
 
       - name: Publish to pub.dev
         if: ${{ steps.release.outputs['flutter/qwen_asr--release_created'] }}
