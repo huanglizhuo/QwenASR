@@ -45,10 +45,22 @@ jobs:
         with:
           channel: 'stable'
 
+      - name: Setup Dart for OIDC Publishing
+        if: ${{ steps.release.outputs['flutter/qwen_asr--release_created'] }}
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: 'stable'
+          core-credentials: true
+
       - name: Install dependencies
         if: ${{ steps.release.outputs['flutter/qwen_asr--release_created'] }}
         working-directory: flutter/qwen_asr
         run: flutter pub get
+
+      - name: Generate Rust Bindings
+        if: ${{ steps.release.outputs['flutter/qwen_asr--release_created'] }}
+        working-directory: flutter/qwen_asr
+        run: flutter pub run flutter_rust_bridge_codegen generate
 
       - name: Publish to pub.dev
         if: ${{ steps.release.outputs['flutter/qwen_asr--release_created'] }}
