@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/huanglizhuo/QwenASR/compare/qwen_asr-v0.2.1...qwen_asr-v0.2.2) (2026-02-22)
+
+
+### Bug Fixes
+
+* add flutter_rust_bridge_codegen to dev_dependencies for github actions ([c78a437](https://github.com/huanglizhuo/QwenASR/commit/c78a437a19baf586b036302f597957d91ac82510))
+
 ## [0.2.1](https://github.com/huanglizhuo/QwenASR/compare/qwen_asr-v0.2.0...qwen_asr-v0.2.1) (2026-02-22)
 
 
