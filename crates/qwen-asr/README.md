@@ -1,4 +1,4 @@
-# qwen-asr
+# qwen_asr WIP
 
 > **Work in Progress** — This library is still under active development. Use it
 > at your own risk. APIs may change and some features may be incomplete or
