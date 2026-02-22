@@ -1,20 +1,12 @@
 {
   "packages": {
     "crates/qwen-asr": {
-      "release-type": "rust"
+      "release-type": "rust",
+      "component": "qwen-asr"
     },
     "flutter/qwen_asr": {
-      "release-type": "dart"
+      "release-type": "dart",
+      "component": "qwen_asr"
     }
-  },
-  "plugins": [
-    {
-      "type": "linked-versions",
-      "groupName": "QwenASR",
-      "components": [
-        "crates/qwen-asr",
-        "flutter/qwen_asr"
-      ]
-    }
-  ]
+  }
 }
