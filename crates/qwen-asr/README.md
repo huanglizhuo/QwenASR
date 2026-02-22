@@ -1,5 +1,9 @@
 # qwen-asr
 
+> **Work in Progress** — This library is still under active development. Use it
+> at your own risk. APIs may change and some features may be incomplete or
+> unstable. I will continue to improve it over time.
+
 CPU-only Qwen3-ASR speech recognition in pure Rust. No Python, no ONNX runtime,
 no framework dependencies — just `libc` and BLAS. BF16 weights stay memory-mapped
 for minimal RAM usage; SIMD kernels (NEON / AVX2+FMA) accelerate inference.
