@@ -1,3 +1,4 @@
+.DS_Store
 /target
 /qwen3-asr-0.6b
 /bench/results/
