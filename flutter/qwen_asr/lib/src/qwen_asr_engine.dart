@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'rust/api/qwen_asr_bridge.dart';
 import 'rust/frb_generated.dart';

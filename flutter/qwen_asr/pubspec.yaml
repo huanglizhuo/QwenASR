@@ -17,10 +17,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_rust_bridge: 2.11.1
+  flutter_rust_bridge: ^2.11.1
   plugin_platform_interface: ^2.0.2
-  rust_lib_qwen_asr:
-    path: rust_builder
 
 dev_dependencies:
   flutter_test:
@@ -39,7 +37,10 @@ flutter:
       android:
         package: com.example.qwen_asr
         pluginClass: QwenAsrPlugin
+        ffiPlugin: true
       ios:
         pluginClass: QwenAsrPlugin
+        ffiPlugin: true
       macos:
         pluginClass: QwenAsrPlugin
+        ffiPlugin: true
