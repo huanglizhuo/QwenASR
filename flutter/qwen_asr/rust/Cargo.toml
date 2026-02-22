@@ -11,15 +11,15 @@ flutter_rust_bridge = "=2.11.1"
 
 # Apple platforms: use default features (blas via Accelerate)
 [target.'cfg(target_vendor = "apple")'.dependencies]
-qwen_asr = { package = "qwen-asr", version = "0.1.0", path = "../../../crates/qwen-asr" }
+qwen_asr = { package = "qwen-asr", path = "../../../crates/qwen-asr" }
 
 # Android: disable blas (no OpenBLAS)
 [target.'cfg(target_os = "android")'.dependencies]
-qwen_asr = { package = "qwen-asr", version = "0.1.0", path = "../../../crates/qwen-asr", default-features = false }
+qwen_asr = { package = "qwen-asr", path = "../../../crates/qwen-asr", default-features = false }
 
 # Linux (desktop): use default features (blas via OpenBLAS)
 [target.'cfg(all(target_os = "linux", not(target_os = "android")))'.dependencies]
-qwen_asr = { package = "qwen-asr", version = "0.1.0", path = "../../../crates/qwen-asr", default-features = true }
+qwen_asr = { package = "qwen-asr", path = "../../../crates/qwen-asr", default-features = true }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
