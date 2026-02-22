@@ -1,6 +1,6 @@
 [package]
 name = "qwen-asr"
-version.workspace = true
+version = "0.1.2"
 edition.workspace = true
 license.workspace = true
 description = "CPU-only Qwen3-ASR speech recognition (pure Rust)"
