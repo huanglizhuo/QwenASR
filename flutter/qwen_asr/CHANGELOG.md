@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.6](https://github.com/huanglizhuo/QwenASR/compare/qwen_asr-v0.2.5...qwen_asr-v0.2.6) (2026-02-22)
+
+
+### Bug Fixes
+
+* update the release flow to support PAT ([2b9be6c](https://github.com/huanglizhuo/QwenASR/commit/2b9be6c21b7e74e51bf1d1f15e6959679db70542))
+
 ## [0.2.5](https://github.com/huanglizhuo/QwenASR/compare/qwen_asr-v0.2.4...qwen_asr-v0.2.5) (2026-02-22)
 
 
