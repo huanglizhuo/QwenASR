@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.3] - 2026-02-23
+
+### Features
+
+- **Live audio capture** (macOS) — `--live` flag captures from audio input devices (microphone, BlackHole) in real time with segmented, streaming, or VAD modes
+- **VAD live mode** — `--vad` flag uses energy-based Voice Activity Detection to detect speech segments and transcribe each independently, with cross-segment prompt conditioning for improved accuracy
+- **Model download subcommand** — `qwen-asr download --list` and `qwen-asr download <model>` for built-in model management
+- **Forced alignment** — `--align` flag produces word-level timestamps for a known transcript using the ForcedAligner model variant
+
+### Performance
+
+- **Lazy encoder re-encoding** — Partial encoder tail is only re-encoded every other chunk in streaming mode, giving near-perfect LCP (Longest Common Prefix) reuse and cutting decoder prefill cost by ~50% on skip chunks
+- **Streaming robustness** — Degeneracy detection resets decoder state when stale or repetitive output is detected; periodic re-anchoring prevents unbounded sequence growth
+
+### Changed
+
+- Debug messages (`[stream degen]`, `[stream reanchor]`) now only appear in `--debug` mode
+- Project restructured into workspace: `crates/qwen-asr` (library), `crates/qwen-asr-cli` (CLI binary)
+- Removed WIP banner from all README files
+
 ## [0.2.0] - 2026-02-15
 
 ### Performance

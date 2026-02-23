@@ -1,8 +1,4 @@
-# qwen_asr WIP
-
-> **Work in Progress** — This library is still under active development. Use it
-> at your own risk. APIs may change and some features may be incomplete or
-> unstable. I will continue to improve it over time.
+# qwen_asr
 
 CPU-only Qwen3-ASR speech recognition in pure Rust. No Python, no ONNX runtime,
 no framework dependencies — just `libc` and BLAS. BF16 weights stay memory-mapped
@@ -96,6 +92,35 @@ let samples: Vec<f32> = load_audio_somehow();
 let text = transcribe::transcribe_audio(&mut ctx, &samples).unwrap();
 ```
 
+### Streaming API
+
+For real-time incremental transcription, use `StreamState` and `stream_push_audio`:
+
+```rust,no_run
+use qwen_asr::context::QwenCtx;
+use qwen_asr::transcribe::{StreamState, stream_push_audio};
+
+let mut ctx = QwenCtx::load("qwen3-asr-0.6b").unwrap();
+let mut state = StreamState::new();
+
+// As audio arrives (e.g., from a microphone), accumulate samples
+let mut all_samples: Vec<f32> = Vec::new();
+loop {
+    let new_audio = get_audio_chunk(); // your audio source
+    all_samples.extend_from_slice(&new_audio);
+
+    // Push all accumulated audio; stream_push_audio tracks its own cursor
+    if let Some(delta) = stream_push_audio(&mut ctx, &all_samples, &mut state, false) {
+        if !delta.is_empty() {
+            print!("{}", delta); // incremental output
+        }
+    }
+}
+
+// Finalize to flush remaining tokens
+stream_push_audio(&mut ctx, &all_samples, &mut state, true);
+```
+
 ### Forced Alignment
 
 Produce word-level timestamps for a known transcript. Requires the
@@ -142,8 +167,10 @@ Benchmarks on Apple M2 Pro (10-core), 0.6B model:
 | Mode | Audio | Wall Time | Realtime Factor |
 |------|-------|-----------|-----------------|
 | Offline | 11 s | 1.8 s | 6.2x |
+| Offline | 28 s | 4.0 s | 7.0x |
 | Segmented (-S 30) | 45 s | 4.6 s | 9.8x |
-| Segmented (-S 30) | 89 s | 17.4 s | 5.1x |
+| Streaming | 28 s | 10.4 s | 2.7x |
+| Streaming (live) | 51 s | 14.1 s | 3.6x |
 
 ## License
 

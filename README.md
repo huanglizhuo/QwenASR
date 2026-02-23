@@ -1,8 +1,8 @@
-# qwen-asr WIP
+# qwen-asr
 
 Pure Rust, CPU-only inference engine for [Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-0.6B) speech-to-text models. Zero runtime Rust crate dependencies (only `libc`). Ported from [antirez/qwen-asr](https://github.com/antirez/qwen-asr).
 
-Supports the 0.6B and 1.7B model variants with three runtime modes: offline, segmented, and streaming.
+Supports the 0.6B and 1.7B model variants with five runtime modes: offline, segmented, streaming, live capture, and VAD-based live segmentation.
 
 ## Prerequisites
 
@@ -155,7 +155,7 @@ public class QAsrEngine {
 ## Usage
 
 ```
-qwen-asr -d <model_dir> (-i <input.wav> | --stdin) [options]
+qwen-asr -d <model_dir> (-i <input.wav> | --stdin | --live) [options]
 ```
 
 ### Basic Examples
@@ -184,10 +184,59 @@ Split long audio at silence boundaries for better accuracy and lower memory:
 
 ### Streaming Mode
 
-Process audio in 2-second chunks with incremental output:
+Process audio in 2-second chunks with incremental output. Uses prefix rollback for self-correction and lazy encoder re-encoding for optimized prefill performance:
 
 ```bash
+# Streaming from a file
 ./target/release/qwen-asr -d qwen3-asr-0.6b -i audio.wav --stream
+
+# Streaming with custom chunk size
+./target/release/qwen-asr -d qwen3-asr-0.6b -i audio.wav --stream --stream-chunk-sec 4
+```
+
+### Live Capture (macOS)
+
+Capture audio from an input device in real time. Requires an audio input device (such as BlackHole for system audio capture or a microphone):
+
+```bash
+# Default input device, segmented mode
+./target/release/qwen-asr -d qwen3-asr-0.6b --live
+
+# Specific device, streaming mode (best accuracy)
+./target/release/qwen-asr -d qwen3-asr-0.6b --live --stream --device "BlackHole 2ch"
+
+# List available audio input devices
+./target/release/qwen-asr --list-devices
+```
+
+### VAD Live Mode (macOS)
+
+Voice Activity Detection mode captures audio in real time, detects speech segments using energy-based VAD, and transcribes each segment independently. Useful for conversations with natural pauses:
+
+```bash
+./target/release/qwen-asr -d qwen3-asr-0.6b --live --vad --device "BlackHole 2ch"
+```
+
+VAD mode uses cross-segment prompt conditioning — each segment's output is passed as context to the next, improving accuracy across segments.
+
+### Forced Alignment
+
+Produce word-level timestamps for a known transcript (requires the ForcedAligner model variant):
+
+```bash
+./target/release/qwen-asr -d qwen3-aligner-0.6b -i audio.wav --align "Hello world" --align-language English
+```
+
+### Model Download
+
+Models can be downloaded via the built-in download subcommand:
+
+```bash
+# List available models
+./target/release/qwen-asr download --list
+
+# Download a model
+./target/release/qwen-asr download qwen3-asr-0.6b
 ```
 
 ### All Options
@@ -197,16 +246,23 @@ Process audio in 2-second chunks with incremental output:
 | `-d <dir>` | Model directory (required) | — |
 | `-i <file>` | Input WAV file (16-bit PCM, any sample rate) | — |
 | `--stdin` | Read audio from stdin (WAV or raw s16le 16kHz mono) | off |
+| `--live` | Capture from audio input device in real time (macOS) | off |
+| `--device <name>` | Input device name for live capture | system default |
+| `--list-devices` | List available audio input devices and exit | — |
+| `--vad` | Live VAD mode: detect speech segments and transcribe each | off |
 | `-t <n>` | Number of threads | all CPUs |
 | `-S <secs>` | Segment target seconds (0 = full-audio decode) | 0 |
 | `-W <secs>` | Silence search window for segment splits | 3.0 |
 | `--stream` | Streaming mode with chunked rollback | off |
+| `--stream-chunk-sec <secs>` | Chunk size for streaming (min ~1.0) | 2.0 |
 | `--stream-max-new-tokens <n>` | Max tokens per stream step | 32 |
 | `--enc-window-sec <secs>` | Encoder attention window (1–8) | 8 |
 | `--past-text <yes\|no\|auto>` | Reuse decoded text as context for next segment | auto |
 | `--skip-silence` | Drop long silent spans before inference | off |
 | `--prompt <text>` | System prompt for biasing | — |
 | `--language <lang>` | Force output language (e.g., `en`, `zh`, `ja`) | auto |
+| `--align <text>` | Align transcript to audio (word-level timestamps) | — |
+| `--align-language <lang>` | Language for alignment word splitting | English |
 | `--profile` | Print per-operation timing breakdown | off |
 | `--debug` | Verbose per-layer output | off |
 | `--silent` | No status output, only transcription on stdout | off |
@@ -234,31 +290,42 @@ cargo test --release --test kernels --test audio
 ## Project Structure
 
 ```
-src/
-  main.rs          CLI entry point
-  lib.rs           Library re-exports
-  config.rs        Model config, variant detection (0.6B vs 1.7B)
-  safetensors.rs   Mmap-based weight loader (multi-shard)
-  audio.rs         WAV decode, resample, mel spectrogram
-  tokenizer.rs     GPT-2 byte-level BPE
-  encoder.rs       Conv2D stem + windowed transformer
-  decoder.rs       28-layer GQA decoder + KV cache
-  context.rs       Top-level state (QwenCtx)
-  transcribe.rs    Offline / segmented / streaming orchestration
-  c_api.rs         C-FFI API for iOS integration (feature: ios)
-  jni_api.rs       JNI API for Android integration (feature: android)
-  kernels/
-    mod.rs         BLAS/vDSP bindings, thread pool, profiling, dispatch
-    generic.rs     Portable f32 fallbacks
-    neon.rs        ARM NEON SIMD (aarch64)
-    avx.rs         x86 AVX2+FMA SIMD
+crates/
+  qwen-asr/              Rust library crate
+    src/
+      lib.rs             Library re-exports
+      config.rs          Model config, variant detection (0.6B vs 1.7B)
+      safetensors.rs     Mmap-based weight loader (multi-shard)
+      audio.rs           WAV decode, resample, mel spectrogram
+      tokenizer.rs       GPT-2 byte-level BPE
+      encoder.rs         Conv2D stem + windowed transformer
+      decoder.rs         28-layer GQA decoder + KV cache
+      context.rs         Top-level state (QwenCtx)
+      transcribe.rs      Offline / segmented / streaming orchestration
+      align.rs           Forced alignment (word-level timestamps)
+      c_api.rs           C-FFI API for iOS integration (feature: ios)
+      jni_api.rs         JNI API for Android integration (feature: android)
+      kernels/
+        mod.rs           BLAS/vDSP bindings, thread pool, profiling, dispatch
+        generic.rs       Portable f32 fallbacks
+        neon.rs          ARM NEON SIMD (aarch64)
+        avx.rs           x86 AVX2+FMA SIMD
+    tests/
+      kernels.rs         Kernel numerical correctness
+      audio.rs           Audio pipeline verification
+      tokenizer.rs       BPE round-trip tests
+      regression.rs      End-to-end transcription tests
+  qwen-asr-cli/          CLI binary crate
+    src/
+      main.rs            CLI entry point
+      live_capture.rs    macOS audio capture (CoreAudio)
+flutter/
+  qwen_asr/              Flutter plugin (iOS, Android, macOS)
 .cargo/
-  config.toml      Cross-compilation targets (iOS, Android)
-tests/
-  kernels.rs       Kernel numerical correctness
-  audio.rs         Audio pipeline verification
-  tokenizer.rs     BPE round-trip tests
-  regression.rs    End-to-end transcription tests
+  config.toml            Cross-compilation targets (iOS, Android)
+bench/
+  run.sh                 Benchmark runner
+  compare.sh             A/B comparison tool
 ```
 
 ## Benchmarking
@@ -305,9 +372,14 @@ Benchmarks on Apple M-series (10 cores), Qwen3-ASR-0.6B:
 | Mode | Audio Length | Inference Time | Realtime Factor |
 |------|-------------|----------------|-----------------|
 | Offline | 11s | 1.8s | 6.2x |
+| Offline | 28s | 4.0s | 7.0x |
 | Segmented (`-S 30`) | 45s | 4.6s | 9.8x |
 | Segmented (`-S 30`) | 89s | 17.4s | 5.1x |
-| Streaming | 45s | 18.0s | 2.5x |
+| Streaming | 28s | 10.4s | 2.7x |
+| Streaming (live) | 51s | 14.1s | 3.6x |
+| VAD (live) | 28s | ~5s total | 3-5x per segment |
+
+Streaming mode uses lazy encoder re-encoding to optimize prefill performance — the partial encoder tail is only re-encoded every other chunk, allowing near-perfect LCP (Longest Common Prefix) reuse in the decoder.
 
 ## License
 
