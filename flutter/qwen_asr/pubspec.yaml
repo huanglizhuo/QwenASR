@@ -1,6 +1,6 @@
 name: qwen_asr
 description: "On-device Qwen3-ASR speech-to-text for Flutter. Pure Rust, no cloud, no server."
-version: 0.2.6
+version: 0.3.0
 homepage: https://github.com/huanglizhuo/QwenASR
 repository: https://github.com/huanglizhuo/QwenASR
 issue_tracker: https://github.com/huanglizhuo/QwenASR/issues

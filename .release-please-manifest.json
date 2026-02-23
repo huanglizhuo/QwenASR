@@ -1,5 +1,5 @@
 {
-    "crates/qwen-asr": "0.2.4",
-    "crates/qwen-asr-cli": "0.2.4",
-    "flutter/qwen_asr": "0.2.6"
+    "crates/qwen-asr": "0.3.0",
+    "crates/qwen-asr-cli": "0.3.0",
+    "flutter/qwen_asr": "0.3.0"
 }
