@@ -136,6 +136,100 @@ fn test_streaming_mode() {
         "JFK streaming: Levenshtein distance {} > 10\nExpected: {}\nGot: {}", dist, expected, text);
 }
 
+fn load_audio_reference() -> String {
+    let path = "bench/samples/audio.txt";
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+#[test]
+fn test_offline_audio_wav() {
+    let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    let mut ctx = match setup_model() {
+        Some(c) => c,
+        None => return,
+    };
+    let wav = "bench/samples/audio.wav";
+    if !std::path::Path::new(wav).exists() {
+        eprintln!("Skipping: {} not found", wav);
+        return;
+    }
+    let reference = load_audio_reference();
+    if reference.is_empty() {
+        eprintln!("Skipping: bench/samples/audio.txt not found or empty");
+        return;
+    }
+
+    let result = transcribe::transcribe(&mut ctx, wav);
+    assert!(result.is_some(), "Offline transcription should succeed");
+    let text = result.unwrap();
+
+    let dist = levenshtein(&text.to_lowercase(), &reference.to_lowercase());
+    assert!(dist <= 5,
+        "audio.wav offline: Levenshtein distance {} > 5\nExpected: {}\nGot: {}", dist, reference, text);
+}
+
+#[test]
+fn test_segmented_audio_wav() {
+    let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    let mut ctx = match setup_model() {
+        Some(c) => c,
+        None => return,
+    };
+    let wav = "bench/samples/audio.wav";
+    if !std::path::Path::new(wav).exists() {
+        eprintln!("Skipping: {} not found", wav);
+        return;
+    }
+    let reference = load_audio_reference();
+    if reference.is_empty() {
+        eprintln!("Skipping: bench/samples/audio.txt not found or empty");
+        return;
+    }
+
+    ctx.segment_sec = 30.0;
+    let result = transcribe::transcribe(&mut ctx, wav);
+    assert!(result.is_some(), "Segmented transcription should succeed");
+    let text = result.unwrap();
+
+    let dist = levenshtein(&text.to_lowercase(), &reference.to_lowercase());
+    assert!(dist <= 10,
+        "audio.wav segmented: Levenshtein distance {} > 10\nExpected: {}\nGot: {}", dist, reference, text);
+}
+
+#[test]
+fn test_streaming_audio_wav() {
+    let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    let mut ctx = match setup_model() {
+        Some(c) => c,
+        None => return,
+    };
+    let wav = "bench/samples/audio.wav";
+    if !std::path::Path::new(wav).exists() {
+        eprintln!("Skipping: {} not found", wav);
+        return;
+    }
+    let reference = load_audio_reference();
+    if reference.is_empty() {
+        eprintln!("Skipping: bench/samples/audio.txt not found or empty");
+        return;
+    }
+
+    let samples = qwen_asr::audio::load_wav(wav);
+    assert!(samples.is_some(), "Should load bench/samples/audio.wav");
+    let samples = samples.unwrap();
+
+    let result = transcribe::transcribe_stream(&mut ctx, &samples);
+    assert!(result.is_some(), "Streaming transcription should succeed");
+    let text = result.unwrap();
+
+    let dist = levenshtein(&text.to_lowercase(), &reference.to_lowercase());
+    assert!(dist <= 10,
+        "audio.wav streaming: Levenshtein distance {} > 10\nExpected: {}\nGot: {}", dist, reference, text);
+}
+
 fn setup_aligner_model() -> Option<QwenCtx> {
     let model_dir = "qwen3-aligner-0.6b";
     if !std::path::Path::new(model_dir).join("model.safetensors").exists() {

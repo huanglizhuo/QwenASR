@@ -14,6 +14,14 @@ const PREFIX_HEAD: &[i32] = &[151644, 8948, 198];
 const PREFIX_TAIL: &[i32] = &[151645, 198, 151644, 872, 198, 151669];
 const SUFFIX_BASE: &[i32] = &[151670, 151645, 198, 151644, 77091, 198];
 
+// Streaming robustness constants (matching C reference)
+const STREAM_DEGEN_MAX_PERIOD: usize = 6;
+const STREAM_DEGEN_MIN_REPEATS: usize = 4;
+const STREAM_STALE_CHUNKS: i32 = 4;
+const STREAM_RESET_INTERVAL_CHUNKS: i32 = 45;
+const STREAM_RESET_CARRY_TOKENS: usize = 24;
+const STREAM_MAX_ENC_WINDOWS: usize = 4;
+
 fn get_time_ms() -> f64 {
     // Use monotonic clock
     static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
@@ -23,6 +31,27 @@ fn get_time_ms() -> f64 {
 
 fn elapsed_ms(t0: f64) -> f64 {
     get_time_ms() - t0
+}
+
+/// Returns `(best_reps, best_period)`: how many times a block of `best_period`
+/// tokens repeats at the tail of `tokens`. Used for streaming degeneracy detection.
+fn stream_tail_repeat_blocks(tokens: &[i32], max_period: usize) -> (usize, usize) {
+    let n = tokens.len();
+    if n < 2 { return (1, 0); }
+    let period_cap = (n / 2).min(if max_period > 0 { max_period } else { n / 2 });
+    let mut best_reps = 1usize;
+    let mut best_period = 0usize;
+    for p in 1..=period_cap {
+        let mut reps = 1usize;
+        while (reps + 1) * p <= n {
+            let a = &tokens[n - (reps + 1) * p .. n - reps * p];
+            let b = &tokens[n - reps * p       .. n - (reps - 1) * p];
+            if a != b { break; }
+            reps += 1;
+        }
+        if reps > best_reps { best_reps = reps; best_period = p; }
+    }
+    (best_reps, best_period)
 }
 
 fn load_tokenizer(model_dir: &str) -> Option<QwenTokenizer> {
@@ -472,6 +501,11 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
     let mut prev_prefill_embeds: Vec<f32> = Vec::new();
     let mut prev_prefill_len = 0usize;
 
+    // Streaming robustness state
+    let mut stale_count = 0i32;
+    let mut prev_tail_snapshot: Vec<i32> = Vec::new();
+    let mut enc_cache_base_windows = 0usize;
+
     while audio_cursor < audio_samples.len() {
         let chunk_t0 = get_time_ms();
         audio_cursor = (audio_cursor + chunk_samples).min(audio_samples.len());
@@ -481,9 +515,9 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         let t0 = get_time_ms();
         let full_end = (audio_cursor / enc_window_samples) * enc_window_samples;
 
-        // Cache completed windows
-        while enc_cache.len() * enc_window_samples < full_end {
-            let ws = enc_cache.len() * enc_window_samples;
+        // Cache completed windows (base offset accounts for windows cleared on re-anchor)
+        while (enc_cache_base_windows + enc_cache.len()) * enc_window_samples < full_end {
+            let ws = (enc_cache_base_windows + enc_cache.len()) * enc_window_samples;
             let (mel, mel_frames) = audio::mel_spectrogram(&audio_samples[ws..ws + enc_window_samples])?;
             let (win_enc, win_seq) = ctx.encoder.forward(&cfg, &mel, mel_frames, Some(&mut ctx.enc_bufs))?;
             enc_cached_seq_total += win_seq;
@@ -650,6 +684,56 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         raw_tokens.truncate(n_prefix_tokens);
         raw_tokens.extend_from_slice(&chunk_tokens);
 
+        // Streaming degeneracy detection
+        if raw_tokens == prev_tail_snapshot {
+            stale_count += 1;
+        } else {
+            stale_count = 0;
+            prev_tail_snapshot = raw_tokens.clone();
+        }
+        let (best_reps, _) = stream_tail_repeat_blocks(&raw_tokens, STREAM_DEGEN_MAX_PERIOD);
+        let is_degen = stale_count >= STREAM_STALE_CHUNKS
+            || best_reps >= STREAM_DEGEN_MIN_REPEATS;
+
+        if is_degen {
+            if kernels::verbose() >= 2 {
+                eprintln!("[stream degen] reset at chunk {} (stale={}, reps={})",
+                    chunk_idx, stale_count, best_reps);
+            }
+            let carry = stable_text_tokens.len().min(STREAM_RESET_CARRY_TOKENS);
+            let carry_start = stable_text_tokens.len() - carry;
+            raw_tokens.clear();
+            if carry > 0 {
+                raw_tokens.push(TOKEN_ASR_TEXT);
+                raw_tokens.extend_from_slice(&stable_text_tokens[carry_start..]);
+            }
+            prev_prefill_embeds.clear();
+            prev_prefill_len = 0;
+            stale_count = 0;
+            prev_tail_snapshot.clear();
+        }
+
+        // Periodic re-anchor: reset context every STREAM_RESET_INTERVAL_CHUNKS chunks
+        if chunk_idx > 0 && chunk_idx % STREAM_RESET_INTERVAL_CHUNKS == 0 {
+            if kernels::verbose() >= 2 {
+                eprintln!("[stream reanchor] at chunk {}", chunk_idx);
+            }
+            let carry = stable_text_tokens.len().min(STREAM_RESET_CARRY_TOKENS);
+            let carry_start = stable_text_tokens.len() - carry;
+            raw_tokens.clear();
+            if carry > 0 {
+                raw_tokens.push(TOKEN_ASR_TEXT);
+                raw_tokens.extend_from_slice(&stable_text_tokens[carry_start..]);
+            }
+            prev_prefill_embeds.clear();
+            prev_prefill_len = 0;
+            stale_count = 0;
+            prev_tail_snapshot.clear();
+            enc_cache_base_windows += enc_cache.len();
+            enc_cache.clear();
+            enc_cached_seq_total = 0;
+        }
+
         // Parse text region
         let text_start = if n_force_prompt_tokens == 0 {
             raw_tokens.iter().position(|&t| t == TOKEN_ASR_TEXT)
@@ -718,6 +802,7 @@ pub struct StreamState {
     // Encoder
     enc_cache: Vec<EncWindow>,
     enc_cached_seq_total: usize,
+    enc_cache_base_windows: usize,
 
     // Decoder token history
     raw_tokens: Vec<i32>,
@@ -727,6 +812,10 @@ pub struct StreamState {
     // Prefill LCP reuse
     prev_prefill_embeds: Vec<f32>,
     prev_prefill_len: usize,
+
+    // Streaming robustness
+    prev_tail_snapshot: Vec<i32>,
+    stale_count: i32,
 
     // Lazy partial encoding: skip re-encoding every other chunk
     last_partial_cursor: usize,
@@ -748,11 +837,14 @@ impl StreamState {
         StreamState {
             enc_cache: Vec::new(),
             enc_cached_seq_total: 0,
+            enc_cache_base_windows: 0,
             raw_tokens: Vec::new(),
             stable_text_tokens: Vec::new(),
             result: String::new(),
             prev_prefill_embeds: Vec::new(),
             prev_prefill_len: 0,
+            prev_tail_snapshot: Vec::new(),
+            stale_count: 0,
             last_partial_cursor: 0,
             last_partial_enc: Vec::new(),
             last_partial_seq: 0,
@@ -767,11 +859,14 @@ impl StreamState {
     pub fn reset(&mut self) {
         self.enc_cache.clear();
         self.enc_cached_seq_total = 0;
+        self.enc_cache_base_windows = 0;
         self.raw_tokens.clear();
         self.stable_text_tokens.clear();
         self.result.clear();
         self.prev_prefill_embeds.clear();
         self.prev_prefill_len = 0;
+        self.prev_tail_snapshot.clear();
+        self.stale_count = 0;
         self.last_partial_cursor = 0;
         self.last_partial_enc.clear();
         self.last_partial_seq = 0;
@@ -854,9 +949,9 @@ pub fn stream_push_audio(
     let t0 = get_time_ms();
     let full_end = (state.audio_cursor / enc_window_samples) * enc_window_samples;
 
-    // Cache newly completed windows (skip already cached ones)
-    while state.enc_cache.len() * enc_window_samples < full_end {
-        let ws = state.enc_cache.len() * enc_window_samples;
+    // Cache newly completed windows (base offset accounts for windows cleared on re-anchor)
+    while (state.enc_cache_base_windows + state.enc_cache.len()) * enc_window_samples < full_end {
+        let ws = (state.enc_cache_base_windows + state.enc_cache.len()) * enc_window_samples;
         let (mel, mel_frames) = audio::mel_spectrogram(&samples[ws..ws + enc_window_samples])?;
         let (win_enc, win_seq) = ctx.encoder.forward(&cfg, &mel, mel_frames, Some(&mut ctx.enc_bufs))?;
         state.enc_cached_seq_total += win_seq;
@@ -1091,6 +1186,65 @@ pub fn stream_push_audio(
     // ---- Update raw token history ----
     state.raw_tokens.truncate(n_prefix_tokens);
     state.raw_tokens.extend_from_slice(&chunk_tokens);
+
+    // ---- Streaming degeneracy detection ----
+    if !speech_ended {
+        if state.raw_tokens == state.prev_tail_snapshot {
+            state.stale_count += 1;
+        } else {
+            state.stale_count = 0;
+            state.prev_tail_snapshot = state.raw_tokens.clone();
+        }
+        let (best_reps, _) = stream_tail_repeat_blocks(&state.raw_tokens, STREAM_DEGEN_MAX_PERIOD);
+        let is_degen = state.stale_count >= STREAM_STALE_CHUNKS
+            || best_reps >= STREAM_DEGEN_MIN_REPEATS;
+
+        if is_degen {
+            if kernels::verbose() >= 2 {
+                eprintln!("[stream degen] reset at chunk {} (stale={}, reps={})",
+                    state.chunk_idx, state.stale_count, best_reps);
+            }
+            let carry = state.stable_text_tokens.len().min(STREAM_RESET_CARRY_TOKENS);
+            let carry_start = state.stable_text_tokens.len() - carry;
+            state.raw_tokens.clear();
+            if carry > 0 {
+                state.raw_tokens.push(TOKEN_ASR_TEXT);
+                state.raw_tokens.extend_from_slice(&state.stable_text_tokens[carry_start..]);
+            }
+            state.prev_prefill_embeds.clear();
+            state.prev_prefill_len = 0;
+            state.stale_count = 0;
+            state.prev_tail_snapshot.clear();
+            if state.enc_cache.len() >= STREAM_MAX_ENC_WINDOWS {
+                state.enc_cache_base_windows += state.enc_cache.len();
+                state.enc_cache.clear();
+                state.enc_cached_seq_total = 0;
+            }
+        }
+
+        // Periodic re-anchor: reset context every STREAM_RESET_INTERVAL_CHUNKS chunks
+        if state.chunk_idx > 0 && state.chunk_idx % STREAM_RESET_INTERVAL_CHUNKS == 0 {
+            if kernels::verbose() >= 2 {
+                eprintln!("[stream reanchor] at chunk {}", state.chunk_idx);
+            }
+            let carry = state.stable_text_tokens.len().min(STREAM_RESET_CARRY_TOKENS);
+            let carry_start = state.stable_text_tokens.len() - carry;
+            state.raw_tokens.clear();
+            if carry > 0 {
+                state.raw_tokens.push(TOKEN_ASR_TEXT);
+                state.raw_tokens.extend_from_slice(&state.stable_text_tokens[carry_start..]);
+            }
+            state.prev_prefill_embeds.clear();
+            state.prev_prefill_len = 0;
+            state.stale_count = 0;
+            state.prev_tail_snapshot.clear();
+            if state.enc_cache.len() >= STREAM_MAX_ENC_WINDOWS {
+                state.enc_cache_base_windows += state.enc_cache.len();
+                state.enc_cache.clear();
+                state.enc_cached_seq_total = 0;
+            }
+        }
+    }
 
     // ---- Parse text region and emit stable tokens (non-speech-ended case) ----
     if !speech_ended {
