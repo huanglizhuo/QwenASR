@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/huanglizhuo/QwenASR/compare/qwen_asr-v0.2.6...qwen_asr-v0.3.0) (2026-02-23)
+
+
+### Features
+
+* update readme ([cde2178](https://github.com/huanglizhuo/QwenASR/commit/cde21787bb545e12c154045562883b9ced00514d))
+
 ## [0.2.6](https://github.com/huanglizhuo/QwenASR/compare/qwen_asr-v0.2.5...qwen_asr-v0.2.6) (2026-02-22)
 
 
