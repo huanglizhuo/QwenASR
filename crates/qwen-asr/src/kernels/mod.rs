@@ -413,13 +413,13 @@ pub fn dot_f32(a: &[f32], b: &[f32], n: usize) -> f32 {
         return result;
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(all(feature = "vdsp", target_vendor = "apple"))))]
     { return unsafe { neon::dot_f32(a, b, n) }; }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", not(all(feature = "vdsp", target_vendor = "apple"))))]
     { return unsafe { avx::dot_f32(a, b, n) }; }
 
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64", all(feature = "vdsp", target_vendor = "apple"))))]
     generic::dot_f32(a, b, n)
 }
 
@@ -431,13 +431,13 @@ pub fn vec_scale_inplace(dst: &mut [f32], scale: f32, n: usize) {
         return;
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(all(feature = "vdsp", target_vendor = "apple"))))]
     { unsafe { neon::vec_scale_inplace(dst, scale, n); } return; }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", not(all(feature = "vdsp", target_vendor = "apple"))))]
     { unsafe { avx::vec_scale_inplace(dst, scale, n); } return; }
 
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64", all(feature = "vdsp", target_vendor = "apple"))))]
     generic::vec_scale_inplace(dst, scale, n);
 }
 
@@ -449,13 +449,13 @@ pub fn vec_axpy_inplace(dst: &mut [f32], src: &[f32], alpha: f32, n: usize) {
         return;
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(all(feature = "vdsp", target_vendor = "apple"))))]
     { unsafe { neon::vec_axpy_inplace(dst, src, alpha, n); } return; }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", not(all(feature = "vdsp", target_vendor = "apple"))))]
     { unsafe { avx::vec_axpy_inplace(dst, src, alpha, n); } return; }
 
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64", all(feature = "vdsp", target_vendor = "apple"))))]
     generic::vec_axpy_inplace(dst, src, alpha, n);
 }
 

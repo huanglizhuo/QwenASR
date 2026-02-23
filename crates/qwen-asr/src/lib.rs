@@ -69,3 +69,40 @@ pub mod align;
 pub mod c_api;
 #[cfg(feature = "android")]
 pub mod jni_api;
+
+/// Returns a list of compile-time optimization flags enabled for this build.
+pub fn optimization_flags() -> Vec<&'static str> {
+    let mut flags = Vec::new();
+
+    if cfg!(feature = "vdsp") {
+        flags.push("vDSP/Accelerate");
+    }
+    if cfg!(feature = "blas") && !cfg!(feature = "vdsp") {
+        flags.push("BLAS");
+    }
+
+    // Architecture-specific SIMD
+    if cfg!(target_arch = "aarch64") {
+        flags.push("NEON");
+        if cfg!(target_feature = "dotprod") {
+            flags.push("DotProd");
+        }
+    } else if cfg!(target_arch = "x86_64") {
+        if cfg!(target_feature = "avx2") {
+            flags.push("AVX2");
+        } else if cfg!(target_feature = "avx") {
+            flags.push("AVX");
+        } else if cfg!(target_feature = "sse4.1") {
+            flags.push("SSE4.1");
+        }
+        if cfg!(target_feature = "fma") {
+            flags.push("FMA");
+        }
+    }
+
+    if flags.is_empty() {
+        flags.push("generic");
+    }
+
+    flags
+}

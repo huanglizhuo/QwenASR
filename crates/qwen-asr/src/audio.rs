@@ -130,7 +130,7 @@ pub fn read_pcm_stdin() -> Option<Vec<f32>> {
 }
 
 /// Kaiser-windowed sinc resampler.
-fn resample(samples: &[f32], from_rate: i32, to_rate: i32) -> Vec<f32> {
+pub fn resample(samples: &[f32], from_rate: i32, to_rate: i32) -> Vec<f32> {
     let n_frames = samples.len();
     let new_n = (n_frames as i64 * to_rate as i64 / from_rate as i64) as usize;
     let mut resampled = vec![0.0f32; new_n];
