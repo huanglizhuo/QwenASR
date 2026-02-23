@@ -26,6 +26,7 @@ fn usage(prog: &str) {
     eprintln!("  --live                      Capture from audio input device in real time");
     eprintln!("  --device <name>             Input device name (default: system default)");
     eprintln!("  --list-devices              List available audio input devices and exit");
+    eprintln!("  --vad                       Live VAD mode: detect speech segments, transcribe each");
     eprintln!("\nOptions:");
     eprintln!("  -t <n>        Number of threads (default: all CPUs)");
     eprintln!("  -S <secs>     Segment target seconds (default: 0 = full-audio decode)");
@@ -91,6 +92,7 @@ fn main() {
     let mut segment_sec: f32 = -1.0;
     let mut search_sec: f32 = -1.0;
     let mut stream_mode = false;
+    let mut vad_mode = false;
     let mut stream_max_new_tokens: i32 = -1;
     let mut stream_chunk_sec: f32 = -1.0;
     let mut enc_window_sec: f32 = -1.0;
@@ -127,6 +129,9 @@ fn main() {
             }
             "--stream" => {
                 stream_mode = true;
+            }
+            "--vad" => {
+                vad_mode = true;
             }
             "--stream-max-new-tokens" => {
                 i += 1;
@@ -397,7 +402,7 @@ fn main() {
 
         #[cfg(target_os = "macos")]
         {
-            run_live_capture(&mut ctx, device_name.as_deref(), stream_mode, verbosity, profile);
+            run_live_capture(&mut ctx, device_name.as_deref(), stream_mode, vad_mode, verbosity, profile);
             return;
         }
     }
@@ -468,6 +473,7 @@ fn run_live_capture(
     ctx: &mut QwenCtx,
     device_name: Option<&str>,
     stream_mode: bool,
+    vad_mode: bool,
     verbosity: i32,
     profile: bool,
 ) {
@@ -523,13 +529,17 @@ fn run_live_capture(
         }
     };
 
-    let mode_label = if stream_mode { "streaming" } else { "segmented" };
+    let mode_label = if stream_mode { "streaming" } else if vad_mode { "VAD" } else { "segmented" };
     if verbosity >= 1 {
-        eprintln!(
-            "Listening ({}, {:.1}s chunks)... press Ctrl+C to stop\n",
-            mode_label,
-            if stream_mode { ctx.stream_chunk_sec } else { ctx.segment_sec }
-        );
+        if vad_mode {
+            eprintln!("Listening (VAD segmented)... press Ctrl+C to stop\n");
+        } else {
+            eprintln!(
+                "Listening ({}, {:.1}s chunks)... press Ctrl+C to stop\n",
+                mode_label,
+                if stream_mode { ctx.stream_chunk_sec } else { ctx.segment_sec }
+            );
+        }
     }
 
     // Set up Ctrl+C handler
@@ -655,6 +665,190 @@ fn run_live_capture(
             std::io::Write::flush(&mut std::io::stdout()).ok();
         }
         println!();
+    } else if vad_mode {
+        // ---- VAD mode: energy-based speech detection + segment transcription ----
+        //
+        // Detect speech using RMS energy. When speech ends (silence > 1.5s),
+        // transcribe the accumulated speech segment using transcribe_audio().
+        // This gives better accuracy than streaming (full segment context)
+        // with automatic speech boundary detection.
+        let speech_threshold: f32 = 0.001;
+        let silence_hangover_secs = 1.5_f32;
+        let min_segment_secs = 0.5_f32;
+        let max_segment_secs = 30.0_f32;
+        let min_segment_samples = (min_segment_secs * target_rate as f32) as usize;
+        let max_segment_samples = (max_segment_secs * target_rate as f32) as usize;
+        let check_samples = (target_rate as usize) * 30 / 1000; // 30ms window for RMS
+
+        let mut speech_active = false;
+        let mut silence_start: Option<std::time::Instant> = None;
+        let mut speech_start_idx: usize = 0;
+
+        // Keep a small pre-speech buffer to avoid clipping word beginnings
+        let pre_speech_samples = (target_rate as usize) / 4; // 250ms lookback
+
+        // Disable token callback — we print the full result after each segment
+        ctx.token_cb = None;
+
+        // Cross-segment context: accumulate text to use as prompt for next segment
+        let mut accumulated_text = String::new();
+
+        while running.load(Ordering::SeqCst) {
+            // Receive audio
+            match rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(chunk) => raw_buf.extend_from_slice(&chunk),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+            while let Ok(chunk) = rx.try_recv() {
+                raw_buf.extend_from_slice(&chunk);
+            }
+
+            // Resample
+            if needs_resample {
+                if !raw_buf.is_empty() {
+                    let resampled = qwen_asr::audio::resample(
+                        &raw_buf, device_rate as i32, target_rate,
+                    );
+                    resampled_buf.extend_from_slice(&resampled);
+                    raw_buf.clear();
+                }
+            } else {
+                resampled_buf.append(&mut raw_buf);
+            }
+
+            // Compute RMS energy of latest 30ms
+            let buf_len = resampled_buf.len();
+            let rms = if buf_len >= check_samples {
+                let tail = &resampled_buf[buf_len - check_samples..];
+                let sum_sq: f32 = tail.iter().map(|&s| s * s).sum();
+                (sum_sq / check_samples as f32).sqrt()
+            } else {
+                0.0
+            };
+            let is_speech = rms >= speech_threshold;
+
+            // Periodic RMS debug output
+            if verbosity >= 2 && buf_len % (target_rate as usize * 2) < check_samples {
+                eprintln!("  [VAD] rms={:.6} threshold={:.4} speech={}",
+                    rms, speech_threshold, if speech_active { "active" } else { "inactive" });
+            }
+
+            if !speech_active {
+                if is_speech {
+                    // Speech started — mark the start with lookback
+                    speech_active = true;
+                    silence_start = None;
+                    speech_start_idx = buf_len.saturating_sub(pre_speech_samples);
+                    if verbosity >= 2 {
+                        eprintln!("  [VAD] speech start at {:.1}s",
+                            buf_len as f32 / target_rate as f32);
+                    }
+                } else {
+                    // No speech — bound buffer to avoid unlimited growth
+                    // Keep only last 0.5s for lookback context
+                    let keep = (target_rate as usize) / 2;
+                    if resampled_buf.len() > keep * 4 {
+                        let drain = resampled_buf.len() - keep;
+                        resampled_buf.drain(..drain);
+                    }
+                }
+            } else {
+                // Speech is active
+                let segment_len = buf_len - speech_start_idx;
+
+                if is_speech {
+                    // Still speaking — reset silence timer
+                    silence_start = None;
+
+                    // Force-flush if segment exceeds max duration
+                    if segment_len >= max_segment_samples {
+                        if verbosity >= 2 {
+                            eprintln!("  [VAD] max segment reached ({:.1}s), flushing",
+                                segment_len as f32 / target_rate as f32);
+                        }
+                        let segment = &resampled_buf[speech_start_idx..];
+                        // Set previous text as context
+                        if !accumulated_text.is_empty() {
+                            ctx.prompt = Some(accumulated_text.clone());
+                            ctx.prompt_tokens_ready = false;
+                        }
+                        ctx.reset_perf();
+                        if let Some(text) = transcribe::transcribe_audio(ctx, segment) {
+                            if !text.is_empty() {
+                                println!("{}", text);
+                                accumulated_text.push_str(&text);
+                            }
+                        }
+                        resampled_buf.clear();
+                        speech_active = false;
+                        silence_start = None;
+                    }
+                } else {
+                    // Silence during speech — track duration
+                    if silence_start.is_none() {
+                        silence_start = Some(std::time::Instant::now());
+                    }
+                    if let Some(start) = silence_start {
+                        if start.elapsed().as_secs_f32() >= silence_hangover_secs {
+                            // End of utterance — transcribe the segment
+                            if segment_len >= min_segment_samples {
+                                // Trim trailing silence (keep only 200ms of it)
+                                let trail_keep = (target_rate as usize) / 5;
+                                let seg_end = (buf_len - check_samples + trail_keep).min(buf_len);
+                                let segment = &resampled_buf[speech_start_idx..seg_end];
+
+                                if verbosity >= 2 {
+                                    eprintln!("  [VAD] speech end, segment {:.1}s",
+                                        segment.len() as f32 / target_rate as f32);
+                                }
+
+                                ctx.reset_perf();
+                                // Set previous text as context
+                                if !accumulated_text.is_empty() {
+                                    ctx.prompt = Some(accumulated_text.clone());
+                                    ctx.prompt_tokens_ready = false;
+                                }
+                                let t0 = std::time::Instant::now();
+                                if let Some(text) = transcribe::transcribe_audio(ctx, segment) {
+                                    if !text.is_empty() {
+                                        println!("{}", text);
+                                        accumulated_text.push_str(&text);
+                                        if verbosity >= 1 {
+                                            let audio_secs = segment.len() as f32 / target_rate as f32;
+                                            let compute_secs = t0.elapsed().as_secs_f32();
+                                            eprintln!(
+                                                "  ({:.1}s audio in {:.1}s, {:.1}x realtime)",
+                                                audio_secs, compute_secs,
+                                                audio_secs / compute_secs.max(0.001)
+                                            );
+                                        }
+                                    }
+                                }
+                            } else if verbosity >= 2 {
+                                eprintln!("  [VAD] segment too short ({:.2}s), discarding",
+                                    segment_len as f32 / target_rate as f32);
+                            }
+
+                            resampled_buf.clear();
+                            speech_active = false;
+                            silence_start = None;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Flush remaining speech on Ctrl+C
+        if speech_active && resampled_buf.len() > speech_start_idx + min_segment_samples {
+            let segment = &resampled_buf[speech_start_idx..];
+            ctx.reset_perf();
+            if let Some(text) = transcribe::transcribe_audio(ctx, segment) {
+                if !text.is_empty() {
+                    println!("{}", text);
+                }
+            }
+        }
     } else {
         // ---- Segmented mode: independent segments ----
         if ctx.segment_sec <= 0.0 {

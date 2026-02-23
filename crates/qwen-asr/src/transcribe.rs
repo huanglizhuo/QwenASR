@@ -728,6 +728,11 @@ pub struct StreamState {
     prev_prefill_embeds: Vec<f32>,
     prev_prefill_len: usize,
 
+    // Lazy partial encoding: skip re-encoding every other chunk
+    last_partial_cursor: usize,
+    last_partial_enc: Vec<f32>,
+    last_partial_seq: usize,
+
     // Audio cursor
     audio_cursor: usize,
     chunk_idx: i32,
@@ -748,6 +753,9 @@ impl StreamState {
             result: String::new(),
             prev_prefill_embeds: Vec::new(),
             prev_prefill_len: 0,
+            last_partial_cursor: 0,
+            last_partial_enc: Vec::new(),
+            last_partial_seq: 0,
             audio_cursor: 0,
             chunk_idx: 0,
             tokenizer: None,
@@ -764,6 +772,9 @@ impl StreamState {
         self.result.clear();
         self.prev_prefill_embeds.clear();
         self.prev_prefill_len = 0;
+        self.last_partial_cursor = 0;
+        self.last_partial_enc.clear();
+        self.last_partial_seq = 0;
         self.audio_cursor = 0;
         self.chunk_idx = 0;
         // Keep tokenizer and prompt_prepared
@@ -852,16 +863,41 @@ pub fn stream_push_audio(
         state.enc_cache.push(EncWindow { seq_len: win_seq, enc_output: win_enc });
     }
 
-    // Encode partial tail (always re-encoded since it changes)
-    let mut partial_seq = 0;
-    let mut partial_enc: Vec<f32> = Vec::new();
-    if full_end < state.audio_cursor {
+    // Encode partial tail — with lazy re-encoding for LCP optimization.
+    // Only re-encode when enough new audio has accumulated (every 2 chunks),
+    // on the first chunk, or when finalizing. On skip chunks, the reused
+    // encoder output gives near-perfect LCP matching, cutting prefill cost.
+    let enc_update_threshold = chunk_samples * 2;
+    let partial_age = state.audio_cursor.saturating_sub(state.last_partial_cursor);
+    let need_encode = state.last_partial_cursor == 0
+        || partial_age >= enc_update_threshold
+        || is_final;
+
+    let partial_seq;
+    let partial_enc;
+    if need_encode && full_end < state.audio_cursor {
         if let Some((mel, mel_frames)) = audio::mel_spectrogram(&samples[full_end..state.audio_cursor]) {
             if let Some((enc, seq)) = ctx.encoder.forward(&cfg, &mel, mel_frames, Some(&mut ctx.enc_bufs)) {
                 partial_seq = seq;
                 partial_enc = enc;
+                state.last_partial_cursor = state.audio_cursor;
+                state.last_partial_enc = partial_enc.clone();
+                state.last_partial_seq = partial_seq;
+            } else {
+                partial_seq = state.last_partial_seq;
+                partial_enc = state.last_partial_enc.clone();
             }
+        } else {
+            partial_seq = state.last_partial_seq;
+            partial_enc = state.last_partial_enc.clone();
         }
+    } else if full_end < state.audio_cursor {
+        // Reuse previous partial encoding (skip chunk)
+        partial_seq = state.last_partial_seq;
+        partial_enc = state.last_partial_enc.clone();
+    } else {
+        partial_seq = 0;
+        partial_enc = Vec::new();
     }
 
     let enc_seq_len = state.enc_cached_seq_total + partial_seq;
