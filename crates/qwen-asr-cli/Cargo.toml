@@ -1,16 +1,20 @@
 [package]
 name = "qwen-asr-cli"
-version = "0.1.2"
+version = "0.2.3"
 edition.workspace = true
 license.workspace = true
 description = "CLI for qwen-asr: Qwen3-ASR speech-to-text"
+keywords = ["asr", "speech-recognition", "qwen", "cli"]
+categories = ["command-line-utilities", "multimedia::audio"]
+repository = "https://github.com/huanglizhuo/QwenASR"
+readme = "README.md"
 
 [[bin]]
 name = "qwen-asr"
 path = "src/main.rs"
 
 [dependencies]
-qwen-asr = { path = "../qwen-asr" }
+qwen-asr = { version = "0.2.3", path = "../qwen-asr" }
 ureq = "2"
 ctrlc = "3"
 

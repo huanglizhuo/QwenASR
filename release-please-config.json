@@ -4,6 +4,10 @@
       "release-type": "rust",
       "component": "qwen-asr"
     },
+    "crates/qwen-asr-cli": {
+      "release-type": "rust",
+      "component": "qwen-asr-cli"
+    },
     "flutter/qwen_asr": {
       "release-type": "dart",
       "component": "qwen_asr"

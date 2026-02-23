@@ -444,7 +444,7 @@ dependencies = [
 
 [[package]]
 name = "qwen-asr-cli"
-version = "0.1.2"
+version = "0.2.3"
 dependencies = [
  "coreaudio-sys",
  "ctrlc",
