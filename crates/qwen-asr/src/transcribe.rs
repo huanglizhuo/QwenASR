@@ -195,7 +195,7 @@ fn transcribe_segment(
     let mut n_generated = 0;
     let mut past_asr_text = n_force_prompt_tokens > 0 || n_past > 0;
 
-    let mut text = String::new();
+    let mut text_bytes: Vec<u8> = Vec::new();
     let mut tmp_embed = vec![0.0f32; dim];
 
     while n_generated < max_tokens {
@@ -208,12 +208,13 @@ fn transcribe_segment(
         if token == TOKEN_ASR_TEXT {
             past_asr_text = true;
         } else if past_asr_text {
-            let piece = tokenizer.decode(token);
-            text.push_str(piece);
+            let piece_bytes = tokenizer.decode_bytes(token);
+            text_bytes.extend_from_slice(piece_bytes);
             n_text_tokens += 1;
 
             if let Some(ref cb) = ctx.token_cb {
-                cb(piece);
+                // For the callback, provide lossy UTF-8 for display purposes
+                cb(&String::from_utf8_lossy(piece_bytes));
             }
         }
 
@@ -233,7 +234,8 @@ fn transcribe_segment(
         );
     }
 
-    // Trim whitespace
+    // Trim whitespace — convert accumulated bytes to UTF-8 first
+    let text = String::from_utf8_lossy(&text_bytes);
     let trimmed = text.trim().to_string();
 
     ctx.perf_total_ms += elapsed_ms(seg_t0);
@@ -483,7 +485,7 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
 
     let mut raw_tokens: Vec<i32> = Vec::new();
     let mut stable_text_tokens: Vec<i32> = Vec::new();
-    let mut result = String::new();
+    let mut result_bytes: Vec<u8> = Vec::new();
     let mut tmp_embed = vec![0.0f32; dim];
 
     let mut chunk_idx = 0i32;
@@ -767,12 +769,12 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
                 if i >= stable_text_tokens.len() {
                     stable_text_tokens.push(candidate_tokens[i]);
                 }
-                let piece = tokenizer.decode(candidate_tokens[i]);
+                let piece_bytes = tokenizer.decode_bytes(candidate_tokens[i]);
                 if let Some(ref cb) = ctx.token_cb {
-                    cb(piece);
+                    cb(&String::from_utf8_lossy(piece_bytes));
                 }
                 ctx.perf_text_tokens += 1;
-                result.push_str(piece);
+                result_bytes.extend_from_slice(piece_bytes);
             }
         }
 
@@ -780,10 +782,8 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         chunk_idx += 1;
     }
 
-    Some(result.trim().to_string())
-}
-
-// ========================================================================
+    Some(String::from_utf8_lossy(&result_bytes).trim().to_string())
+}// ========================================================================
 // Incremental Streaming API
 // ========================================================================
 
@@ -807,7 +807,7 @@ pub struct StreamState {
     // Decoder token history
     raw_tokens: Vec<i32>,
     stable_text_tokens: Vec<i32>,
-    result: String,
+    result_bytes: Vec<u8>,
 
     // Prefill LCP reuse
     prev_prefill_embeds: Vec<f32>,
@@ -840,7 +840,7 @@ impl StreamState {
             enc_cache_base_windows: 0,
             raw_tokens: Vec::new(),
             stable_text_tokens: Vec::new(),
-            result: String::new(),
+            result_bytes: Vec::new(),
             prev_prefill_embeds: Vec::new(),
             prev_prefill_len: 0,
             prev_tail_snapshot: Vec::new(),
@@ -862,7 +862,7 @@ impl StreamState {
         self.enc_cache_base_windows = 0;
         self.raw_tokens.clear();
         self.stable_text_tokens.clear();
-        self.result.clear();
+        self.result_bytes.clear();
         self.prev_prefill_embeds.clear();
         self.prev_prefill_len = 0;
         self.prev_tail_snapshot.clear();
@@ -876,8 +876,8 @@ impl StreamState {
     }
 
     /// Get the current stable transcription result.
-    pub fn text(&self) -> &str {
-        &self.result
+    pub fn text(&self) -> String {
+        String::from_utf8_lossy(&self.result_bytes).into_owned()
     }
 
     /// Get how many samples have been processed so far.
@@ -932,7 +932,7 @@ pub fn stream_push_audio(
     let enc_window_samples = enc_window_frames * HOP_LENGTH;
     let tok_emb = ctx.decoder.tok_embeddings_bf16;
     let mut tmp_embed = vec![0.0f32; dim];
-    let mut delta = String::new();
+    let mut delta_bytes: Vec<u8> = Vec::new();
 
     // ---- Process full chunks, plus remainder if finalizing ----
     while state.audio_cursor < samples.len() {
@@ -1172,13 +1172,13 @@ pub fn stream_push_audio(
                 if i >= state.stable_text_tokens.len() {
                     state.stable_text_tokens.push(candidate_tokens[i]);
                 }
-                let piece = tokenizer.decode(candidate_tokens[i]);
+                let piece_bytes = tokenizer.decode_bytes(candidate_tokens[i]);
                 if let Some(ref cb) = ctx.token_cb {
-                    cb(piece);
+                    cb(&String::from_utf8_lossy(piece_bytes));
                 }
                 ctx.perf_text_tokens += 1;
-                state.result.push_str(piece);
-                delta.push_str(piece);
+                state.result_bytes.extend_from_slice(piece_bytes);
+                delta_bytes.extend_from_slice(piece_bytes);
             }
         }
     }
@@ -1274,13 +1274,13 @@ pub fn stream_push_audio(
                 if i >= state.stable_text_tokens.len() {
                     state.stable_text_tokens.push(candidate_tokens[i]);
                 }
-                let piece = tokenizer.decode(candidate_tokens[i]);
+                let piece_bytes = tokenizer.decode_bytes(candidate_tokens[i]);
                 if let Some(ref cb) = ctx.token_cb {
-                    cb(piece);
+                    cb(&String::from_utf8_lossy(piece_bytes));
                 }
                 ctx.perf_text_tokens += 1;
-                state.result.push_str(piece);
-                delta.push_str(piece);
+                state.result_bytes.extend_from_slice(piece_bytes);
+                delta_bytes.extend_from_slice(piece_bytes);
             }
         }
     }
@@ -1294,5 +1294,5 @@ pub fn stream_push_audio(
         }
     } // end while loop
 
-    Some(delta)
+    Some(String::from_utf8_lossy(&delta_bytes).into_owned())
 }
