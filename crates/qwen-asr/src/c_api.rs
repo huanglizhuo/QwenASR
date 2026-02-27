@@ -162,3 +162,136 @@ pub unsafe extern "C" fn qwen_asr_free(engine: *mut QwenAsrEngine) {
         drop(Box::from_raw(engine));
     }
 }
+
+// ========================================================================
+// Streaming API
+// ========================================================================
+
+/// Opaque handle to streaming state.
+pub struct QwenAsrStreamState {
+    state: transcribe::StreamState,
+    /// Accumulated audio buffer (stream_push_audio requires full buffer).
+    audio_buf: Vec<f32>,
+}
+
+/// Create a new streaming state. Returns null on failure.
+#[no_mangle]
+pub unsafe extern "C" fn qwen_asr_stream_new() -> *mut QwenAsrStreamState {
+    Box::into_raw(Box::new(QwenAsrStreamState {
+        state: transcribe::StreamState::new(),
+        audio_buf: Vec::new(),
+    }))
+}
+
+/// Free a streaming state.
+#[no_mangle]
+pub unsafe extern "C" fn qwen_asr_stream_free(stream: *mut QwenAsrStreamState) {
+    if !stream.is_null() {
+        drop(Box::from_raw(stream));
+    }
+}
+
+/// Reset streaming state for a new utterance (reuses allocations).
+#[no_mangle]
+pub unsafe extern "C" fn qwen_asr_stream_reset(stream: *mut QwenAsrStreamState) {
+    if !stream.is_null() {
+        let s = &mut *stream;
+        s.state.reset();
+        s.audio_buf.clear();
+    }
+}
+
+/// Push new audio samples and get incremental text delta.
+///
+/// `samples` / `n_samples`: new PCM chunk (f32, 16 kHz, mono).
+/// `finalize`: set to 1 to signal end-of-stream and flush remaining tokens.
+///
+/// Returns a heap-allocated C string with newly emitted text (may be empty),
+/// or null if nothing was emitted. Caller must free with `qwen_asr_free_string`.
+#[no_mangle]
+pub unsafe extern "C" fn qwen_asr_stream_push(
+    engine: *mut QwenAsrEngine,
+    stream: *mut QwenAsrStreamState,
+    samples: *const f32,
+    n_samples: i32,
+    finalize: i32,
+) -> *mut c_char {
+    if engine.is_null() || stream.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let eng = &mut *engine;
+    let s = &mut *stream;
+
+    // Append new samples to accumulated buffer
+    if !samples.is_null() && n_samples > 0 {
+        let new_samples = std::slice::from_raw_parts(samples, n_samples as usize);
+        s.audio_buf.extend_from_slice(new_samples);
+    }
+
+    // Call the Rust streaming API with the full accumulated buffer
+    match transcribe::stream_push_audio(
+        &mut eng.ctx,
+        &s.audio_buf,
+        &mut s.state,
+        finalize != 0,
+    ) {
+        Some(delta) if !delta.is_empty() => match CString::new(delta) {
+            Ok(cs) => cs.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        _ => std::ptr::null_mut(),
+    }
+}
+
+/// Get the full accumulated transcription result so far.
+/// Returns a heap-allocated C string. Caller must free with `qwen_asr_free_string`.
+#[no_mangle]
+pub unsafe extern "C" fn qwen_asr_stream_get_result(
+    stream: *mut QwenAsrStreamState,
+) -> *mut c_char {
+    if stream.is_null() {
+        return std::ptr::null_mut();
+    }
+    let s = &*stream;
+    let text = s.state.text();
+    if text.is_empty() {
+        return std::ptr::null_mut();
+    }
+    match CString::new(text) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Configure streaming chunk size in seconds (default 2.0).
+#[no_mangle]
+pub unsafe extern "C" fn qwen_asr_stream_set_chunk_sec(engine: *mut QwenAsrEngine, sec: f32) {
+    if !engine.is_null() && sec > 0.0 {
+        (*engine).ctx.stream_chunk_sec = sec;
+    }
+}
+
+/// Configure token rollback window (default 5).
+#[no_mangle]
+pub unsafe extern "C" fn qwen_asr_stream_set_rollback(engine: *mut QwenAsrEngine, tokens: i32) {
+    if !engine.is_null() && tokens >= 0 {
+        (*engine).ctx.stream_rollback = tokens;
+    }
+}
+
+/// Configure unfixed chunks count before emitting (default 2).
+#[no_mangle]
+pub unsafe extern "C" fn qwen_asr_stream_set_unfixed_chunks(engine: *mut QwenAsrEngine, chunks: i32) {
+    if !engine.is_null() && chunks >= 0 {
+        (*engine).ctx.stream_unfixed_chunks = chunks;
+    }
+}
+
+/// Configure max new tokens per chunk (default 32).
+#[no_mangle]
+pub unsafe extern "C" fn qwen_asr_stream_set_max_new_tokens(engine: *mut QwenAsrEngine, tokens: i32) {
+    if !engine.is_null() && tokens > 0 {
+        (*engine).ctx.stream_max_new_tokens = tokens;
+    }
+}
