@@ -62,6 +62,16 @@ jobs:
         if: ${{ steps.release.outputs['crates/qwen-asr-cli--release_created'] }}
         uses: dtolnay/rust-toolchain@stable
 
+      # Ensure qwen-asr is published before the CLI (recovers from a previously
+      # failed qwen-asr publish where the GitHub release was created but crates.io
+      # never received the crate).
+      - name: Ensure qwen-asr is published to crates.io
+        if: ${{ steps.release.outputs['crates/qwen-asr-cli--release_created'] }}
+        working-directory: crates/qwen-asr
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish || echo "qwen-asr already published, continuing"
+
       - name: Wait for crates.io index
         if: ${{ steps.release.outputs['crates/qwen-asr-cli--release_created'] }}
         run: sleep 30
