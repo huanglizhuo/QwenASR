@@ -22,7 +22,7 @@ jobs:
           manifest-file: .release-please-manifest.json
 
       # The steps below are executed ONLY if release-please creates a new release (PR gets merged)
-      
+
       - name: Checkout Code
         if: ${{ steps.release.outputs.releases_created }}
         uses: actions/checkout@v4
@@ -31,13 +31,31 @@ jobs:
       - name: Setup Rust
         if: ${{ steps.release.outputs['crates/qwen-asr--release_created'] }}
         uses: dtolnay/rust-toolchain@stable
-        
+
       - name: Publish to crates.io
         if: ${{ steps.release.outputs['crates/qwen-asr--release_created'] }}
         working-directory: crates/qwen-asr
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish
+
+      # When qwen-asr is released but qwen-asr-cli is NOT in the same release PR,
+      # commit the updated dependency to main so release-please picks it up and
+      # creates a release PR for qwen-asr-cli on the next run.
+      - name: Bump qwen-asr dependency in CLI
+        if: |
+          steps.release.outputs['crates/qwen-asr--release_created'] == 'true' &&
+          steps.release.outputs['crates/qwen-asr-cli--release_created'] != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT }}
+        run: |
+          NEW_VER="${{ steps.release.outputs['crates/qwen-asr--version'] }}"
+          sed -i "s/qwen-asr = { version = \"[^\"]*\"/qwen-asr = { version = \"${NEW_VER}\"/" crates/qwen-asr-cli/Cargo.toml
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add crates/qwen-asr-cli/Cargo.toml
+          git commit -m "fix(qwen-asr-cli): update qwen-asr dependency to v${NEW_VER}"
+          git push
 
       # --- 2. Publish CLI Binary ---
       - name: Setup Rust (CLI)
@@ -48,9 +66,17 @@ jobs:
         if: ${{ steps.release.outputs['crates/qwen-asr-cli--release_created'] }}
         run: sleep 30
 
+      # Ensure the qwen-asr dependency version matches the current published version
+      # before publishing (guards against release-please not updating it in the PR).
+      - name: Sync qwen-asr dependency version before CLI publish
+        if: ${{ steps.release.outputs['crates/qwen-asr-cli--release_created'] }}
+        run: |
+          QA_VER=$(python3 -c "import json; print(json.load(open('.release-please-manifest.json'))['crates/qwen-asr'])")
+          sed -i "s/qwen-asr = { version = \"[^\"]*\"/qwen-asr = { version = \"${QA_VER}\"/" crates/qwen-asr-cli/Cargo.toml
+
       - name: Publish CLI to crates.io
         if: ${{ steps.release.outputs['crates/qwen-asr-cli--release_created'] }}
         working-directory: crates/qwen-asr-cli
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish
+        run: cargo publish --allow-dirty
