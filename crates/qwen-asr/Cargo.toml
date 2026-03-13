@@ -11,6 +11,7 @@ documentation = "https://docs.rs/qwen-asr"
 readme = "README.md"
 
 [lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
 name = "qwen_asr"
 
 [dependencies]
@@ -25,3 +26,4 @@ blas = []
 vdsp = []
 ios = []
 android = []
+macos-ffi = []
