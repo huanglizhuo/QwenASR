@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-cli-v0.3.1...qwen-asr-cli-v0.3.2) (2026-03-13)
+
+
+### Bug Fixes
+
+* release flow for cli ([8dfc4b7](https://github.com/huanglizhuo/QwenASR/commit/8dfc4b7820ceef98efd992974ab3a0b7fcdd9b10))
+
 ## [0.3.1](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-cli-v0.3.0...qwen-asr-cli-v0.3.1) (2026-02-23)
 
 
