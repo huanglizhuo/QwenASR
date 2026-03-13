@@ -49,7 +49,11 @@ fn utf8_encode_cp(cp: u32) -> Vec<u8> {
 }
 
 /// Decode a GPT-2 encoded token string (vocab key) to raw bytes.
-fn decode_gpt2_token(token_str: &str, unicode_to_byte: &[i32; 512]) -> String {
+/// Returns raw bytes instead of String because a single BPE token may
+/// represent only a partial UTF-8 sequence (e.g. 2 of 3 bytes for a CJK
+/// character).  The caller must accumulate bytes from multiple tokens and
+/// convert to UTF-8 only after the full sequence is available.
+fn decode_gpt2_token_bytes(token_str: &str, unicode_to_byte: &[i32; 512]) -> Vec<u8> {
     let mut bytes = Vec::new();
 
     for ch in token_str.chars() {
@@ -61,7 +65,7 @@ fn decode_gpt2_token(token_str: &str, unicode_to_byte: &[i32; 512]) -> String {
         }
     }
 
-    String::from_utf8_lossy(&bytes).into_owned()
+    bytes
 }
 
 /// Convert UTF-8 bytes to GPT-2 byte-level unicode string.
@@ -119,6 +123,7 @@ fn fnv1a_hash(s: &str) -> u64 {
 pub struct QwenTokenizer {
     pub vocab_size: usize,
     id_to_text: Vec<Option<String>>,
+    id_to_bytes: Vec<Option<Vec<u8>>>,
     id_to_bpe: Vec<Option<String>>,
     vocab_map: HashMap<String, i32>,
     merge_map: HashMap<String, i32>,
@@ -171,14 +176,18 @@ impl QwenTokenizer {
 
         let vocab_size = (max_id + 1) as usize;
         let mut id_to_text = vec![None; vocab_size];
+        let mut id_to_bytes: Vec<Option<Vec<u8>>> = vec![None; vocab_size];
         let mut id_to_bpe = vec![None; vocab_size];
         let mut vocab_map = HashMap::new();
 
         for (key, id) in entries {
             let idx = id as usize;
             if idx < vocab_size {
-                let text = decode_gpt2_token(&key, &unicode_to_byte);
+                let raw_bytes = decode_gpt2_token_bytes(&key, &unicode_to_byte);
+                // id_to_text: lossy UTF-8 for display/legacy use
+                let text = String::from_utf8_lossy(&raw_bytes).into_owned();
                 id_to_text[idx] = Some(text);
+                id_to_bytes[idx] = Some(raw_bytes);
                 vocab_map.insert(key.clone(), id);
                 id_to_bpe[idx] = Some(key);
             }
@@ -190,6 +199,7 @@ impl QwenTokenizer {
         Some(QwenTokenizer {
             vocab_size,
             id_to_text,
+            id_to_bytes,
             id_to_bpe,
             vocab_map,
             merge_map,
@@ -205,6 +215,19 @@ impl QwenTokenizer {
         match &self.id_to_text[token_id as usize] {
             Some(s) => s.as_str(),
             None => "",
+        }
+    }
+
+    /// Decode a token to its raw bytes. Unlike `decode()`, this preserves
+    /// partial UTF-8 sequences so that the caller can accumulate bytes from
+    /// multiple tokens before converting to a valid UTF-8 string.
+    pub fn decode_bytes(&self, token_id: i32) -> &[u8] {
+        if token_id < 0 || token_id as usize >= self.vocab_size {
+            return b"";
+        }
+        match &self.id_to_bytes[token_id as usize] {
+            Some(b) => b.as_slice(),
+            None => b"",
         }
     }
 
@@ -385,4 +408,227 @@ fn parse_json_int_tok(bytes: &[u8], pos: &mut usize) -> Option<i64> {
         return None;
     }
     Some(if neg { -val } else { val })
+}
+
+// ========================================================================
+// Tests
+// ========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: convert raw bytes to a GPT-2 BPE token string using byte→unicode mapping.
+    fn bytes_to_gpt2_token(raw_bytes: &[u8], byte_to_unicode: &[i32; 256]) -> String {
+        let mut s = String::new();
+        for &b in raw_bytes {
+            if let Some(ch) = char::from_u32(byte_to_unicode[b as usize] as u32) {
+                s.push(ch);
+            }
+        }
+        s
+    }
+
+    // ----------------------------------------------------------------
+    // decode_gpt2_token_bytes: round-trip correctness
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn test_roundtrip_ascii() {
+        let (btu, utb) = init_gpt2_mapping();
+        let original = b"hello";
+        let token_str = bytes_to_gpt2_token(original, &btu);
+        let decoded = decode_gpt2_token_bytes(&token_str, &utb);
+        assert_eq!(decoded, original);
+        assert_eq!(String::from_utf8(decoded).unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_roundtrip_cjk_full_char() {
+        let (btu, utb) = init_gpt2_mapping();
+        // "地" = UTF-8 [0xE5, 0x9C, 0xB0]
+        let original = "地".as_bytes();
+        let token_str = bytes_to_gpt2_token(original, &btu);
+        let decoded = decode_gpt2_token_bytes(&token_str, &utb);
+        assert_eq!(decoded, original);
+        assert_eq!(String::from_utf8(decoded).unwrap(), "地");
+    }
+
+    // ----------------------------------------------------------------
+    // Core regression test: split UTF-8 across two BPE tokens
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn test_decode_bytes_split_utf8_cjk() {
+        // "地" = UTF-8 [0xE5, 0x9C, 0xB0]
+        // Simulate BPE splitting into two tokens:
+        //   Token A covers bytes [0xE5, 0x9C]  (first 2 of 3)
+        //   Token B covers byte  [0xB0]         (last 1 of 3)
+        let (btu, utb) = init_gpt2_mapping();
+
+        let part1_bytes: &[u8] = &[0xE5, 0x9C];
+        let part2_bytes: &[u8] = &[0xB0];
+
+        let token_a = bytes_to_gpt2_token(part1_bytes, &btu);
+        let token_b = bytes_to_gpt2_token(part2_bytes, &btu);
+
+        let decoded_a = decode_gpt2_token_bytes(&token_a, &utb);
+        let decoded_b = decode_gpt2_token_bytes(&token_b, &utb);
+
+        // Each part alone is NOT valid UTF-8
+        assert!(String::from_utf8(decoded_a.clone()).is_err(),
+            "Part 1 alone should NOT be valid UTF-8");
+        assert!(String::from_utf8(decoded_b.clone()).is_err(),
+            "Part 2 alone should NOT be valid UTF-8");
+
+        // But concatenated they form valid UTF-8 for "地"
+        let mut combined = decoded_a;
+        combined.extend_from_slice(&decoded_b);
+        assert_eq!(combined, vec![0xE5, 0x9C, 0xB0]);
+        assert_eq!(String::from_utf8(combined).unwrap(), "地");
+    }
+
+    #[test]
+    fn test_decode_bytes_split_utf8_2byte_char() {
+        // "é" = UTF-8 [0xC3, 0xA9]
+        // Simulate BPE splitting each byte into its own token
+        let (btu, utb) = init_gpt2_mapping();
+
+        let part1: &[u8] = &[0xC3];
+        let part2: &[u8] = &[0xA9];
+
+        let decoded_1 = decode_gpt2_token_bytes(
+            &bytes_to_gpt2_token(part1, &btu), &utb);
+        let decoded_2 = decode_gpt2_token_bytes(
+            &bytes_to_gpt2_token(part2, &btu), &utb);
+
+        assert!(String::from_utf8(decoded_1.clone()).is_err());
+        assert!(String::from_utf8(decoded_2.clone()).is_err());
+
+        let mut combined = decoded_1;
+        combined.extend_from_slice(&decoded_2);
+        assert_eq!(String::from_utf8(combined).unwrap(), "é");
+    }
+
+    #[test]
+    fn test_decode_bytes_split_utf8_4byte_emoji() {
+        // "🦀" = UTF-8 [0xF0, 0x9F, 0xA6, 0x80]
+        // Simulate BPE splitting into two halves
+        let (btu, utb) = init_gpt2_mapping();
+
+        let part1: &[u8] = &[0xF0, 0x9F];
+        let part2: &[u8] = &[0xA6, 0x80];
+
+        let decoded_1 = decode_gpt2_token_bytes(
+            &bytes_to_gpt2_token(part1, &btu), &utb);
+        let decoded_2 = decode_gpt2_token_bytes(
+            &bytes_to_gpt2_token(part2, &btu), &utb);
+
+        assert!(String::from_utf8(decoded_1.clone()).is_err());
+        assert!(String::from_utf8(decoded_2.clone()).is_err());
+
+        let mut combined = decoded_1;
+        combined.extend_from_slice(&decoded_2);
+        assert_eq!(String::from_utf8(combined).unwrap(), "🦀");
+    }
+
+    // ----------------------------------------------------------------
+    // Mixed content: ASCII + Emoji + CJK
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn test_decode_bytes_mixed_content_rust_crab_chinese() {
+        let (btu, utb) = init_gpt2_mapping();
+
+        let full_text = "Rust🦀真棒";
+        let all_bytes = full_text.as_bytes();
+
+        // Decode each byte as its own token, accumulate
+        let mut accumulated = Vec::new();
+        for &b in all_bytes {
+            let token_str = bytes_to_gpt2_token(&[b], &btu);
+            let decoded = decode_gpt2_token_bytes(&token_str, &utb);
+            accumulated.extend_from_slice(&decoded);
+        }
+
+        assert_eq!(accumulated, all_bytes);
+        assert_eq!(String::from_utf8(accumulated).unwrap(), "Rust🦀真棒");
+    }
+
+    // ----------------------------------------------------------------
+    // Regression: ensure old lossy path would have corrupted
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn test_lossy_corruption_proof() {
+        // Demonstrate that per-token String::from_utf8_lossy WOULD corrupt,
+        // while byte-level accumulation does NOT.
+        let (btu, utb) = init_gpt2_mapping();
+
+        // "地址" = [E5 9C B0] [E5 9D 80]
+        // Split: token_a=[E5,9C], token_b=[B0,E5], token_c=[9D,80]
+        let splits: &[&[u8]] = &[
+            &[0xE5, 0x9C],
+            &[0xB0, 0xE5],
+            &[0x9D, 0x80],
+        ];
+
+        // Old approach: decode each token to String independently (lossy)
+        let mut lossy_result = String::new();
+        for &part in splits {
+            let token_str = bytes_to_gpt2_token(part, &btu);
+            let decoded = decode_gpt2_token_bytes(&token_str, &utb);
+            lossy_result.push_str(&String::from_utf8_lossy(&decoded));
+        }
+        // Lossy approach produces replacement characters
+        assert!(lossy_result.contains('\u{FFFD}'),
+            "Lossy per-token decode SHOULD produce U+FFFD, got: {:?}", lossy_result);
+        assert_ne!(lossy_result, "地址");
+
+        // New approach: accumulate bytes, convert once
+        let mut byte_buf = Vec::new();
+        for &part in splits {
+            let token_str = bytes_to_gpt2_token(part, &btu);
+            let decoded = decode_gpt2_token_bytes(&token_str, &utb);
+            byte_buf.extend_from_slice(&decoded);
+        }
+        let correct_result = String::from_utf8(byte_buf).unwrap();
+        assert_eq!(correct_result, "地址");
+        assert!(!correct_result.contains('\u{FFFD}'));
+    }
+
+    // ----------------------------------------------------------------
+    // GPT-2 mapping correctness
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn test_gpt2_mapping_all_256_bytes_roundtrip() {
+        let (btu, utb) = init_gpt2_mapping();
+
+        // Every byte value 0..255 must survive a round-trip
+        for b in 0u8..=255 {
+            let cp = btu[b as usize];
+            assert!(cp >= 0 && cp < 512,
+                "byte {:#04x} mapped to out-of-range codepoint {}", b, cp);
+
+            let recovered = utb[cp as usize];
+            assert_eq!(recovered, b as i32,
+                "byte {:#04x} → cp {} → byte {:#04x} (expected {:#04x})",
+                b, cp, recovered, b);
+        }
+    }
+
+    #[test]
+    fn test_gpt2_mapping_is_bijective() {
+        let (btu, _utb) = init_gpt2_mapping();
+
+        // All 256 codepoints must be distinct
+        let mut seen = std::collections::HashSet::new();
+        for b in 0..256 {
+            let cp = btu[b];
+            assert!(seen.insert(cp),
+                "byte {} and another byte both map to codepoint {}", b, cp);
+        }
+        assert_eq!(seen.len(), 256);
+    }
 }
