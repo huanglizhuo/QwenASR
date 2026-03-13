@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.3.0...qwen-asr-v0.4.0) (2026-03-13)
+
+
+### Features
+
+* expose streaming C API for native integration ([a58befe](https://github.com/huanglizhuo/QwenASR/commit/a58befe991393405867ece18621d60ad5dc7cfd6))
+* expose streaming C API for native macOS/iOS integration ([51dc917](https://github.com/huanglizhuo/QwenASR/commit/51dc917fc214a38ab6a85db55e2cc53ecdfabb6d))
+
+
+### Bug Fixes
+
+* handle split UTF-8 sequences in BPE token decoding ([75c3e31](https://github.com/huanglizhuo/QwenASR/commit/75c3e3172b33e412fdde0bee6f8009277e9bb35e))
+* handle split UTF-8 sequences in BPE token decoding ([c86fae2](https://github.com/huanglizhuo/QwenASR/commit/c86fae2918c50f5ef74097fb4ad1e97a19387a18))
+
 ## [0.3.0](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.2.4...qwen-asr-v0.3.0) (2026-02-23)
 
 
