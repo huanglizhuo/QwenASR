@@ -163,6 +163,7 @@ impl QwenCtx {
     }
 
     /// Set an optional text prompt to guide transcription. Pass an empty string to clear.
+    #[allow(clippy::result_unit_err)]
     pub fn set_prompt(&mut self, prompt: &str) -> Result<(), ()> {
         if prompt.is_empty() {
             self.prompt = None;
@@ -175,6 +176,7 @@ impl QwenCtx {
 
     /// Force a specific language (e.g. `"English"`, `"Chinese"`). Pass an empty
     /// string for auto-detection. Returns `Err(())` if the language is not recognized.
+    #[allow(clippy::result_unit_err)]
     pub fn set_force_language(&mut self, language: &str) -> Result<(), ()> {
         if language.is_empty() {
             self.force_language = None;

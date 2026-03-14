@@ -9,9 +9,9 @@ fn init_gpt2_mapping() -> ([i32; 256], [i32; 512]) {
 
     let mut n = 0i32;
     for b in 0..256i32 {
-        let is_normal = (b >= 33 && b <= 126)
-            || (b >= 161 && b <= 172)
-            || (b >= 174 && b <= 255);
+        let is_normal = (33..=126).contains(&b)
+            || (161..=172).contains(&b)
+            || (174..=255).contains(&b);
 
         if is_normal {
             byte_to_unicode[b as usize] = b;
@@ -21,8 +21,8 @@ fn init_gpt2_mapping() -> ([i32; 256], [i32; 512]) {
         }
     }
 
-    for b in 0..256 {
-        let cp = byte_to_unicode[b] as usize;
+    for (b, &bu) in byte_to_unicode.iter().enumerate() {
+        let cp = bu as usize;
         if cp < 512 {
             unicode_to_byte[cp] = b as i32;
         }
@@ -111,23 +111,16 @@ fn split_utf8_symbols(s: &str) -> Vec<String> {
     syms
 }
 
-fn fnv1a_hash(s: &str) -> u64 {
-    let mut h = 1469598103934665603u64;
-    for &b in s.as_bytes() {
-        h ^= b as u64;
-        h = h.wrapping_mul(1099511628211u64);
-    }
-    h
-}
-
 pub struct QwenTokenizer {
     pub vocab_size: usize,
     id_to_text: Vec<Option<String>>,
     id_to_bytes: Vec<Option<Vec<u8>>>,
+    #[allow(dead_code)]
     id_to_bpe: Vec<Option<String>>,
     vocab_map: HashMap<String, i32>,
     merge_map: HashMap<String, i32>,
     byte_to_unicode: [i32; 256],
+    #[allow(dead_code)]
     unicode_to_byte: [i32; 512],
 }
 

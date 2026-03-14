@@ -31,7 +31,7 @@ fn test_bf16_matvec_vs_generic() {
     let bias: Vec<f32> = (0..out_dim).map(|i| i as f32 * 0.1).collect();
 
     let mut y_generic = vec![0.0f32; out_dim];
-    generic::bf16_matvec_fused(&mut y_generic, &x, w_bf16.as_ptr(), Some(&bias), in_dim, out_dim);
+    unsafe { generic::bf16_matvec_fused(&mut y_generic, &x, w_bf16.as_ptr(), Some(&bias), in_dim, out_dim); }
 
     let mut y_dispatch = vec![0.0f32; out_dim];
     kernels::linear_nobias_bf16(&mut y_dispatch, &x, w_bf16.as_ptr(), 1, in_dim, out_dim);

@@ -625,7 +625,7 @@ fn run_live_capture(
             // Determine if we should finalize: flush rollback tokens
             // when no new text has been emitted for 5 seconds
             let finalize = !flushed
-                && last_text_time.map_or(false, |t| t.elapsed().as_secs_f32() >= text_flush_secs);
+                && last_text_time.is_some_and(|t| t.elapsed().as_secs_f32() >= text_flush_secs);
 
             // Process all available full chunks
             if resampled_buf.len() > stream_state.audio_cursor() {

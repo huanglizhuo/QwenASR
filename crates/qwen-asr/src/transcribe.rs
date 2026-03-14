@@ -109,21 +109,21 @@ fn transcribe_segment(
     // Embed prefix head
     let mut off = 0;
     for &tok in PREFIX_HEAD {
-        tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim);
+        unsafe { tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim) };
         off += 1;
     }
 
     // Optional prompt
     if let Some(ref ptoks) = ctx.prompt_tokens {
         for &tok in ptoks {
-            tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim);
+            unsafe { tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim) };
             off += 1;
         }
     }
 
     // Prefix tail
     for &tok in PREFIX_TAIL {
-        tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim);
+        unsafe { tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim) };
         off += 1;
     }
 
@@ -136,20 +136,20 @@ fn transcribe_segment(
     // Suffix base
     let suffix_off = prefix_len + enc_seq_len;
     for (i, &tok) in SUFFIX_BASE.iter().enumerate() {
-        tok_embed_bf16_to_f32(
+        unsafe { tok_embed_bf16_to_f32(
             &mut input_embeds[(suffix_off + i) * dim..(suffix_off + i + 1) * dim],
             tok_emb, tok, dim,
-        );
+        ) };
     }
 
     // Force language tokens
     if let Some(ref ftoks) = ctx.force_prompt_tokens {
         for (i, &tok) in ftoks.iter().enumerate() {
-            tok_embed_bf16_to_f32(
+            unsafe { tok_embed_bf16_to_f32(
                 &mut input_embeds[(suffix_off + SUFFIX_BASE.len() + i) * dim
                     ..(suffix_off + SUFFIX_BASE.len() + i + 1) * dim],
                 tok_emb, tok, dim,
-            );
+            ) };
         }
     }
 
@@ -157,15 +157,15 @@ fn transcribe_segment(
     let past_off = suffix_off + suffix_len;
     if let Some(ptoks) = past_tokens {
         for (i, &tok) in ptoks.iter().enumerate() {
-            tok_embed_bf16_to_f32(
+            unsafe { tok_embed_bf16_to_f32(
                 &mut input_embeds[(past_off + i) * dim..(past_off + i + 1) * dim],
                 tok_emb, tok, dim,
-            );
+            ) };
         }
-        tok_embed_bf16_to_f32(
+        unsafe { tok_embed_bf16_to_f32(
             &mut input_embeds[(past_off + ptoks.len()) * dim..(past_off + ptoks.len() + 1) * dim],
             tok_emb, TOKEN_ASR_TEXT, dim,
-        );
+        ) };
     }
 
     // Decoder prefill
@@ -218,7 +218,7 @@ fn transcribe_segment(
             }
         }
 
-        tok_embed_bf16_to_f32(&mut tmp_embed, tok_emb, token, dim);
+        unsafe { tok_embed_bf16_to_f32(&mut tmp_embed, tok_emb, token, dim) };
         token = decoder::decoder_forward(
             &ctx.decoder, cfg, &mut ctx.kv_cache, &mut ctx.rope_cache,
             &mut ctx.dec_bufs, &tmp_embed,
@@ -263,8 +263,8 @@ fn find_split_point(samples: &[f32], target_sample: usize, search_sec: f32) -> u
     while pos + win_samples <= hi {
         let end = (pos + win_samples).min(samples.len());
         let mut energy = 0.0f32;
-        for j in pos..end {
-            energy += samples[j] * samples[j];
+        for &s in samples.iter().take(end).skip(pos) {
+            energy += s * s;
         }
         energy /= (end - pos) as f32;
         if energy < best_energy {
@@ -579,17 +579,17 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         let mut off = 0;
 
         for &tok in PREFIX_HEAD {
-            tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim);
+            unsafe { tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim) };
             off += 1;
         }
         if let Some(ref ptoks) = ctx.prompt_tokens {
             for &tok in ptoks {
-                tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim);
+                unsafe { tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim) };
                 off += 1;
             }
         }
         for &tok in PREFIX_TAIL {
-            tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim);
+            unsafe { tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim) };
             off += 1;
         }
 
@@ -600,27 +600,27 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
 
         let suffix_off = prefix_len + enc_seq_len;
         for (i, &tok) in SUFFIX_BASE.iter().enumerate() {
-            tok_embed_bf16_to_f32(
+            unsafe { tok_embed_bf16_to_f32(
                 &mut input_embeds[(suffix_off + i) * dim..(suffix_off + i + 1) * dim],
                 tok_emb, tok, dim,
-            );
+            ) };
         }
         if let Some(ref ftoks) = ctx.force_prompt_tokens {
             for (i, &tok) in ftoks.iter().enumerate() {
-                tok_embed_bf16_to_f32(
+                unsafe { tok_embed_bf16_to_f32(
                     &mut input_embeds[(suffix_off + SUFFIX_BASE.len() + i) * dim
                         ..(suffix_off + SUFFIX_BASE.len() + i + 1) * dim],
                     tok_emb, tok, dim,
-                );
+                ) };
             }
         }
 
         let text_off = suffix_off + suffix_len;
         for i in 0..n_prefix_tokens {
-            tok_embed_bf16_to_f32(
+            unsafe { tok_embed_bf16_to_f32(
                 &mut input_embeds[(text_off + i) * dim..(text_off + i + 1) * dim],
                 tok_emb, raw_tokens[i], dim,
-            );
+            ) };
         }
 
         // Decoder prefill with LCP reuse
@@ -672,7 +672,7 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
             n_generated += 1;
             if token == TOKEN_ENDOFTEXT || token == TOKEN_IM_END { break; }
             chunk_tokens.push(token);
-            tok_embed_bf16_to_f32(&mut tmp_embed, tok_emb, token, dim);
+            unsafe { tok_embed_bf16_to_f32(&mut tmp_embed, tok_emb, token, dim); }
             token = decoder::decoder_forward(
                 &ctx.decoder, &cfg, &mut ctx.kv_cache, &mut ctx.rope_cache,
                 &mut ctx.dec_bufs, &tmp_embed,
@@ -829,6 +829,12 @@ pub struct StreamState {
     // Tokenizer (loaded once)
     tokenizer: Option<QwenTokenizer>,
     prompt_prepared: bool,
+}
+
+impl Default for StreamState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StreamState {
@@ -1038,17 +1044,17 @@ pub fn stream_push_audio(
     let mut off = 0;
 
     for &tok in PREFIX_HEAD {
-        tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim);
+        unsafe { tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim); }
         off += 1;
     }
     if let Some(ref ptoks) = ctx.prompt_tokens {
         for &tok in ptoks {
-            tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim);
+            unsafe { tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim); }
             off += 1;
         }
     }
     for &tok in PREFIX_TAIL {
-        tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim);
+        unsafe { tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim); }
         off += 1;
     }
 
@@ -1059,27 +1065,27 @@ pub fn stream_push_audio(
 
     let suffix_off = prefix_len + enc_seq_len;
     for (i, &tok) in SUFFIX_BASE.iter().enumerate() {
-        tok_embed_bf16_to_f32(
+        unsafe { tok_embed_bf16_to_f32(
             &mut input_embeds[(suffix_off + i) * dim..(suffix_off + i + 1) * dim],
             tok_emb, tok, dim,
-        );
+        ); }
     }
     if let Some(ref ftoks) = ctx.force_prompt_tokens {
         for (i, &tok) in ftoks.iter().enumerate() {
-            tok_embed_bf16_to_f32(
+            unsafe { tok_embed_bf16_to_f32(
                 &mut input_embeds[(suffix_off + SUFFIX_BASE.len() + i) * dim
                     ..(suffix_off + SUFFIX_BASE.len() + i + 1) * dim],
                 tok_emb, tok, dim,
-            );
+            ); }
         }
     }
 
     let text_off = suffix_off + suffix_len;
     for i in 0..n_prefix_tokens {
-        tok_embed_bf16_to_f32(
+        unsafe { tok_embed_bf16_to_f32(
             &mut input_embeds[(text_off + i) * dim..(text_off + i + 1) * dim],
             tok_emb, state.raw_tokens[i], dim,
-        );
+        ); }
     }
 
     // ---- Decoder prefill with LCP reuse ----
@@ -1137,7 +1143,7 @@ pub fn stream_push_audio(
         n_generated += 1;
         if token == TOKEN_ENDOFTEXT || token == TOKEN_IM_END { break; }
         chunk_tokens.push(token);
-        tok_embed_bf16_to_f32(&mut tmp_embed, tok_emb, token, dim);
+        unsafe { tok_embed_bf16_to_f32(&mut tmp_embed, tok_emb, token, dim); }
         token = decoder::decoder_forward(
             &ctx.decoder, &cfg, &mut ctx.kv_cache, &mut ctx.rope_cache,
             &mut ctx.dec_bufs, &tmp_embed,

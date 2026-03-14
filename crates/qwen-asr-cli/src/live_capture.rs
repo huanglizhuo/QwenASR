@@ -3,8 +3,6 @@
 //! Enumerates input devices, captures audio via AudioUnit (HAL Input),
 //! and resamples to 16 kHz mono f32 for the ASR pipeline.
 
-#![cfg(target_os = "macos")]
-
 use coreaudio_sys::*;
 use std::ffi::CStr;
 use std::mem;

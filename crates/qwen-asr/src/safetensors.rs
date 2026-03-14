@@ -1,4 +1,4 @@
-/// Safetensors mmap reader with multi-shard support.
+//! Safetensors mmap reader with multi-shard support.
 
 use std::collections::HashMap;
 use std::os::unix::io::RawFd;

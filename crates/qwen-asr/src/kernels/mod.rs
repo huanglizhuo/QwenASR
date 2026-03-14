@@ -67,13 +67,13 @@ const CBLAS_NO_TRANS: i32 = 111;
 const CBLAS_TRANS: i32 = 112;
 
 // Verbose flag
-pub static mut VERBOSE: i32 = 0;
+static VERBOSE: AtomicI32 = AtomicI32::new(0);
 
 // ========================================================================
 // Profiling support
 // ========================================================================
 
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::time::Instant;
 
 static PROFILE_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -98,7 +98,15 @@ macro_rules! define_profile_counters {
                     $($name: (AtomicU64::new(0), AtomicU64::new(0)),)+
                 }
             }
+        }
 
+        impl Default for ProfileCounters {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
+        impl ProfileCounters {
             pub fn reset(&self) {
                 $(
                     self.$name.0.store(0, Ordering::Relaxed);
@@ -123,9 +131,8 @@ macro_rules! define_profile_counters {
 }
 
 define_profile_counters!(
-    rms_norm, layer_norm, silu, gelu, swiglu,
-    bf16_matvec, bf16_to_f32_conv, attention_bidir, attention_causal,
-    linear_f32, softmax_op, conv2d_op, rope
+    rms_norm, layer_norm, gelu, swiglu,
+    bf16_matvec, bf16_to_f32_conv, attention_bidir, attention_causal
 );
 
 pub static PROF: ProfileCounters = ProfileCounters::new();
@@ -161,18 +168,18 @@ pub fn profile_reset() { PROF.reset(); }
 pub fn profile_report() { PROF.report(); }
 
 pub fn set_verbose(v: i32) {
-    unsafe { VERBOSE = v; }
+    VERBOSE.store(v, Ordering::Relaxed);
 }
 
 pub fn verbose() -> i32 {
-    unsafe { VERBOSE }
+    VERBOSE.load(Ordering::Relaxed)
 }
 
 // ========================================================================
 // Thread Pool (persistent, mutex+condvar, matches C approach)
 // ========================================================================
 
-use std::sync::{Mutex, Condvar, Arc, Once};
+use std::sync::{Mutex, Condvar, Arc, OnceLock};
 
 const MAX_THREADS: usize = 16;
 
@@ -194,29 +201,23 @@ struct ThreadPoolState {
 unsafe impl Send for ThreadPoolState {}
 unsafe impl Sync for ThreadPoolState {}
 
-#[allow(static_mut_refs)]
-static mut THREAD_POOL: Option<Arc<ThreadPool>> = None;
-static POOL_INIT: Once = Once::new();
+static THREAD_POOL: OnceLock<Arc<ThreadPool>> = OnceLock::new();
 
-#[allow(static_mut_refs)]
 fn get_pool() -> &'static Arc<ThreadPool> {
-    POOL_INIT.call_once(|| {
-        unsafe {
-            THREAD_POOL = Some(Arc::new(ThreadPool {
-                state: Mutex::new(ThreadPoolState {
-                    n_threads: 1,
-                    shutdown: false,
-                    generation: 0,
-                    n_done: 0,
-                    fn_ptr: None,
-                    fn_call: None,
-                }),
-                work_cv: Condvar::new(),
-                done_cv: Condvar::new(),
-            }));
-        }
-    });
-    unsafe { THREAD_POOL.as_ref().unwrap() }
+    THREAD_POOL.get_or_init(|| {
+        Arc::new(ThreadPool {
+            state: Mutex::new(ThreadPoolState {
+                n_threads: 1,
+                shutdown: false,
+                generation: 0,
+                n_done: 0,
+                fn_ptr: None,
+                fn_call: None,
+            }),
+            work_cv: Condvar::new(),
+            done_cv: Condvar::new(),
+        })
+    })
 }
 
 fn pool_worker(pool: Arc<ThreadPool>, tid: usize) {
@@ -264,30 +265,29 @@ fn pool_worker(pool: Arc<ThreadPool>, tid: usize) {
     }
 }
 
-static mut SPAWNED_THREADS: usize = 0;
+static SPAWNED_THREADS: AtomicUsize = AtomicUsize::new(0);
 
 fn ensure_workers(pool: &Arc<ThreadPool>, n_threads: usize) {
-    unsafe {
-        if SPAWNED_THREADS >= n_threads - 1 {
-            return;
-        }
-        let start = SPAWNED_THREADS + 1;
-        for tid in start..n_threads {
-            let p = pool.clone();
-            thread::Builder::new()
-                .name(format!("qwen-worker-{}", tid))
-                .spawn(move || pool_worker(p, tid))
-                .unwrap();
-        }
-        SPAWNED_THREADS = n_threads - 1;
+    let spawned = SPAWNED_THREADS.load(Ordering::Relaxed);
+    if spawned >= n_threads - 1 {
+        return;
     }
+    let start = spawned + 1;
+    for tid in start..n_threads {
+        let p = pool.clone();
+        thread::Builder::new()
+            .name(format!("qwen-worker-{}", tid))
+            .spawn(move || pool_worker(p, tid))
+            .expect("failed to spawn worker thread");
+    }
+    SPAWNED_THREADS.store(n_threads - 1, Ordering::Relaxed);
 }
 
-static mut THREAD_POOL_THREADS: usize = 1;
+static THREAD_POOL_THREADS: AtomicUsize = AtomicUsize::new(1);
 
 pub fn set_threads(n: usize) {
-    let n = n.max(1).min(MAX_THREADS);
-    unsafe { THREAD_POOL_THREADS = n; }
+    let n = n.clamp(1, MAX_THREADS);
+    THREAD_POOL_THREADS.store(n, Ordering::Relaxed);
     if n > 1 {
         let pool = get_pool();
         ensure_workers(pool, n);
@@ -302,7 +302,7 @@ pub fn set_threads(n: usize) {
 }
 
 pub fn get_num_threads() -> usize {
-    unsafe { THREAD_POOL_THREADS }
+    THREAD_POOL_THREADS.load(Ordering::Relaxed)
 }
 
 pub fn get_num_cpus() -> usize {
@@ -371,10 +371,10 @@ pub fn bf16_to_f32(bf16: u16) -> f32 {
 
 pub fn bf16_to_f32_buf(dst: &mut [f32], src: &[u16]) {
     #[cfg(target_arch = "aarch64")]
-    { unsafe { neon::bf16_to_f32_buf(dst, src); } return; }
+    { unsafe { neon::bf16_to_f32_buf(dst, src); } }
 
     #[cfg(target_arch = "x86_64")]
-    { unsafe { avx::bf16_to_f32_buf(dst, src); } return; }
+    { unsafe { avx::bf16_to_f32_buf(dst, src); } }
 
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     for i in 0..src.len() {
@@ -384,10 +384,10 @@ pub fn bf16_to_f32_buf(dst: &mut [f32], src: &[u16]) {
 
 fn bf16_matvec_fused(y: &mut [f32], x: &[f32], w_bf16: *const u16, bias: Option<&[f32]>, in_dim: usize, out_dim: usize) {
     #[cfg(target_arch = "aarch64")]
-    { unsafe { neon::bf16_matvec_fused(y, x, w_bf16, bias, in_dim, out_dim); } return; }
+    { unsafe { neon::bf16_matvec_fused(y, x, w_bf16, bias, in_dim, out_dim); } }
 
     #[cfg(target_arch = "x86_64")]
-    { unsafe { avx::bf16_matvec_fused(y, x, w_bf16, bias, in_dim, out_dim); } return; }
+    { unsafe { avx::bf16_matvec_fused(y, x, w_bf16, bias, in_dim, out_dim); } }
 
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     generic::bf16_matvec_fused(y, x, w_bf16, bias, in_dim, out_dim);
@@ -395,10 +395,10 @@ fn bf16_matvec_fused(y: &mut [f32], x: &[f32], w_bf16: *const u16, bias: Option<
 
 fn argmax_bf16_range(x: &[f32], w_bf16: *const u16, in_dim: usize, start: usize, end: usize) -> (usize, f32) {
     #[cfg(target_arch = "aarch64")]
-    { return unsafe { neon::argmax_bf16_range(x, w_bf16, in_dim, start, end) }; }
+    { unsafe { neon::argmax_bf16_range(x, w_bf16, in_dim, start, end) } }
 
     #[cfg(target_arch = "x86_64")]
-    { return unsafe { avx::argmax_bf16_range(x, w_bf16, in_dim, start, end) }; }
+    { unsafe { avx::argmax_bf16_range(x, w_bf16, in_dim, start, end) } }
 
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     generic::argmax_bf16_range(x, w_bf16, in_dim, start, end)
@@ -410,14 +410,14 @@ pub fn dot_f32(a: &[f32], b: &[f32], n: usize) -> f32 {
     {
         let mut result = 0.0f32;
         unsafe { vDSP_dotpr(a.as_ptr(), 1, b.as_ptr(), 1, &mut result, n as u64); }
-        return result;
+        result
     }
 
     #[cfg(all(target_arch = "aarch64", not(all(feature = "vdsp", target_vendor = "apple"))))]
-    { return unsafe { neon::dot_f32(a, b, n) }; }
+    { unsafe { neon::dot_f32(a, b, n) } }
 
     #[cfg(all(target_arch = "x86_64", not(all(feature = "vdsp", target_vendor = "apple"))))]
-    { return unsafe { avx::dot_f32(a, b, n) }; }
+    { unsafe { avx::dot_f32(a, b, n) } }
 
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64", all(feature = "vdsp", target_vendor = "apple"))))]
     generic::dot_f32(a, b, n)
@@ -428,14 +428,13 @@ pub fn vec_scale_inplace(dst: &mut [f32], scale: f32, n: usize) {
     #[cfg(all(feature = "vdsp", target_vendor = "apple"))]
     {
         unsafe { vDSP_vsmul(dst.as_ptr(), 1, &scale, dst.as_mut_ptr(), 1, n as u64); }
-        return;
     }
 
     #[cfg(all(target_arch = "aarch64", not(all(feature = "vdsp", target_vendor = "apple"))))]
-    { unsafe { neon::vec_scale_inplace(dst, scale, n); } return; }
+    { unsafe { neon::vec_scale_inplace(dst, scale, n); } }
 
     #[cfg(all(target_arch = "x86_64", not(all(feature = "vdsp", target_vendor = "apple"))))]
-    { unsafe { avx::vec_scale_inplace(dst, scale, n); } return; }
+    { unsafe { avx::vec_scale_inplace(dst, scale, n); } }
 
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64", all(feature = "vdsp", target_vendor = "apple"))))]
     generic::vec_scale_inplace(dst, scale, n);
@@ -446,14 +445,13 @@ pub fn vec_axpy_inplace(dst: &mut [f32], src: &[f32], alpha: f32, n: usize) {
     #[cfg(all(feature = "vdsp", target_vendor = "apple"))]
     {
         unsafe { vDSP_vsma(src.as_ptr(), 1, &alpha, dst.as_ptr(), 1, dst.as_mut_ptr(), 1, n as u64); }
-        return;
     }
 
     #[cfg(all(target_arch = "aarch64", not(all(feature = "vdsp", target_vendor = "apple"))))]
-    { unsafe { neon::vec_axpy_inplace(dst, src, alpha, n); } return; }
+    { unsafe { neon::vec_axpy_inplace(dst, src, alpha, n); } }
 
     #[cfg(all(target_arch = "x86_64", not(all(feature = "vdsp", target_vendor = "apple"))))]
-    { unsafe { avx::vec_axpy_inplace(dst, src, alpha, n); } return; }
+    { unsafe { avx::vec_axpy_inplace(dst, src, alpha, n); } }
 
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64", all(feature = "vdsp", target_vendor = "apple"))))]
     generic::vec_axpy_inplace(dst, src, alpha, n);
@@ -462,10 +460,10 @@ pub fn vec_axpy_inplace(dst: &mut [f32], src: &[f32], alpha: f32, n: usize) {
 #[inline]
 pub fn vec_scale_add(dst: &mut [f32], src: &[f32], correction: f32, n: usize) {
     #[cfg(target_arch = "aarch64")]
-    { unsafe { neon::vec_scale_add(dst, src, correction, n); } return; }
+    { unsafe { neon::vec_scale_add(dst, src, correction, n); } }
 
     #[cfg(target_arch = "x86_64")]
-    { unsafe { avx::vec_scale_add(dst, src, correction, n); } return; }
+    { unsafe { avx::vec_scale_add(dst, src, correction, n); } }
 
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     generic::vec_scale_add(dst, src, correction, n);
@@ -477,14 +475,6 @@ pub fn vec_scale_add(dst: &mut [f32], src: &[f32], correction: f32, n: usize) {
 
 pub fn add_inplace(a: &mut [f32], b: &[f32], n: usize) {
     for i in 0..n { a[i] += b[i]; }
-}
-
-pub fn scale(x: &mut [f32], s: f32, n: usize) {
-    for i in 0..n { x[i] *= s; }
-}
-
-pub fn copy(dst: &mut [f32], src: &[f32], n: usize) {
-    dst[..n].copy_from_slice(&src[..n]);
 }
 
 // ========================================================================
@@ -502,7 +492,6 @@ pub fn matmul_t(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: usiz
             b.as_ptr(), k as i32,
             0.0, c.as_mut_ptr(), n as i32,
         );
-        return;
     }
 
     #[cfg(not(feature = "blas"))]
@@ -537,7 +526,6 @@ pub fn linear(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>, seq_len: u
                 }
             }
         }
-        return;
     }
 
     #[cfg(not(feature = "blas"))]
@@ -558,15 +546,6 @@ pub fn linear(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>, seq_len: u
 
 pub fn linear_nobias(y: &mut [f32], x: &[f32], w: &[f32], seq_len: usize, in_dim: usize, out_dim: usize) {
     linear(y, x, w, None, seq_len, in_dim, out_dim);
-}
-
-// BF16 scratch buffer for bf16->f32 conversion
-thread_local! {
-    static BF16_SCRATCH: std::cell::RefCell<Vec<f32>> = std::cell::RefCell::new(Vec::new());
-}
-
-fn bf16_get_scratch(n: usize) -> Vec<f32> {
-    vec![0.0f32; n]
 }
 
 fn bf16_to_f32_view(src: *const u16, n: usize) -> Vec<f32> {
@@ -596,7 +575,7 @@ fn bf16_matvec_threaded(y: &mut [f32], x: &[f32], w_bf16: *const u16, bias: Opti
     let bias_send = bias_ptr.map(|p| p as usize);
 
     parallel_for(|tid, nt| {
-        let chunk = (out_dim + nt - 1) / nt;
+        let chunk = out_dim.div_ceil(nt);
         let start = tid * chunk;
         let end = (start + chunk).min(out_dim);
         if start >= end { return; }
@@ -621,7 +600,9 @@ pub fn linear_nobias_bf16(y: &mut [f32], x: &[f32], w_bf16: *const u16, seq_len:
 }
 
 /// Like linear_nobias_bf16 but reuses a caller-provided scratch buffer for bf16→f32 conversion.
-pub fn linear_nobias_bf16_scratch(y: &mut [f32], x: &[f32], w_bf16: *const u16, seq_len: usize, in_dim: usize, out_dim: usize, scratch: &mut [f32]) {
+/// # Safety
+/// Caller must ensure w_bf16 points to at least out_dim * in_dim valid bf16 values.
+pub unsafe fn linear_nobias_bf16_scratch(y: &mut [f32], x: &[f32], w_bf16: *const u16, seq_len: usize, in_dim: usize, out_dim: usize, scratch: &mut [f32]) {
     let _pg = ProfileGuard::new(&PROF.bf16_matvec);
     if seq_len == 1 {
         bf16_matvec_threaded(y, x, w_bf16, None, in_dim, out_dim);
@@ -643,6 +624,7 @@ pub fn linear_bf16(y: &mut [f32], x: &[f32], w_bf16: *const u16, b: Option<&[f32
 }
 
 /// Fused Q/K/V matvec for single-token decode
+#[allow(clippy::too_many_arguments)]
 pub fn linear_nobias_bf16_qkv(
     q: &mut [f32], k: &mut [f32], v: &mut [f32], x: &[f32],
     wq: *const u16, wk: *const u16, wv: *const u16,
@@ -666,7 +648,7 @@ pub fn linear_nobias_bf16_qkv(
     let wv_ptr = wv as usize;
 
     parallel_for(|tid, nt| {
-        let chunk = (total_dim + nt - 1) / nt;
+        let chunk = total_dim.div_ceil(nt);
         let start = tid * chunk;
         let end = (start + chunk).min(total_dim);
         if start >= end { return; }
@@ -688,7 +670,7 @@ pub fn linear_nobias_bf16_qkv(
 
         // K range
         if end > q_end && start < k_end {
-            let s = if start > q_end { start - q_end } else { 0 };
+            let s = start.saturating_sub(q_end);
             let e_abs = end.min(k_end);
             let e = e_abs - q_end;
             if s < e {
@@ -700,7 +682,7 @@ pub fn linear_nobias_bf16_qkv(
 
         // V range
         if end > k_end {
-            let s = if start > k_end { start - k_end } else { 0 };
+            let s = start.saturating_sub(k_end);
             let e_abs = end.min(total_dim);
             let e = e_abs - k_end;
             if s < e {
@@ -725,6 +707,7 @@ pub fn matmul_t_bf16(c: &mut [f32], a: &[f32], b_bf16: *const u16, m: usize, k: 
 // 2D Convolution (im2col + BLAS sgemm)
 // ========================================================================
 
+#[allow(clippy::too_many_arguments)]
 fn im2col(input: &[f32], cols: &mut [f32], c_in: usize, h_in: usize, w_in: usize,
           kh: usize, kw: usize, stride: usize, padding: usize, h_out: usize, w_out: usize) {
     let col_len = h_out * w_out;
@@ -751,6 +734,7 @@ fn im2col(input: &[f32], cols: &mut [f32], c_in: usize, h_in: usize, w_in: usize
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn conv2d(out: &mut [f32], input: &[f32], weight: &[f32], bias: Option<&[f32]>,
               c_in: usize, c_out: usize, h_in: usize, w_in: usize,
               kh: usize, kw: usize, stride: usize, padding: usize) {
@@ -877,19 +861,18 @@ pub fn rms_norm_per_head(x: &mut [f32], weight: &[f32], seq_len: usize, n_heads:
 // ========================================================================
 
 pub fn silu(x: &mut [f32], n: usize) {
-    for i in 0..n {
-        let val = x[i];
-        x[i] = val / (1.0 + (-val).exp());
+    for val in x.iter_mut().take(n) {
+        *val = *val / (1.0 + (-*val).exp());
     }
 }
 
 pub fn gelu(x: &mut [f32], n: usize) {
     let _pg = ProfileGuard::new(&PROF.gelu);
     #[cfg(target_arch = "aarch64")]
-    { unsafe { neon::gelu_inplace(x, n); } return; }
+    { unsafe { neon::gelu_inplace(x, n); } }
 
     #[cfg(target_arch = "x86_64")]
-    { unsafe { avx::gelu_inplace(x, n); } return; }
+    { unsafe { avx::gelu_inplace(x, n); } }
 
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     for i in 0..n {
@@ -922,21 +905,12 @@ pub fn swiglu_multiply(out: &mut [f32], gate_up: &[f32], seq_len: usize, interme
     }
 }
 
-/// SwiGLU in-place: gate = silu(gate) * up, where gate and up are separate slices.
-pub fn swiglu_multiply_inplace(gate: &mut [f32], up: &[f32]) {
-    for j in 0..gate.len() {
-        let g = gate[j];
-        let g_silu = g / (1.0 + (-g).exp());
-        gate[j] = g_silu * up[j];
-    }
-}
-
 pub fn softmax(x: &mut [f32], rows: usize, cols: usize) {
     for r in 0..rows {
         let row = &mut x[r * cols..(r + 1) * cols];
         let max_val = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        for c in 0..cols {
-            row[c] -= max_val;
+        for val in row.iter_mut().take(cols) {
+            *val -= max_val;
         }
 
         #[cfg(all(feature = "vdsp", target_vendor = "apple"))]
@@ -959,12 +933,12 @@ pub fn softmax(x: &mut [f32], rows: usize, cols: usize) {
         }
 
         let mut sum = 0.0f32;
-        for c in 0..cols {
-            sum += row[c];
+        for val in row.iter().take(cols) {
+            sum += val;
         }
         let inv_sum = 1.0 / sum;
-        for c in 0..cols {
-            row[c] *= inv_sum;
+        for val in row.iter_mut().take(cols) {
+            *val *= inv_sum;
         }
     }
 }
@@ -973,6 +947,7 @@ pub fn softmax(x: &mut [f32], rows: usize, cols: usize) {
 // Attention Operations
 // ========================================================================
 
+#[allow(clippy::too_many_arguments)]
 fn bidirectional_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
                                   n_heads: usize, head_dim: usize, scale: f32,
                                   window_starts: &[i32], n_windows: usize,
@@ -991,7 +966,7 @@ fn bidirectional_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32
 
                 let mut max_score = -1e30f32;
                 let mut sum_exp = 0.0f32;
-                for d in 0..head_dim { o_row[d] = 0.0; }
+                for val in o_row.iter_mut().take(head_dim) { *val = 0.0; }
 
                 for j in ws..we {
                     let k_off = j * hidden + h * head_dim;
@@ -1022,6 +997,7 @@ fn bidirectional_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn bidirectional_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
                                seq: usize, n_heads: usize, head_dim: usize, scale: f32,
                                window_starts: &[i32], n_windows: usize) {
@@ -1037,7 +1013,7 @@ pub fn bidirectional_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
         let ws_ptr = window_starts.as_ptr() as usize;
 
         parallel_for(|tid, nt| {
-            let chunk = (n_heads + nt - 1) / nt;
+            let chunk = n_heads.div_ceil(nt);
             let h0 = tid * chunk;
             let h1 = (h0 + chunk).min(n_heads);
             if h0 >= h1 { return; }
@@ -1059,6 +1035,7 @@ pub fn bidirectional_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
                                  window_starts, n_windows, 0, n_heads);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn causal_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
                            seq_q: usize, seq_k: usize, n_heads: usize, n_kv_heads: usize,
                            head_dim: usize, scale: f32, q_offset: usize,
@@ -1079,7 +1056,7 @@ fn causal_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
 
             let mut max_score = -1e30f32;
             let mut sum_exp = 0.0f32;
-            for d in 0..head_dim { o_row[d] = 0.0; }
+            for val in o_row.iter_mut().take(head_dim) { *val = 0.0; }
 
             for j in 0..k_end {
                 let k_off = j * kv_hidden + kv_h * head_dim;
@@ -1109,6 +1086,7 @@ fn causal_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn causal_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
                          seq_q: usize, seq_k: usize, n_heads: usize, n_kv_heads: usize,
                          head_dim: usize, scale: f32, q_offset: usize) {
@@ -1123,7 +1101,7 @@ pub fn causal_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
         let kv_hidden = n_kv_heads * head_dim;
 
         parallel_for(|tid, nt| {
-            let chunk = (n_heads + nt - 1) / nt;
+            let chunk = n_heads.div_ceil(nt);
             let h0 = tid * chunk;
             let h1 = (h0 + chunk).min(n_heads);
             if h0 >= h1 { return; }
@@ -1221,7 +1199,7 @@ pub fn argmax_matvec_bf16(x: &[f32], w_bf16: *const u16, in_dim: usize, out_dim:
     let bv_ptr = best_vals.as_mut_ptr() as usize;
 
     parallel_for(|tid, nt| {
-        let chunk = (out_dim + nt - 1) / nt;
+        let chunk = out_dim.div_ceil(nt);
         let start = tid * chunk;
         let end = (start + chunk).min(out_dim);
         if start >= end {

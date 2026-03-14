@@ -2,6 +2,8 @@
 #[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
 
+/// # Safety
+/// Uses NEON intrinsics; caller must ensure slices have equal lengths.
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn bf16_to_f32_buf(dst: &mut [f32], src: &[u16]) {
     let n = src.len();
@@ -22,6 +24,8 @@ pub unsafe fn bf16_to_f32_buf(dst: &mut [f32], src: &[u16]) {
     }
 }
 
+/// # Safety
+/// w_bf16 must point to at least out_dim * in_dim valid bf16 values.
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn bf16_matvec_fused(y: &mut [f32], x: &[f32], w_bf16: *const u16, bias: Option<&[f32]>, in_dim: usize, out_dim: usize) {
     let mut o = 0usize;
@@ -135,6 +139,8 @@ pub unsafe fn bf16_matvec_fused(y: &mut [f32], x: &[f32], w_bf16: *const u16, bi
     }
 }
 
+/// # Safety
+/// w_bf16 must point to at least end * in_dim valid bf16 values.
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn argmax_bf16_range(x: &[f32], w_bf16: *const u16, in_dim: usize, start: usize, end: usize) -> (usize, f32) {
     let mut best = start;
@@ -241,6 +247,8 @@ pub unsafe fn argmax_bf16_range(x: &[f32], w_bf16: *const u16, in_dim: usize, st
     (best, best_val)
 }
 
+/// # Safety
+/// Uses NEON intrinsics; slices must have at least n elements.
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn dot_f32(a: &[f32], b: &[f32], n: usize) -> f32 {
     let mut i = 0usize;
@@ -270,6 +278,8 @@ pub unsafe fn dot_f32(a: &[f32], b: &[f32], n: usize) -> f32 {
     sum
 }
 
+/// # Safety
+/// Uses NEON intrinsics; dst must have at least n elements.
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn vec_scale_inplace(dst: &mut [f32], scale: f32, n: usize) {
     let mut i = 0usize;
@@ -287,6 +297,8 @@ pub unsafe fn vec_scale_inplace(dst: &mut [f32], scale: f32, n: usize) {
     }
 }
 
+/// # Safety
+/// Uses NEON intrinsics; dst and src must have at least n elements.
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn vec_axpy_inplace(dst: &mut [f32], src: &[f32], alpha: f32, n: usize) {
     let mut i = 0usize;
@@ -306,6 +318,8 @@ pub unsafe fn vec_axpy_inplace(dst: &mut [f32], src: &[f32], alpha: f32, n: usiz
     }
 }
 
+/// # Safety
+/// Uses NEON intrinsics; dst and src must have at least n elements.
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn vec_scale_add(dst: &mut [f32], src: &[f32], correction: f32, n: usize) {
     let mut i = 0usize;
@@ -326,6 +340,9 @@ pub unsafe fn vec_scale_add(dst: &mut [f32], src: &[f32], correction: f32, n: us
 }
 
 /// NEON-accelerated RMS norm for a single row.
+///
+/// # Safety
+/// Uses NEON intrinsics; all slices must have at least hidden elements.
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn rms_norm_row(out: &mut [f32], x: &[f32], weight: &[f32], hidden: usize, eps: f32) {
     // Sum of squares
@@ -366,6 +383,9 @@ pub unsafe fn rms_norm_row(out: &mut [f32], x: &[f32], weight: &[f32], hidden: u
 }
 
 /// NEON-accelerated layer norm for a single row.
+///
+/// # Safety
+/// Uses NEON intrinsics; all slices must have at least hidden elements.
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn layer_norm_row(out: &mut [f32], x: &[f32], weight: &[f32], bias: &[f32], hidden: usize, eps: f32) {
     // Pass 1: compute mean
@@ -430,8 +450,8 @@ pub unsafe fn layer_norm_row(out: &mut [f32], x: &[f32], weight: &[f32], bias: &
 #[inline]
 unsafe fn fast_exp_neon(x: float32x4_t) -> float32x4_t {
     // exp(x) ≈ 2^(x * log2e) using integer trick + polynomial refinement
-    let log2e = vdupq_n_f32(1.442695041);
-    let ln2 = vdupq_n_f32(0.6931471806);
+    let log2e = vdupq_n_f32(std::f32::consts::LOG2_E);
+    let ln2 = vdupq_n_f32(std::f32::consts::LN_2);
 
     let val = vmulq_f32(x, log2e);
     // Clamp to prevent overflow
@@ -462,6 +482,9 @@ unsafe fn fast_exp_neon(x: float32x4_t) -> float32x4_t {
 }
 
 /// NEON-accelerated exp() in-place using fast polynomial approximation.
+///
+/// # Safety
+/// Uses NEON intrinsics.
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn exp_inplace(x: &mut [f32]) {
     let n = x.len();
@@ -478,6 +501,9 @@ pub unsafe fn exp_inplace(x: &mut [f32]) {
 }
 
 /// NEON-accelerated SwiGLU: out[j] = silu(gate[2j]) * gate[2j+1] for interleaved gate/up.
+///
+/// # Safety
+/// Uses NEON intrinsics; gate_up must have at least 2*n elements.
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn swiglu_interleaved(out: &mut [f32], gate_up: &[f32], n: usize) {
     let one = vdupq_n_f32(1.0);
@@ -526,11 +552,14 @@ pub unsafe fn swiglu_interleaved(out: &mut [f32], gate_up: &[f32], n: usize) {
 }
 
 /// NEON-accelerated GELU (tanh approximation).
+///
+/// # Safety
+/// Uses NEON intrinsics; x must have at least n elements.
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn gelu_inplace(x: &mut [f32], n: usize) {
     let half = vdupq_n_f32(0.5);
     let one = vdupq_n_f32(1.0);
-    let coeff = vdupq_n_f32(0.7978845608028654); // sqrt(2/pi)
+    let coeff = vdupq_n_f32(0.797_884_6); // sqrt(2/pi)
     let c3 = vdupq_n_f32(0.044715);
     let mut i = 0usize;
 
@@ -549,7 +578,7 @@ pub unsafe fn gelu_inplace(x: &mut [f32], n: usize) {
     while i < n {
         let val = x[i];
         let x3 = val * val * val;
-        let inner = 0.7978845608028654f32 * (val + 0.044715 * x3);
+        let inner = 0.797_884_6_f32 * (val + 0.044715 * x3);
         x[i] = 0.5 * val * (1.0 + inner.tanh());
         i += 1;
     }

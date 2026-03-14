@@ -154,7 +154,7 @@ pub fn resample(samples: &[f32], from_rate: i32, to_rate: i32) -> Vec<f32> {
 
     let inv_i0_beta = 1.0 / bessel_i0(kaiser_beta);
 
-    for i in 0..new_n {
+    for (i, resampled_val) in resampled.iter_mut().enumerate().take(new_n) {
         let src_pos = i as f64 / ratio;
         let center = src_pos as i32;
         let mut acc = 0.0f64;
@@ -189,7 +189,7 @@ pub fn resample(samples: &[f32], from_rate: i32, to_rate: i32) -> Vec<f32> {
             wsum += coeff;
         }
 
-        resampled[i] = if wsum > 1e-9 { (acc / wsum) as f32 } else { 0.0 };
+        *resampled_val = if wsum > 1e-9 { (acc / wsum) as f32 } else { 0.0 };
     }
 
     resampled
@@ -226,8 +226,8 @@ fn build_mel_filters() -> Vec<f32> {
     let mut filters = vec![0.0f32; MEL_BINS * N_FREQ];
 
     let mut fft_freqs = vec![0.0f32; N_FREQ];
-    for i in 0..N_FREQ {
-        fft_freqs[i] = i as f32 * (SAMPLE_RATE as f32 / 2.0) / (N_FREQ - 1) as f32;
+    for (i, freq) in fft_freqs.iter_mut().enumerate().take(N_FREQ) {
+        *freq = i as f32 * (SAMPLE_RATE as f32 / 2.0) / (N_FREQ - 1) as f32;
     }
 
     let mel_min = hertz_to_mel(0.0);
@@ -237,9 +237,9 @@ fn build_mel_filters() -> Vec<f32> {
     let mut filter_freqs = vec![0.0f32; n_filters + 2];
     let mut filter_diff = vec![0.0f32; n_filters + 1];
 
-    for i in 0..n_filters + 2 {
+    for (i, filter_freq) in filter_freqs.iter_mut().enumerate().take(n_filters + 2) {
         let mel = mel_min + (mel_max - mel_min) * i as f32 / (n_filters + 1) as f32;
-        filter_freqs[i] = mel_to_hertz(mel);
+        *filter_freq = mel_to_hertz(mel);
     }
     for i in 0..n_filters + 1 {
         filter_diff[i] = filter_freqs[i + 1] - filter_freqs[i];
@@ -280,9 +280,9 @@ pub fn mel_spectrogram(samples: &[f32]) -> Option<(Vec<f32>, usize)> {
     let padded_len = n_samples + 2 * pad_len;
     let mut padded = vec![0.0f32; padded_len];
 
-    for i in 0..pad_len {
+    for (i, padded_val) in padded.iter_mut().enumerate().take(pad_len) {
         let src = pad_len - i;
-        padded[i] = if src < n_samples { samples[src] } else { 0.0 };
+        *padded_val = if src < n_samples { samples[src] } else { 0.0 };
     }
     padded[pad_len..pad_len + n_samples].copy_from_slice(samples);
     for i in 0..pad_len {
@@ -298,14 +298,14 @@ pub fn mel_spectrogram(samples: &[f32]) -> Option<(Vec<f32>, usize)> {
     }
 
     static MEL_FILTERS: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
-    let mel_filters = MEL_FILTERS.get_or_init(|| build_mel_filters());
+    let mel_filters = MEL_FILTERS.get_or_init(build_mel_filters);
 
     // Periodic Hann window (cached)
     static HANN_WINDOW: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
     let window = HANN_WINDOW.get_or_init(|| {
         let mut w = vec![0.0f32; WINDOW_SIZE];
-        for i in 0..WINDOW_SIZE {
-            w[i] = 0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / WINDOW_SIZE as f32).cos());
+        for (i, w_val) in w.iter_mut().enumerate().take(WINDOW_SIZE) {
+            *w_val = 0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / WINDOW_SIZE as f32).cos());
         }
         w
     });
@@ -398,18 +398,18 @@ pub fn compact_silence(samples: &[f32]) -> Vec<f32> {
     let pad_voice_windows = 3;
     let pass_windows = 60;
 
-    let n_win = (n_samples + win - 1) / win;
+    let n_win = n_samples.div_ceil(win);
     let mut rms_vals = vec![0.0f32; n_win];
 
-    for w in 0..n_win {
+    for (w, rms_val) in rms_vals.iter_mut().enumerate().take(n_win) {
         let start = w * win;
         let end = (start + win).min(n_samples);
         let len = end - start;
         let mut energy = 0.0f32;
-        for i in start..end {
-            energy += samples[i] * samples[i];
+        for sample in samples.iter().take(end).skip(start) {
+            energy += sample * sample;
         }
-        rms_vals[w] = (energy / len.max(1) as f32).sqrt();
+        *rms_val = (energy / len.max(1) as f32).sqrt();
     }
 
     // Smooth RMS
@@ -444,8 +444,8 @@ pub fn compact_silence(samples: &[f32]) -> Vec<f32> {
             j += 1;
         }
         if j - i < min_voice_windows {
-            for k in i..j {
-                is_voice[k] = false;
+            for is_voice_val in is_voice.iter_mut().take(j).skip(i) {
+                *is_voice_val = false;
             }
         }
         i = j;
@@ -453,25 +453,25 @@ pub fn compact_silence(samples: &[f32]) -> Vec<f32> {
 
     // Pad voice edges
     let mut padded_voice = vec![false; n_win];
-    for w in 0..n_win {
-        if !is_voice[w] {
+    for (w, &voice) in is_voice.iter().enumerate().take(n_win) {
+        if !voice {
             continue;
         }
         let a = w.saturating_sub(pad_voice_windows);
         let b = (w + pad_voice_windows).min(n_win - 1);
-        for k in a..=b {
-            padded_voice[k] = true;
+        for padded_val in padded_voice.iter_mut().take(b + 1).skip(a) {
+            *padded_val = true;
         }
     }
 
     let mut out = Vec::with_capacity(n_samples);
     let mut silence_count = 0;
 
-    for w in 0..n_win {
+    for (w, &pv) in padded_voice.iter().enumerate().take(n_win) {
         let start = w * win;
         let end = (start + win).min(n_samples);
 
-        if padded_voice[w] {
+        if pv {
             out.extend_from_slice(&samples[start..end]);
             silence_count = 0;
         } else {

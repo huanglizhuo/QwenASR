@@ -115,9 +115,9 @@ fn longest_increasing_subsequence(vals: &[f32]) -> Vec<usize> {
     // Find the end of the longest sequence
     let mut best_len = 0;
     let mut best_end = 0;
-    for i in 0..n {
-        if dp[i] > best_len {
-            best_len = dp[i];
+    for (i, &dp_val) in dp.iter().enumerate().take(n) {
+        if dp_val > best_len {
+            best_len = dp_val;
             best_end = i;
         }
     }
@@ -177,8 +177,8 @@ fn fix_timestamps(timestamps: &mut [f32]) {
         if block_len <= 2 {
             // Small block: fill with nearest normal value
             let fill = if block_start > 0 { left_val } else { right_val };
-            for j in block_start..block_end {
-                timestamps[j] = fill;
+            for ts in timestamps.iter_mut().take(block_end).skip(block_start) {
+                *ts = fill;
             }
         } else {
             // Larger block: linearly interpolate
@@ -260,11 +260,11 @@ pub fn forced_align(
 
     let mut off = 0;
     for &tok in PREFIX_HEAD {
-        tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim);
+        unsafe { tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim); }
         off += 1;
     }
     for &tok in PREFIX_TAIL {
-        tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim);
+        unsafe { tok_embed_bf16_to_f32(&mut input_embeds[off * dim..(off + 1) * dim], tok_emb, tok, dim); }
         off += 1;
     }
 
@@ -277,19 +277,19 @@ pub fn forced_align(
     // Suffix
     let suffix_off = prefix_len + enc_seq_len;
     for (i, &tok) in SUFFIX_BASE.iter().enumerate() {
-        tok_embed_bf16_to_f32(
+        unsafe { tok_embed_bf16_to_f32(
             &mut input_embeds[(suffix_off + i) * dim..(suffix_off + i + 1) * dim],
             tok_emb, tok, dim,
-        );
+        ); }
     }
 
     // Text tokens (with interleaved <timestamp> tokens)
     let text_off = suffix_off + suffix_len;
     for (i, &tok) in text_tokens.iter().enumerate() {
-        tok_embed_bf16_to_f32(
+        unsafe { tok_embed_bf16_to_f32(
             &mut input_embeds[(text_off + i) * dim..(text_off + i + 1) * dim],
             tok_emb, tok, dim,
-        );
+        ); }
     }
 
     // Step 4: Single prefill pass → logits for all positions
@@ -317,9 +317,9 @@ pub fn forced_align(
             // Argmax
             let mut best_idx = 0;
             let mut best_val = logit_row[0];
-            for j in 1..out_dim {
-                if logit_row[j] > best_val {
-                    best_val = logit_row[j];
+            for (j, &val) in logit_row.iter().enumerate().take(out_dim).skip(1) {
+                if val > best_val {
+                    best_val = val;
                     best_idx = j;
                 }
             }

@@ -1,4 +1,4 @@
-/// Audio encoder: Conv2D stem + windowed transformer + projection cascade.
+//! Audio encoder: Conv2D stem + windowed transformer + projection cascade.
 
 use crate::config::*;
 use crate::kernels;
@@ -33,6 +33,12 @@ pub struct EncoderBuffers {
     pub ffn_mid: Vec<f32>,
     pub ffn_out: Vec<f32>,
     pub cap_tokens: usize,
+}
+
+impl Default for EncoderBuffers {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EncoderBuffers {
@@ -189,12 +195,12 @@ impl Encoder {
         // Determine tokens per full chunk
         let tokens_per_chunk = {
             let w = chunk_size;
-            let w1 = (w + 2 * 1 - 3) / 2 + 1;
-            let w2 = (w1 + 2 * 1 - 3) / 2 + 1;
-            (w2 + 2 * 1 - 3) / 2 + 1
+            let w1 = (w + 2 - 3) / 2 + 1;
+            let w2 = (w1 + 2 - 3) / 2 + 1;
+            (w2 + 2 - 3) / 2 + 1
         };
 
-        let n_chunks = (mel_frames + chunk_size - 1) / chunk_size;
+        let n_chunks = mel_frames.div_ceil(chunk_size);
 
         // Pre-calculate total tokens
         let mut total_tokens = 0;
@@ -284,10 +290,10 @@ impl Encoder {
 
         // Build attention window boundaries
         let window_token_size = tokens_per_chunk * (n_window_infer / chunk_size);
-        let n_windows = (total_tokens + window_token_size - 1) / window_token_size;
+        let n_windows = total_tokens.div_ceil(window_token_size);
         let mut window_starts = vec![0i32; n_windows + 1];
-        for w in 0..n_windows {
-            window_starts[w] = (w * window_token_size) as i32;
+        for (w, ws) in window_starts.iter_mut().enumerate().take(n_windows) {
+            *ws = (w * window_token_size) as i32;
         }
         window_starts[n_windows] = total_tokens as i32;
 

@@ -53,8 +53,6 @@
 //! The remaining modules (`encoder`, `decoder`, `kernels`, `safetensors`) are
 //! implementation details and not intended for direct use.
 
-#![allow(dead_code)]
-
 pub mod config;
 pub mod safetensors;
 pub mod audio;

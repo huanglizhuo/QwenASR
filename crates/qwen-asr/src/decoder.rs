@@ -1,4 +1,4 @@
-/// Qwen3 LLM decoder with GQA, KV cache, and generation.
+//! Qwen3 LLM decoder with GQA, KV cache, and generation.
 
 use crate::config::*;
 use crate::kernels;
@@ -226,6 +226,12 @@ pub struct RopeCache {
     pub head_dim: usize,
 }
 
+impl Default for RopeCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RopeCache {
     pub fn new() -> Self {
         RopeCache {
@@ -435,9 +441,9 @@ pub fn decoder_prefill(
         let k = &mut bufs.pref_k[..seq_len * kv_dim];
         let v = &mut bufs.pref_v[..seq_len * kv_dim];
 
-        kernels::linear_nobias_bf16_scratch(q, x_norm, layer.wq_weight_bf16, seq_len, dim, q_dim, &mut bufs.bf16_scratch);
-        kernels::linear_nobias_bf16_scratch(k, x_norm, layer.wk_weight_bf16, seq_len, dim, kv_dim, &mut bufs.bf16_scratch);
-        kernels::linear_nobias_bf16_scratch(v, x_norm, layer.wv_weight_bf16, seq_len, dim, kv_dim, &mut bufs.bf16_scratch);
+        unsafe { kernels::linear_nobias_bf16_scratch(q, x_norm, layer.wq_weight_bf16, seq_len, dim, q_dim, &mut bufs.bf16_scratch); }
+        unsafe { kernels::linear_nobias_bf16_scratch(k, x_norm, layer.wk_weight_bf16, seq_len, dim, kv_dim, &mut bufs.bf16_scratch); }
+        unsafe { kernels::linear_nobias_bf16_scratch(v, x_norm, layer.wv_weight_bf16, seq_len, dim, kv_dim, &mut bufs.bf16_scratch); }
 
         kernels::rms_norm_per_head(q, &layer.q_norm_weight, seq_len, n_heads, head_dim, eps);
         kernels::rms_norm_per_head(k, &layer.k_norm_weight, seq_len, n_kv_heads, head_dim, eps);
@@ -463,7 +469,7 @@ pub fn decoder_prefill(
                                  head_dim, scale, start_pos);
 
         let proj_out = &mut bufs.pref_proj_out[..seq_len * dim];
-        kernels::linear_nobias_bf16_scratch(proj_out, attn_out, layer.wo_weight_bf16, seq_len, q_dim, dim, &mut bufs.bf16_scratch);
+        unsafe { kernels::linear_nobias_bf16_scratch(proj_out, attn_out, layer.wo_weight_bf16, seq_len, q_dim, dim, &mut bufs.bf16_scratch); }
         kernels::add_inplace(&mut bufs.pref_x[..seq_len * dim], proj_out, seq_len * dim);
 
         // Post-attention RMSNorm + SwiGLU MLP
@@ -471,13 +477,13 @@ pub fn decoder_prefill(
         kernels::rms_norm(x_norm2, &bufs.pref_x[..seq_len * dim], &layer.post_attn_norm, seq_len, dim, eps);
 
         let gate_up = &mut bufs.pref_gate_up[..seq_len * 2 * intermediate];
-        kernels::linear_nobias_bf16_scratch(gate_up, x_norm2, layer.gate_up_fused_bf16.as_ptr(), seq_len, dim, 2 * intermediate, &mut bufs.bf16_scratch);
+        unsafe { kernels::linear_nobias_bf16_scratch(gate_up, x_norm2, layer.gate_up_fused_bf16.as_ptr(), seq_len, dim, 2 * intermediate, &mut bufs.bf16_scratch); }
 
         let gate = &mut bufs.pref_gate[..seq_len * intermediate];
         kernels::swiglu_multiply(gate, gate_up, seq_len, intermediate);
 
         let ffn_out = &mut bufs.pref_ffn_out[..seq_len * dim];
-        kernels::linear_nobias_bf16_scratch(ffn_out, gate, layer.down_weight_bf16, seq_len, intermediate, dim, &mut bufs.bf16_scratch);
+        unsafe { kernels::linear_nobias_bf16_scratch(ffn_out, gate, layer.down_weight_bf16, seq_len, intermediate, dim, &mut bufs.bf16_scratch); }
         kernels::add_inplace(&mut bufs.pref_x[..seq_len * dim], ffn_out, seq_len * dim);
     }
 
@@ -606,16 +612,19 @@ pub fn decoder_prefill_logits(
 
     // Project each position through lm_head: [seq_len × dim] × [out_dim × dim]^T → [seq_len × out_dim]
     let mut logits = vec![0.0f32; seq_len * out_dim];
-    kernels::linear_nobias_bf16_scratch(
+    unsafe { kernels::linear_nobias_bf16_scratch(
         &mut logits, &x_norm, lm_weight,
         seq_len, dim, out_dim, &mut bufs.bf16_scratch,
-    );
+    ); }
 
     logits
 }
 
 /// Convert a token embedding from bf16 to f32.
-pub fn tok_embed_bf16_to_f32(dst: &mut [f32], tok_emb_bf16: *const u16, token_id: i32, dim: usize) {
+///
+/// # Safety
+/// tok_emb_bf16 must point to valid memory for at least (token_id + 1) * dim bf16 values.
+pub unsafe fn tok_embed_bf16_to_f32(dst: &mut [f32], tok_emb_bf16: *const u16, token_id: i32, dim: usize) {
     let src = unsafe { std::slice::from_raw_parts(tok_emb_bf16.add(token_id as usize * dim), dim) };
     for i in 0..dim {
         dst[i] = f32::from_bits((src[i] as u32) << 16);
