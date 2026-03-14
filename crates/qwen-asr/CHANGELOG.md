@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.4.1...qwen-asr-v0.4.2) (2026-03-14)
+
+
+### Bug Fixes
+
+* install OpenBLAS on CI to support build ([e995cad](https://github.com/huanglizhuo/QwenASR/commit/e995cad2c18999a39e74c56c26a2d6526020fd53))
+
 ## [0.4.1](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.4.0...qwen-asr-v0.4.1) (2026-03-14)
 
 
