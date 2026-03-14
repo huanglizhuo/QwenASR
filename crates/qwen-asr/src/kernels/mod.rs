@@ -48,7 +48,6 @@ extern "C" {
 }
 
 #[cfg(all(feature = "blas", not(target_vendor = "apple")))]
-#[link(name = "openblas")]
 extern "C" {
     fn cblas_sgemm(
         order: i32, transa: i32, transb: i32,
