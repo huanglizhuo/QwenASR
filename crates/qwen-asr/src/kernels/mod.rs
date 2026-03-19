@@ -1034,25 +1034,29 @@ pub fn bidirectional_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
                                  window_starts, n_windows, 0, n_heads);
 }
 
-/// Two-pass causal attention using BLAS sgemm for batched Q·K and V accumulation.
-/// Pass 1: scores = K_h @ q_h (one BLAS call per head, replaces seq_k individual dot_f32 calls)
-/// Pass 2: standard softmax + BLAS V^T @ softmax_scores
+/// Two-pass causal attention using BLAS sgemm with head-contiguous KV cache.
+/// K/V layout: `[head][pos][head_dim]` — each head's data is contiguous across positions.
+/// Pass 1: scores = K_h @ q_h (BLAS sgemm with lda=head_dim, fully contiguous)
+/// Pass 2: standard softmax
+/// Pass 3: out = V_h^T @ softmax_scores (BLAS sgemm with lda=head_dim, fully contiguous)
 #[cfg(feature = "blas")]
 #[allow(clippy::too_many_arguments)]
-fn causal_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
+fn causal_attention_heads(out: &mut [f32], q: &[f32],
+                           k_base: *const f32, v_base: *const f32,
+                           head_stride: usize,
                            seq_q: usize, seq_k: usize, n_heads: usize, n_kv_heads: usize,
                            head_dim: usize, scale: f32, q_offset: usize,
                            head_start: usize, head_end: usize) {
     let heads_per_kv = n_heads / n_kv_heads;
     let q_hidden = n_heads * head_dim;
-    let kv_hidden = n_kv_heads * head_dim;
 
-    // Thread-local scores buffer (stack-allocated for typical sizes)
-    let max_k = seq_k;
-    let mut scores = vec![0.0f32; max_k];
+    let mut scores = vec![0.0f32; seq_k];
 
     for h in head_start..head_end {
         let kv_h = h / heads_per_kv;
+        // Head-contiguous: K_h starts at k_base + kv_h * head_stride, with lda = head_dim
+        let k_head = unsafe { k_base.add(kv_h * head_stride) };
+        let v_head = unsafe { v_base.add(kv_h * head_stride) };
 
         for i in 0..seq_q {
             let q_off = i * q_hidden + h * head_dim;
@@ -1066,22 +1070,20 @@ fn causal_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
                 continue;
             }
 
-            // Pass 1: Compute all scores at once using BLAS sgemm (M=k_end, N=1, K=head_dim)
-            // scores[j] = K[j, kv_h*head_dim .. +head_dim] · q[h*head_dim .. +head_dim] * scale
-            // A = K_h (k_end × head_dim, lda = kv_hidden), B = q_h (head_dim × 1, ldb = 1)
+            // Pass 1: scores = K_h @ q_h (contiguous, lda = head_dim)
             unsafe {
                 cblas_sgemm(
                     CBLAS_ROW_MAJOR, CBLAS_NO_TRANS, CBLAS_NO_TRANS,
                     k_end as i32, 1, head_dim as i32,
                     scale,
-                    k.as_ptr().add(kv_h * head_dim), kv_hidden as i32,
+                    k_head, head_dim as i32,
                     q.as_ptr().add(q_off), 1,
                     0.0,
                     scores.as_mut_ptr(), 1,
                 );
             }
 
-            // Pass 2: Softmax over scores[0..k_end]
+            // Pass 2: Softmax
             let mut max_s = scores[0];
             for j in 1..k_end { if scores[j] > max_s { max_s = scores[j]; } }
             let mut sum_exp = 0.0f32;
@@ -1095,15 +1097,13 @@ fn causal_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
                 for j in 0..k_end { scores[j] *= inv; }
             }
 
-            // Pass 3: out = V_h^T @ softmax_scores using BLAS sgemm
-            // A = V_h^T (head_dim × k_end), B = scores (k_end × 1)
-            // V_h is (k_end × head_dim, lda = kv_hidden), transposed
+            // Pass 3: out = V_h^T @ softmax_scores (contiguous, lda = head_dim)
             unsafe {
                 cblas_sgemm(
                     CBLAS_ROW_MAJOR, CBLAS_TRANS, CBLAS_NO_TRANS,
                     head_dim as i32, 1, k_end as i32,
                     1.0,
-                    v.as_ptr().add(kv_h * head_dim), kv_hidden as i32,
+                    v_head, head_dim as i32,
                     scores.as_ptr(), 1,
                     0.0,
                     o_row.as_mut_ptr(), 1,
@@ -1113,16 +1113,17 @@ fn causal_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
     }
 }
 
-/// Fallback: online softmax causal attention (no BLAS)
+/// Fallback: online softmax causal attention (no BLAS), head-contiguous KV layout.
 #[cfg(not(feature = "blas"))]
 #[allow(clippy::too_many_arguments)]
-fn causal_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
+fn causal_attention_heads(out: &mut [f32], q: &[f32],
+                           k_base: *const f32, v_base: *const f32,
+                           head_stride: usize,
                            seq_q: usize, seq_k: usize, n_heads: usize, n_kv_heads: usize,
                            head_dim: usize, scale: f32, q_offset: usize,
                            head_start: usize, head_end: usize) {
     let heads_per_kv = n_heads / n_kv_heads;
     let q_hidden = n_heads * head_dim;
-    let kv_hidden = n_kv_heads * head_dim;
 
     for h in head_start..head_end {
         let kv_h = h / heads_per_kv;
@@ -1139,10 +1140,8 @@ fn causal_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
             for val in o_row.iter_mut().take(head_dim) { *val = 0.0; }
 
             for j in 0..k_end {
-                let k_off = j * kv_hidden + kv_h * head_dim;
-                let v_off = j * kv_hidden + kv_h * head_dim;
-                let k_row = &k[k_off..k_off + head_dim];
-                let v_row = &v[v_off..v_off + head_dim];
+                let k_row = unsafe { std::slice::from_raw_parts(k_base.add(kv_h * head_stride + j * head_dim), head_dim) };
+                let v_row = unsafe { std::slice::from_raw_parts(v_base.add(kv_h * head_stride + j * head_dim), head_dim) };
 
                 let score = dot_f32(q_row, k_row, head_dim) * scale;
 
@@ -1167,7 +1166,9 @@ fn causal_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn causal_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
+pub fn causal_attention(out: &mut [f32], q: &[f32],
+                         k_base: *const f32, v_base: *const f32,
+                         head_stride: usize,
                          seq_q: usize, seq_k: usize, n_heads: usize, n_kv_heads: usize,
                          head_dim: usize, scale: f32, q_offset: usize) {
     let _pg = ProfileGuard::new(&PROF.attention_causal);
@@ -1175,10 +1176,9 @@ pub fn causal_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
     if n_threads > 1 && n_heads >= 2 {
         let out_ptr = out.as_mut_ptr() as usize;
         let q_ptr = q.as_ptr() as usize;
-        let k_ptr = k.as_ptr() as usize;
-        let v_ptr = v.as_ptr() as usize;
+        let k_ptr = k_base as usize;
+        let v_ptr = v_base as usize;
         let q_hidden = n_heads * head_dim;
-        let kv_hidden = n_kv_heads * head_dim;
 
         parallel_for(|tid, nt| {
             let chunk = n_heads.div_ceil(nt);
@@ -1188,17 +1188,18 @@ pub fn causal_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
 
             let out_local = unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut f32, seq_q * q_hidden) };
             let q_local = unsafe { std::slice::from_raw_parts(q_ptr as *const f32, seq_q * q_hidden) };
-            let k_local = unsafe { std::slice::from_raw_parts(k_ptr as *const f32, seq_k * kv_hidden) };
-            let v_local = unsafe { std::slice::from_raw_parts(v_ptr as *const f32, seq_k * kv_hidden) };
 
-            causal_attention_heads(out_local, q_local, k_local, v_local,
+            causal_attention_heads(out_local, q_local,
+                                   k_ptr as *const f32, v_ptr as *const f32,
+                                   head_stride,
                                    seq_q, seq_k, n_heads, n_kv_heads,
                                    head_dim, scale, q_offset, h0, h1);
         });
         return;
     }
 
-    causal_attention_heads(out, q, k, v, seq_q, seq_k, n_heads, n_kv_heads,
+    causal_attention_heads(out, q, k_base, v_base, head_stride,
+                            seq_q, seq_k, n_heads, n_kv_heads,
                             head_dim, scale, q_offset, 0, n_heads);
 }
 

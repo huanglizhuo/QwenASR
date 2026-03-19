@@ -132,19 +132,22 @@ pub struct KvCache {
     pub len: usize,
     pub max_seq: usize,
     pub n_layers: usize,
-    pub kv_dim: usize,
+    pub n_kv_heads: usize,
+    pub head_dim: usize,
 }
 
 impl KvCache {
-    pub fn new(n_layers: usize, max_seq: usize, kv_dim: usize) -> Self {
-        let total = n_layers * max_seq * kv_dim;
+    /// Layout: `[layer][head][pos][head_dim]` — head-contiguous for cache-friendly attention.
+    pub fn new(n_layers: usize, max_seq: usize, n_kv_heads: usize, head_dim: usize) -> Self {
+        let total = n_layers * n_kv_heads * max_seq * head_dim;
         KvCache {
             k: vec![0.0f32; total],
             v: vec![0.0f32; total],
             len: 0,
             max_seq,
             n_layers,
-            kv_dim,
+            n_kv_heads,
+            head_dim,
         }
     }
 
@@ -158,19 +161,23 @@ impl KvCache {
             new_max *= 2;
         }
 
-        let new_stride = new_max * self.kv_dim;
-        let old_stride = self.max_seq * self.kv_dim;
-        let total = self.n_layers * new_stride;
+        let old_head_stride = self.max_seq * self.head_dim;
+        let new_head_stride = new_max * self.head_dim;
+        let total = self.n_layers * self.n_kv_heads * new_head_stride;
 
         let mut new_k = vec![0.0f32; total];
         let mut new_v = vec![0.0f32; total];
 
-        let copy_len = self.len * self.kv_dim;
+        let copy_len = self.len * self.head_dim;
         for l in 0..self.n_layers {
-            new_k[l * new_stride..l * new_stride + copy_len]
-                .copy_from_slice(&self.k[l * old_stride..l * old_stride + copy_len]);
-            new_v[l * new_stride..l * new_stride + copy_len]
-                .copy_from_slice(&self.v[l * old_stride..l * old_stride + copy_len]);
+            for h in 0..self.n_kv_heads {
+                let old_off = (l * self.n_kv_heads + h) * old_head_stride;
+                let new_off = (l * self.n_kv_heads + h) * new_head_stride;
+                new_k[new_off..new_off + copy_len]
+                    .copy_from_slice(&self.k[old_off..old_off + copy_len]);
+                new_v[new_off..new_off + copy_len]
+                    .copy_from_slice(&self.v[old_off..old_off + copy_len]);
+            }
         }
 
         self.k = new_k;
@@ -178,39 +185,43 @@ impl KvCache {
         self.max_seq = new_max;
     }
 
-    pub fn k_at(&mut self, layer: usize, pos: usize) -> &mut [f32] {
-        let off = (layer * self.max_seq + pos) * self.kv_dim;
-        &mut self.k[off..off + self.kv_dim]
+    /// Write K for all heads at a given position (from interleaved kv_dim buffer).
+    pub fn k_write_pos(&mut self, layer: usize, pos: usize, src: &[f32]) {
+        let head_stride = self.max_seq * self.head_dim;
+        for h in 0..self.n_kv_heads {
+            let dst_off = (layer * self.n_kv_heads + h) * head_stride + pos * self.head_dim;
+            let src_off = h * self.head_dim;
+            self.k[dst_off..dst_off + self.head_dim]
+                .copy_from_slice(&src[src_off..src_off + self.head_dim]);
+        }
     }
 
-    pub fn v_at(&mut self, layer: usize, pos: usize) -> &mut [f32] {
-        let off = (layer * self.max_seq + pos) * self.kv_dim;
-        &mut self.v[off..off + self.kv_dim]
+    /// Write V for all heads at a given position (from interleaved kv_dim buffer).
+    pub fn v_write_pos(&mut self, layer: usize, pos: usize, src: &[f32]) {
+        let head_stride = self.max_seq * self.head_dim;
+        for h in 0..self.n_kv_heads {
+            let dst_off = (layer * self.n_kv_heads + h) * head_stride + pos * self.head_dim;
+            let src_off = h * self.head_dim;
+            self.v[dst_off..dst_off + self.head_dim]
+                .copy_from_slice(&src[src_off..src_off + self.head_dim]);
+        }
     }
 
-    pub fn k_layer(&self, layer: usize) -> &[f32] {
-        let off = layer * self.max_seq * self.kv_dim;
-        let len = self.len * self.kv_dim;
-        &self.k[off..off + len]
+    /// Base pointer for K data of a specific layer (head-contiguous layout).
+    /// Layout within layer: `[head][pos][head_dim]`, stride between heads = max_seq * head_dim.
+    pub fn k_layer_base(&self, layer: usize) -> *const f32 {
+        let off = layer * self.n_kv_heads * self.max_seq * self.head_dim;
+        unsafe { self.k.as_ptr().add(off) }
     }
 
-    pub fn v_layer(&self, layer: usize) -> &[f32] {
-        let off = layer * self.max_seq * self.kv_dim;
-        let len = self.len * self.kv_dim;
-        &self.v[off..off + len]
+    pub fn v_layer_base(&self, layer: usize) -> *const f32 {
+        let off = layer * self.n_kv_heads * self.max_seq * self.head_dim;
+        unsafe { self.v.as_ptr().add(off) }
     }
 
-    /// Get full K for a layer up to total_seq tokens.
-    pub fn k_layer_full(&self, layer: usize, total_seq: usize) -> &[f32] {
-        let off = layer * self.max_seq * self.kv_dim;
-        let len = total_seq * self.kv_dim;
-        &self.k[off..off + len]
-    }
-
-    pub fn v_layer_full(&self, layer: usize, total_seq: usize) -> &[f32] {
-        let off = layer * self.max_seq * self.kv_dim;
-        let len = total_seq * self.kv_dim;
-        &self.v[off..off + len]
+    /// Stride between heads (in floats): max_seq * head_dim.
+    pub fn head_stride(&self) -> usize {
+        self.max_seq * self.head_dim
     }
 }
 
@@ -451,20 +462,20 @@ pub fn decoder_prefill(
         kernels::apply_rope_neox(q, rope_cos, rope_sin, seq_len, n_heads, head_dim);
         kernels::apply_rope_neox(k, rope_cos, rope_sin, seq_len, n_kv_heads, head_dim);
 
-        // Store K, V in cache
+        // Store K, V in cache (scatter to head-contiguous layout)
         for s in 0..seq_len {
-            kv_cache.k_at(layer_idx, start_pos + s)
-                .copy_from_slice(&bufs.pref_k[s * kv_dim..(s + 1) * kv_dim]);
-            kv_cache.v_at(layer_idx, start_pos + s)
-                .copy_from_slice(&bufs.pref_v[s * kv_dim..(s + 1) * kv_dim]);
+            kv_cache.k_write_pos(layer_idx, start_pos + s, &bufs.pref_k[s * kv_dim..(s + 1) * kv_dim]);
+            kv_cache.v_write_pos(layer_idx, start_pos + s, &bufs.pref_v[s * kv_dim..(s + 1) * kv_dim]);
         }
 
         let total_seq = start_pos + seq_len;
-        let full_k = kv_cache.k_layer_full(layer_idx, total_seq);
-        let full_v = kv_cache.v_layer_full(layer_idx, total_seq);
+        let k_base = kv_cache.k_layer_base(layer_idx);
+        let v_base = kv_cache.v_layer_base(layer_idx);
+        let head_stride = kv_cache.head_stride();
 
         let attn_out = &mut bufs.pref_attn_out[..seq_len * q_dim];
-        kernels::causal_attention(attn_out, q, full_k, full_v,
+        kernels::causal_attention(attn_out, q, k_base, v_base,
+                                 head_stride,
                                  seq_len, total_seq, n_heads, n_kv_heads,
                                  head_dim, scale, start_pos);
 
@@ -539,15 +550,17 @@ pub fn decoder_forward(
         kernels::apply_rope_neox(&mut bufs.q[..q_dim], rope_cos, rope_sin, 1, n_heads, head_dim);
         kernels::apply_rope_neox(&mut bufs.k[..kv_dim], rope_cos, rope_sin, 1, n_kv_heads, head_dim);
 
-        kv_cache.k_at(layer_idx, pos).copy_from_slice(&bufs.k[..kv_dim]);
-        kv_cache.v_at(layer_idx, pos).copy_from_slice(&bufs.v[..kv_dim]);
+        kv_cache.k_write_pos(layer_idx, pos, &bufs.k[..kv_dim]);
+        kv_cache.v_write_pos(layer_idx, pos, &bufs.v[..kv_dim]);
 
         let total_seq = pos + 1;
-        let full_k = kv_cache.k_layer_full(layer_idx, total_seq);
-        let full_v = kv_cache.v_layer_full(layer_idx, total_seq);
+        let k_base = kv_cache.k_layer_base(layer_idx);
+        let v_base = kv_cache.v_layer_base(layer_idx);
+        let head_stride = kv_cache.head_stride();
 
         kernels::causal_attention(&mut bufs.attn_out[..q_dim], &bufs.q[..q_dim],
-                                 full_k, full_v,
+                                 k_base, v_base,
+                                 head_stride,
                                  1, total_seq, n_heads, n_kv_heads,
                                  head_dim, scale, pos);
 

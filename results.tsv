@@ -1,0 +1,10 @@
+experiment	description	build_ok	test_ok	offline_time_ms	offline_rtf	segmented_time_ms	segmented_rtf	streaming_time_ms	streaming_rtf	status
+0	baseline	yes	yes	2712	10.38	2736	10.29	8984	3.13	baseline
+1	swiglu-simd-decode	yes	yes	2731	10.31	2795	10.08	9559	2.95	reverted
+2	blas-causal-attention	yes	yes	2577	10.93	2729	10.32	8736	3.22	kept
+3	skip-attn-threading-small-seq	yes	yes	-	-	-	-	-	-	reverted
+4	spin-wait-threadpool	yes	yes	4426	6.36	4349	6.48	14909	1.89	reverted
+5	hybrid-attn-threshold	yes	yes	2958	9.52	3000	9.39	9738	2.89	reverted
+6	neon-embed-no-alloc-norm	yes	yes	2841	9.91	2918	9.65	9617	2.93	kept
+7	fat-lto-codegen-units-1	yes	yes	2722	10.35	2782	10.12	8866	3.18	reverted
+8	head-contiguous-kv-cache	yes	yes	2501	11.26	2493	11.29	8668	3.25	kept
