@@ -183,43 +183,29 @@ use std::sync::{Mutex, Condvar, Arc, OnceLock};
 const MAX_THREADS: usize = 16;
 
 struct ThreadPool {
-    state: Mutex<ThreadPoolState>,
+    // Mutex+condvar only used as slow-path fallback when spin-wait misses
+    state: Mutex<bool>, // shutdown flag only
     work_cv: Condvar,
-    done_cv: Condvar,
-    // Atomic fast-path: avoids mutex on hot paths
+    // All dispatch data is lock-free via atomics
     gen_atomic: AtomicU64,
     done_atomic: AtomicUsize,
+    fn_ptr_atomic: AtomicUsize,
+    fn_call_atomic: AtomicUsize,
+    n_threads_atomic: AtomicUsize,
 }
-
-struct ThreadPoolState {
-    n_threads: usize,
-    shutdown: bool,
-    generation: u64,
-    n_done: usize,
-    fn_ptr: Option<*const ()>,  // type-erased function pointer
-    fn_call: Option<fn(*const (), usize, usize)>, // trampoline
-}
-
-unsafe impl Send for ThreadPoolState {}
-unsafe impl Sync for ThreadPoolState {}
 
 static THREAD_POOL: OnceLock<Arc<ThreadPool>> = OnceLock::new();
 
 fn get_pool() -> &'static Arc<ThreadPool> {
     THREAD_POOL.get_or_init(|| {
         Arc::new(ThreadPool {
-            state: Mutex::new(ThreadPoolState {
-                n_threads: 1,
-                shutdown: false,
-                generation: 0,
-                n_done: 0,
-                fn_ptr: None,
-                fn_call: None,
-            }),
+            state: Mutex::new(false),
             work_cv: Condvar::new(),
-            done_cv: Condvar::new(),
             gen_atomic: AtomicU64::new(0),
             done_atomic: AtomicUsize::new(0),
+            fn_ptr_atomic: AtomicUsize::new(0),
+            fn_call_atomic: AtomicUsize::new(0),
+            n_threads_atomic: AtomicUsize::new(1),
         })
     })
 }
@@ -227,52 +213,44 @@ fn get_pool() -> &'static Arc<ThreadPool> {
 fn pool_worker(pool: Arc<ThreadPool>, tid: usize) {
     let mut last_gen: u64 = 0;
     loop {
-        let (fn_ptr, fn_call, n_threads);
-
         // Fast path: spin briefly on atomic generation counter
         let mut found = false;
         for _ in 0..512 {
             let gen = pool.gen_atomic.load(Ordering::Acquire);
             if gen != last_gen {
+                last_gen = gen;
                 found = true;
                 break;
             }
             core::hint::spin_loop();
         }
 
-        {
-            let mut state = match pool.state.lock() {
+        if !found {
+            // Slow path: condvar wait (mutex only protects shutdown flag)
+            let mut shutdown = match pool.state.lock() {
                 Ok(s) => s,
                 Err(p) => p.into_inner(),
             };
-            if !found {
-                // Slow path: condvar wait
-                while !state.shutdown && state.generation == last_gen {
-                    state = match pool.work_cv.wait(state) {
-                        Ok(s) => s,
-                        Err(p) => p.into_inner(),
-                    };
-                }
+            while !*shutdown && pool.gen_atomic.load(Ordering::Relaxed) == last_gen {
+                shutdown = match pool.work_cv.wait(shutdown) {
+                    Ok(s) => s,
+                    Err(p) => p.into_inner(),
+                };
             }
-            if state.shutdown {
+            if *shutdown {
                 return;
             }
-            last_gen = state.generation;
-            fn_ptr = match state.fn_ptr {
-                Some(p) => p,
-                None => continue,
-            };
-            fn_call = match state.fn_call {
-                Some(f) => f,
-                None => continue,
-            };
-            n_threads = state.n_threads;
+            last_gen = pool.gen_atomic.load(Ordering::Acquire);
         }
 
-        // Execute work
-        fn_call(fn_ptr, tid, n_threads);
+        // Read dispatch data from atomics (ordered by gen_atomic Acquire)
+        let fn_ptr = pool.fn_ptr_atomic.load(Ordering::Relaxed) as *const ();
+        let fn_call: fn(*const (), usize, usize) = unsafe {
+            core::mem::transmute(pool.fn_call_atomic.load(Ordering::Relaxed))
+        };
+        let n_threads = pool.n_threads_atomic.load(Ordering::Relaxed);
 
-        // Signal done via atomic (avoids mutex on completion path)
+        fn_call(fn_ptr, tid, n_threads);
         pool.done_atomic.fetch_add(1, Ordering::Release);
     }
 }
@@ -303,10 +281,6 @@ pub fn set_threads(n: usize) {
     if n > 1 {
         let pool = get_pool();
         ensure_workers(pool, n);
-        match pool.state.lock() {
-            Ok(mut s) => s.n_threads = n,
-            Err(p) => p.into_inner().n_threads = n,
-        }
     }
     if verbose() >= 2 {
         eprintln!("Thread pool: {} threads", n);
@@ -364,20 +338,21 @@ fn parallel_for<F: Fn(usize, usize) + Send + Sync>(f: F) {
         f(tid, nt);
     }
 
-    // Reset done counter before dispatch
+    // Publish dispatch data via atomics (Relaxed OK: gen_atomic Release provides ordering)
     pool.done_atomic.store(0, Ordering::Relaxed);
+    pool.fn_ptr_atomic.store(&f as *const F as *const () as usize, Ordering::Relaxed);
+    pool.fn_call_atomic.store(trampoline::<F> as usize, Ordering::Relaxed);
+    pool.n_threads_atomic.store(n_threads, Ordering::Relaxed);
+    // Release: ensures all stores above are visible to workers that Acquire gen_atomic
+    pool.gen_atomic.fetch_add(1, Ordering::Release);
 
+    // Wake workers that fell through to condvar wait
+    // Lock scope is minimal: just notify, no data to write
     {
-        let mut state = match pool.state.lock() {
+        let _guard = match pool.state.lock() {
             Ok(s) => s,
             Err(p) => p.into_inner(),
         };
-        state.fn_ptr = Some(&f as *const F as *const ());
-        state.fn_call = Some(trampoline::<F>);
-        state.n_done = 0;
-        state.generation += 1;
-        // Publish generation atomically for spin-wait fast path
-        pool.gen_atomic.store(state.generation, Ordering::Release);
         pool.work_cv.notify_all();
     }
 
@@ -387,21 +362,10 @@ fn parallel_for<F: Fn(usize, usize) + Send + Sync>(f: F) {
     // Wait for workers: spin on atomic done counter
     let expected = n_threads - 1;
     loop {
-        let done = pool.done_atomic.load(Ordering::Acquire);
-        if done >= expected {
+        if pool.done_atomic.load(Ordering::Acquire) >= expected {
             break;
         }
         core::hint::spin_loop();
-    }
-
-    // Clear function pointers (safety: ensure closure outlives execution)
-    {
-        let mut state = match pool.state.lock() {
-            Ok(s) => s,
-            Err(p) => p.into_inner(),
-        };
-        state.fn_ptr = None;
-        state.fn_call = None;
     }
 }
 
