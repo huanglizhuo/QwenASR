@@ -135,14 +135,14 @@ See `src/c_api.rs` for C-FFI and `src/jni_api.rs` for JNI interfaces.
 
 ## Performance
 
-Apple M-series (10 cores), Qwen3-ASR-0.6B:
+**Hardware:** Apple M1 Pro (10 cores), 32 GB RAM
+**Model:** Qwen3-ASR-0.6B, **Audio:** 28.2s sample, 3 runs (best)
 
-| Mode | Audio | Time | Realtime |
-|------|-------|------|----------|
-| Offline | 11s | 1.8s | 6.2x |
-| Segmented (`-S 30`) | 45s | 4.6s | 9.8x |
-| Streaming | 28s | 10.4s | 2.7x |
-| VAD (live) | 28s | ~5s | 3-5x |
+| Mode | Inference | Realtime Factor | Encode | Decode | Tokens/s |
+|------|-----------|-----------------|--------|--------|----------|
+| Offline | 2.87s | 9.8x | 744ms | 2124ms | 15.7 |
+| Segmented (`-S 30`) | 2.86s | 9.9x | 712ms | 2145ms | 15.8 |
+| Streaming | 9.29s | 3.0x | 2195ms | 7088ms | 4.9 |
 
 ## Testing
 
