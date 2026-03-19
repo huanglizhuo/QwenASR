@@ -720,6 +720,59 @@ pub fn linear_nobias_bf16_qkv(
     });
 }
 
+/// Fused gate_up matvec + SwiGLU for single-token decode.
+/// Computes: ffn_out[j] = silu(gate[j]) * up[j] where gate/up come from interleaved gate_up_fused matvec.
+/// Keeps gate_up output in L1 cache for the SwiGLU operation.
+pub fn linear_nobias_bf16_swiglu(
+    ffn_out: &mut [f32],
+    x: &[f32],
+    gate_up_bf16: *const u16,
+    in_dim: usize,
+    intermediate: usize,
+) {
+    let _pg = ProfileGuard::new(&PROF.bf16_matvec);
+    let n_threads = get_num_threads();
+
+    if n_threads <= 1 {
+        // Single-threaded: compute gate_up, then SwiGLU inline
+        let mut gate_buf = vec![0.0f32; 2 * intermediate];
+        bf16_matvec_fused(&mut gate_buf, x, gate_up_bf16, None, in_dim, 2 * intermediate);
+        for j in 0..intermediate {
+            let g = gate_buf[2 * j];
+            let u = gate_buf[2 * j + 1];
+            ffn_out[j] = g / (1.0 + (-g).exp()) * u;
+        }
+        return;
+    }
+
+    let x_ptr = x.as_ptr() as usize;
+    let w_ptr = gate_up_bf16 as usize;
+    let ffn_ptr = ffn_out.as_mut_ptr() as usize;
+
+    parallel_for(|tid, nt| {
+        let chunk = intermediate.div_ceil(nt);
+        let start = tid * chunk;
+        let end = (start + chunk).min(intermediate);
+        if start >= end { return; }
+        let n_rows = end - start;
+
+        let x_local = unsafe { std::slice::from_raw_parts(x_ptr as *const f32, in_dim) };
+        let w_local = unsafe { (w_ptr as *const u16).add(2 * start * in_dim) };
+
+        // Compute gate_up for this chunk (thread-local stack buffer)
+        let mut gate_up_local = vec![0.0f32; 2 * n_rows];
+        bf16_matvec_fused(&mut gate_up_local, x_local, w_local, None, in_dim, 2 * n_rows);
+
+        // Apply SwiGLU inline while data is hot in L1
+        let ffn_local = unsafe { std::slice::from_raw_parts_mut((ffn_ptr as *mut f32).add(start), n_rows) };
+        for j in 0..n_rows {
+            let g = gate_up_local[2 * j];
+            let u = gate_up_local[2 * j + 1];
+            ffn_local[j] = g / (1.0 + (-g).exp()) * u;
+        }
+    });
+}
+
 pub fn matmul_t_bf16(c: &mut [f32], a: &[f32], b_bf16: *const u16, m: usize, k: usize, n: usize) {
     if m == 1 {
         bf16_matvec_threaded(c, a, b_bf16, None, k, n);

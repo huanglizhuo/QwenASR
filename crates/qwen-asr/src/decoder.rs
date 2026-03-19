@@ -570,16 +570,10 @@ pub fn decoder_forward(
 
         kernels::rms_norm(&mut bufs.x_norm[..dim], &bufs.x[..dim], &layer.post_attn_norm, 1, dim, eps);
 
-        kernels::linear_nobias_bf16(&mut bufs.gate_buf[..2 * intermediate], &bufs.x_norm[..dim],
-                                   layer.gate_up_fused_bf16.as_ptr(), 1, dim, 2 * intermediate);
-        // gate_buf is interleaved: [gate[0], up[0], gate[1], up[1], ...]
-        // Apply SwiGLU: ffn_out[j] = silu(gate[j]) * up[j]
-        for j in 0..intermediate {
-            let g = bufs.gate_buf[2 * j];
-            let u = bufs.gate_buf[2 * j + 1];
-            let g_silu = g / (1.0 + (-g).exp());
-            bufs.ffn_out[j] = g_silu * u;
-        }
+        kernels::linear_nobias_bf16_swiglu(
+            &mut bufs.ffn_out[..intermediate], &bufs.x_norm[..dim],
+            layer.gate_up_fused_bf16.as_ptr(), dim, intermediate,
+        );
         kernels::linear_nobias_bf16(&mut bufs.gate_buf[..dim], &bufs.ffn_out[..intermediate],
                                    layer.down_weight_bf16, 1, intermediate, dim);
         kernels::add_inplace(&mut bufs.x[..dim], &bufs.gate_buf[..dim], dim);
