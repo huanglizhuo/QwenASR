@@ -305,9 +305,33 @@ pub fn get_num_threads() -> usize {
 }
 
 pub fn get_num_cpus() -> usize {
+    // On Apple Silicon, prefer performance cores only (E-cores bottleneck parallel_for).
+    #[cfg(target_os = "macos")]
+    {
+        let perf_cores = get_perf_core_count();
+        if perf_cores > 0 {
+            return perf_cores;
+        }
+    }
     std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1)
+}
+
+#[cfg(target_os = "macos")]
+fn get_perf_core_count() -> usize {
+    extern "C" {
+        fn sysctlbyname(name: *const i8, oldp: *mut libc::c_void, oldlenp: *mut usize,
+                        newp: *const libc::c_void, newlen: usize) -> i32;
+    }
+    let name = c"hw.perflevel0.physicalcpu";
+    let mut val: i32 = 0;
+    let mut len = std::mem::size_of::<i32>();
+    let ret = unsafe {
+        sysctlbyname(name.as_ptr(), &mut val as *mut i32 as *mut libc::c_void,
+                     &mut len, std::ptr::null(), 0)
+    };
+    if ret == 0 && val > 0 { val as usize } else { 0 }
 }
 
 /// Run a closure in parallel using the persistent thread pool.
