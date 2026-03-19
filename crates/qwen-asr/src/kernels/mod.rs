@@ -186,6 +186,9 @@ struct ThreadPool {
     state: Mutex<ThreadPoolState>,
     work_cv: Condvar,
     done_cv: Condvar,
+    // Atomic fast-path: avoids mutex on hot paths
+    gen_atomic: AtomicU64,
+    done_atomic: AtomicUsize,
 }
 
 struct ThreadPoolState {
@@ -215,6 +218,8 @@ fn get_pool() -> &'static Arc<ThreadPool> {
             }),
             work_cv: Condvar::new(),
             done_cv: Condvar::new(),
+            gen_atomic: AtomicU64::new(0),
+            done_atomic: AtomicUsize::new(0),
         })
     })
 }
@@ -223,16 +228,31 @@ fn pool_worker(pool: Arc<ThreadPool>, tid: usize) {
     let mut last_gen: u64 = 0;
     loop {
         let (fn_ptr, fn_call, n_threads);
+
+        // Fast path: spin briefly on atomic generation counter
+        let mut found = false;
+        for _ in 0..512 {
+            let gen = pool.gen_atomic.load(Ordering::Acquire);
+            if gen != last_gen {
+                found = true;
+                break;
+            }
+            core::hint::spin_loop();
+        }
+
         {
             let mut state = match pool.state.lock() {
                 Ok(s) => s,
-                Err(p) => p.into_inner(), // recover from poisoned mutex
+                Err(p) => p.into_inner(),
             };
-            while !state.shutdown && state.generation == last_gen {
-                state = match pool.work_cv.wait(state) {
-                    Ok(s) => s,
-                    Err(p) => p.into_inner(),
-                };
+            if !found {
+                // Slow path: condvar wait
+                while !state.shutdown && state.generation == last_gen {
+                    state = match pool.work_cv.wait(state) {
+                        Ok(s) => s,
+                        Err(p) => p.into_inner(),
+                    };
+                }
             }
             if state.shutdown {
                 return;
@@ -240,7 +260,7 @@ fn pool_worker(pool: Arc<ThreadPool>, tid: usize) {
             last_gen = state.generation;
             fn_ptr = match state.fn_ptr {
                 Some(p) => p,
-                None => continue, // spurious wake or cleared — retry
+                None => continue,
             };
             fn_call = match state.fn_call {
                 Some(f) => f,
@@ -252,15 +272,8 @@ fn pool_worker(pool: Arc<ThreadPool>, tid: usize) {
         // Execute work
         fn_call(fn_ptr, tid, n_threads);
 
-        // Signal done
-        {
-            let mut state = match pool.state.lock() {
-                Ok(s) => s,
-                Err(p) => p.into_inner(),
-            };
-            state.n_done += 1;
-            pool.done_cv.notify_one();
-        }
+        // Signal done via atomic (avoids mutex on completion path)
+        pool.done_atomic.fetch_add(1, Ordering::Release);
     }
 }
 
@@ -351,6 +364,9 @@ fn parallel_for<F: Fn(usize, usize) + Send + Sync>(f: F) {
         f(tid, nt);
     }
 
+    // Reset done counter before dispatch
+    pool.done_atomic.store(0, Ordering::Relaxed);
+
     {
         let mut state = match pool.state.lock() {
             Ok(s) => s,
@@ -360,24 +376,30 @@ fn parallel_for<F: Fn(usize, usize) + Send + Sync>(f: F) {
         state.fn_call = Some(trampoline::<F>);
         state.n_done = 0;
         state.generation += 1;
+        // Publish generation atomically for spin-wait fast path
+        pool.gen_atomic.store(state.generation, Ordering::Release);
         pool.work_cv.notify_all();
     }
 
     // Main thread does tid=0
     f(0, n_threads);
 
-    // Wait for workers
+    // Wait for workers: spin on atomic done counter
+    let expected = n_threads - 1;
+    loop {
+        let done = pool.done_atomic.load(Ordering::Acquire);
+        if done >= expected {
+            break;
+        }
+        core::hint::spin_loop();
+    }
+
+    // Clear function pointers (safety: ensure closure outlives execution)
     {
         let mut state = match pool.state.lock() {
             Ok(s) => s,
             Err(p) => p.into_inner(),
         };
-        while state.n_done < n_threads - 1 {
-            state = match pool.done_cv.wait(state) {
-                Ok(s) => s,
-                Err(p) => p.into_inner(),
-            };
-        }
         state.fn_ptr = None;
         state.fn_call = None;
     }
