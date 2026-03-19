@@ -36,20 +36,13 @@ This will:
 ### Transcribe an audio file
 
 ```bash
-qwen-asr -d ~/.openclaw/tools/qwen-asr/qwen3-asr-0.6b -i <audio-file> --silent
-```
-
-The `--silent` flag suppresses progress output and prints only the transcription text to stdout.
-
-### Voice message workflow
-
-When you receive an audio file path that needs transcription:
-
-```bash
 bash {baseDir}/scripts/transcribe.sh <audio-file>
 ```
 
-Or call `qwen-asr` directly:
+Supports any audio format: wav, mp3, m4a, ogg, flac, opus, webm, aac, etc.
+Non-WAV files are automatically converted via `ffmpeg` (must be installed).
+
+Or call `qwen-asr` directly (WAV only):
 
 ```bash
 qwen-asr -d ~/.openclaw/tools/qwen-asr/qwen3-asr-0.6b -i <audio-file> --silent
