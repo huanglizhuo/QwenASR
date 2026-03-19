@@ -153,6 +153,10 @@ RUSTFLAGS="-C target-cpu=native" cargo test --release
 cargo test --release --test kernels --test audio
 ```
 
+## Acknowledgments
+
+This project is a Rust port inspired by [antirez/qwen-asr](https://github.com/antirez/qwen-asr), a pure C implementation of Qwen3-ASR inference by Salvatore Sanfilippo (antirez). The architecture, algorithms, and approach are derived from that work.
+
 ## License
 
 Same license as [antirez/qwen-asr](https://github.com/antirez/qwen-asr).
