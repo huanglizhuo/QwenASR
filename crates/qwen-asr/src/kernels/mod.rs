@@ -1116,9 +1116,11 @@ pub fn bidirectional_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
 
 /// Two-pass causal attention using BLAS sgemm with head-contiguous KV cache.
 /// K/V layout: `[head][pos][head_dim]` — each head's data is contiguous across positions.
-/// Pass 1: scores = K_h @ q_h (BLAS sgemm with lda=head_dim, fully contiguous)
-/// Pass 2: standard softmax
-/// Pass 3: out = V_h^T @ softmax_scores (BLAS sgemm with lda=head_dim, fully contiguous)
+///
+/// Single-token (seq_q=1): online softmax with NEON dot products — avoids BLAS overhead,
+/// scores allocation, and fuses all 3 passes into a single scan over KV positions.
+///
+/// Multi-token (seq_q>1): 3-pass BLAS sgemm approach.
 #[cfg(feature = "blas")]
 #[allow(clippy::too_many_arguments)]
 fn causal_attention_heads(out: &mut [f32], q: &[f32],
@@ -1130,11 +1132,59 @@ fn causal_attention_heads(out: &mut [f32], q: &[f32],
     let heads_per_kv = n_heads / n_kv_heads;
     let q_hidden = n_heads * head_dim;
 
+    // Single-token path: online softmax without allocation or BLAS
+    if seq_q == 1 {
+        for h in head_start..head_end {
+            let kv_h = h / heads_per_kv;
+            let k_head = unsafe { k_base.add(kv_h * head_stride) };
+            let v_head = unsafe { v_base.add(kv_h * head_stride) };
+            let q_off = h * head_dim;
+            let o_row = &mut out[q_off..q_off + head_dim];
+            let k_end = (q_offset + 1).min(seq_k);
+
+            if k_end == 0 {
+                for val in o_row.iter_mut().take(head_dim) { *val = 0.0; }
+                continue;
+            }
+
+            let q_row = &q[q_off..q_off + head_dim];
+
+            // Online softmax: single pass over KV positions
+            let mut max_score = -1e30f32;
+            let mut sum_exp = 0.0f32;
+            for val in o_row.iter_mut().take(head_dim) { *val = 0.0; }
+
+            for j in 0..k_end {
+                let k_row = unsafe { std::slice::from_raw_parts(k_head.add(j * head_dim), head_dim) };
+                let v_row = unsafe { std::slice::from_raw_parts(v_head.add(j * head_dim), head_dim) };
+
+                let score = dot_f32(q_row, k_row, head_dim) * scale;
+
+                if score > max_score {
+                    let correction = (max_score - score).exp();
+                    sum_exp = sum_exp * correction + 1.0;
+                    vec_scale_add(o_row, v_row, correction, head_dim);
+                    max_score = score;
+                } else {
+                    let wt = (score - max_score).exp();
+                    sum_exp += wt;
+                    vec_axpy_inplace(o_row, v_row, wt, head_dim);
+                }
+            }
+
+            if sum_exp > 0.0 {
+                let inv_sum = 1.0 / sum_exp;
+                vec_scale_inplace(o_row, inv_sum, head_dim);
+            }
+        }
+        return;
+    }
+
+    // Multi-token path: 3-pass BLAS sgemm
     let mut scores = vec![0.0f32; seq_k];
 
     for h in head_start..head_end {
         let kv_h = h / heads_per_kv;
-        // Head-contiguous: K_h starts at k_base + kv_h * head_stride, with lda = head_dim
         let k_head = unsafe { k_base.add(kv_h * head_stride) };
         let v_head = unsafe { v_base.add(kv_h * head_stride) };
 
@@ -1150,7 +1200,7 @@ fn causal_attention_heads(out: &mut [f32], q: &[f32],
                 continue;
             }
 
-            // Pass 1: scores = K_h @ q_h (contiguous, lda = head_dim)
+            // Pass 1: scores = K_h @ q_h
             unsafe {
                 cblas_sgemm(
                     CBLAS_ROW_MAJOR, CBLAS_NO_TRANS, CBLAS_NO_TRANS,
@@ -1168,7 +1218,6 @@ fn causal_attention_heads(out: &mut [f32], q: &[f32],
             for j in 1..k_end { if scores[j] > max_s { max_s = scores[j]; } }
             for j in 0..k_end { scores[j] -= max_s; }
 
-            // Vectorized exp via vDSP (falls back to scalar on non-Apple)
             #[cfg(all(feature = "vdsp", target_vendor = "apple"))]
             {
                 let n = k_end as i32;
@@ -1186,7 +1235,7 @@ fn causal_attention_heads(out: &mut [f32], q: &[f32],
                 for j in 0..k_end { scores[j] *= inv; }
             }
 
-            // Pass 3: out = V_h^T @ softmax_scores (contiguous, lda = head_dim)
+            // Pass 3: out = V_h^T @ softmax_scores
             unsafe {
                 cblas_sgemm(
                     CBLAS_ROW_MAJOR, CBLAS_TRANS, CBLAS_NO_TRANS,
