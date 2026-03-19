@@ -33,7 +33,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install OpenBLAS
-        if: ${{ steps.release.outputs['crates/qwen-asr--release_created'] }}
+        if: ${{ steps.release.outputs['crates/qwen-asr--release_created'] || steps.release.outputs['crates/qwen-asr-cli--release_created'] }}
         run: sudo apt-get update && sudo apt-get install -y libopenblas-dev
 
       - name: Publish to crates.io

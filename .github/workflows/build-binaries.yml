@@ -17,12 +17,15 @@ jobs:
           - target: aarch64-apple-darwin
             runner: macos-latest
             blas: none
+            cpu: apple-m1
           - target: x86_64-apple-darwin
             runner: macos-13
             blas: none
+            cpu: x86-64-v3
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
             blas: openblas
+            cpu: x86-64-v3
 
     runs-on: ${{ matrix.runner }}
 
@@ -39,7 +42,7 @@ jobs:
 
       - name: Build release binary
         env:
-          RUSTFLAGS: "-C target-cpu=native"
+          RUSTFLAGS: "-C target-cpu=${{ matrix.cpu }}"
         run: cargo build --release -p qwen-asr-cli
 
       - name: Extract version from tag
