@@ -18,10 +18,6 @@ jobs:
             runner: macos-latest
             blas: none
             cpu: apple-m1
-          - target: x86_64-apple-darwin
-            runner: macos-13
-            blas: none
-            cpu: x86-64-v3
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
             blas: openblas

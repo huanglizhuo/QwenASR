@@ -15,7 +15,6 @@ else
 
   case "${OS}-${ARCH}" in
     Darwin-arm64)  TARGET="aarch64-apple-darwin" ;;
-    Darwin-x86_64) TARGET="x86_64-apple-darwin" ;;
     Linux-x86_64)  TARGET="x86_64-unknown-linux-gnu" ;;
     *)
       echo "No pre-built binary for ${OS}-${ARCH}."
