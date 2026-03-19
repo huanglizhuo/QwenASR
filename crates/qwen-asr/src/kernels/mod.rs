@@ -1389,13 +1389,45 @@ pub fn apply_rope_neox(x: &mut [f32], cos_vals: &[f32], sin_vals: &[f32],
         let sn = &sin_vals[s * head_dim..];
 
         for h in 0..n_heads {
-            let vec = &mut x[s * hidden + h * head_dim..s * hidden + (h + 1) * head_dim];
+            let base = s * hidden + h * head_dim;
+            let vec = &mut x[base..base + head_dim];
 
-            for d in 0..half {
-                let x1 = vec[d];
-                let x2 = vec[half + d];
-                vec[d]        = x1 * c[d]        + (-x2) * sn[d];
-                vec[half + d] = x2 * c[half + d] + x1 * sn[half + d];
+            #[cfg(target_arch = "aarch64")]
+            {
+                let mut d = 0usize;
+                while d + 4 <= half {
+                    unsafe {
+                        use core::arch::aarch64::*;
+                        let x1 = vld1q_f32(vec.as_ptr().add(d));
+                        let x2 = vld1q_f32(vec.as_ptr().add(half + d));
+                        let cv = vld1q_f32(c.as_ptr().add(d));
+                        let sv = vld1q_f32(sn.as_ptr().add(d));
+                        // vec[d] = x1*cos - x2*sin
+                        let new1 = vfmsq_f32(vmulq_f32(x1, cv), x2, sv);
+                        // vec[half+d] = x2*cos + x1*sin (cos[half+d]==cos[d])
+                        let new2 = vfmaq_f32(vmulq_f32(x2, cv), x1, sv);
+                        vst1q_f32(vec.as_mut_ptr().add(d), new1);
+                        vst1q_f32(vec.as_mut_ptr().add(half + d), new2);
+                    }
+                    d += 4;
+                }
+                while d < half {
+                    let x1 = vec[d];
+                    let x2 = vec[half + d];
+                    vec[d]        = x1 * c[d] - x2 * sn[d];
+                    vec[half + d] = x2 * c[d] + x1 * sn[d];
+                    d += 1;
+                }
+            }
+
+            #[cfg(not(target_arch = "aarch64"))]
+            {
+                for d in 0..half {
+                    let x1 = vec[d];
+                    let x2 = vec[half + d];
+                    vec[d]        = x1 * c[d]        + (-x2) * sn[d];
+                    vec[half + d] = x2 * c[half + d] + x1 * sn[half + d];
+                }
             }
         }
     }
