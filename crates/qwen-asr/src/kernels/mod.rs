@@ -480,6 +480,33 @@ pub fn add_inplace(a: &mut [f32], b: &[f32], n: usize) {
 // Matrix Operations
 // ========================================================================
 
+/// C = A @ B (no transpose): A[M,K], B[K,N], C[M,N]
+pub fn matmul_nn(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: usize) {
+    #[cfg(feature = "blas")]
+    unsafe {
+        cblas_sgemm(
+            CBLAS_ROW_MAJOR, CBLAS_NO_TRANS, CBLAS_NO_TRANS,
+            m as i32, n as i32, k as i32,
+            1.0, a.as_ptr(), k as i32,
+            b.as_ptr(), n as i32,
+            0.0, c.as_mut_ptr(), n as i32,
+        );
+    }
+
+    #[cfg(not(feature = "blas"))]
+    {
+        for mi in 0..m {
+            for ni in 0..n {
+                let mut sum = 0.0f32;
+                for ki in 0..k {
+                    sum += a[mi * k + ki] * b[ki * n + ni];
+                }
+                c[mi * n + ni] = sum;
+            }
+        }
+    }
+}
+
 /// C = A @ B^T: A[M,K], B[N,K], C[M,N]
 pub fn matmul_t(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: usize) {
     #[cfg(feature = "blas")]

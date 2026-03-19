@@ -325,59 +325,47 @@ pub fn mel_spectrogram(samples: &[f32]) -> Option<(Vec<f32>, usize)> {
         (cos_tbl, sin_tbl)
     });
 
-    // First pass: compute mel values and find global max
-    let mut mel_tmp = vec![0.0f32; n_frames * MEL_BINS];
-    let mut windowed = vec![0.0f32; N_FFT];
-    let mut power = vec![0.0f32; N_FREQ];
-    let mut global_max = -1e30f32;
-
+    // Batched computation via BLAS sgemm:
+    // 1. Pre-compute all windowed frames: windowed[N_FFT × n_frames] column-major
+    let mut windowed_all = vec![0.0f32; N_FFT * n_frames];
     for t in 0..n_frames {
         let start = t * HOP_LENGTH;
-        for i in 0..N_FFT {
-            windowed[i] = padded[start + i] * window[i];
-        }
-
-        for k in 0..n_freqs {
-            let mut re = 0.0f32;
-            let mut im = 0.0f32;
-            let cos_row = &dft_cos[k * N_FFT..(k + 1) * N_FFT];
-            let sin_row = &dft_sin[k * N_FFT..(k + 1) * N_FFT];
-            for n in 0..N_FFT {
-                re += windowed[n] * cos_row[n];
-                im += windowed[n] * sin_row[n];
-            }
-            power[k] = re * re + im * im;
-        }
-
-        for m in 0..MEL_BINS {
-            let filt = &mel_filters[m * n_freqs..(m + 1) * n_freqs];
-            let mut sum = 0.0f32;
-            for k in 0..n_freqs {
-                sum += filt[k] * power[k];
-            }
-            if sum < 1e-10 {
-                sum = 1e-10;
-            }
-            let val = sum.log10();
-            mel_tmp[t * MEL_BINS + m] = val;
-            if val > global_max {
-                global_max = val;
-            }
+        for n in 0..N_FFT {
+            windowed_all[n * n_frames + t] = padded[start + n] * window[n];
         }
     }
 
-    // Second pass: clamp and normalize. Output: [MEL_BINS, n_frames]
-    let mut mel = vec![0.0f32; MEL_BINS * n_frames];
-    let min_val = global_max - 8.0;
+    // 2. DFT via BLAS: re = dft_cos @ windowed_all, im = dft_sin @ windowed_all
+    //    [N_FREQ × N_FFT] @ [N_FFT × n_frames] = [N_FREQ × n_frames]
+    let mut re = vec![0.0f32; n_freqs * n_frames];
+    let mut im = vec![0.0f32; n_freqs * n_frames];
+    kernels::matmul_nn(&mut re, dft_cos, &windowed_all, n_freqs, N_FFT, n_frames);
+    kernels::matmul_nn(&mut im, dft_sin, &windowed_all, n_freqs, N_FFT, n_frames);
+    drop(windowed_all);
 
-    for t in 0..n_frames {
-        for m in 0..MEL_BINS {
-            let mut val = mel_tmp[t * MEL_BINS + m];
-            if val < min_val {
-                val = min_val;
-            }
-            mel[m * n_frames + t] = (val + 4.0) / 4.0;
-        }
+    // 3. Power spectrum: power[k * n_frames + t] = re² + im²
+    let mut power = vec![0.0f32; n_freqs * n_frames];
+    for i in 0..n_freqs * n_frames {
+        power[i] = re[i] * re[i] + im[i] * im[i];
+    }
+    drop(re);
+    drop(im);
+
+    // 4. Mel filter bank via BLAS: mel_raw = mel_filters @ power
+    //    [MEL_BINS × N_FREQ] @ [N_FREQ × n_frames] = [MEL_BINS × n_frames]
+    let mut mel = vec![0.0f32; MEL_BINS * n_frames];
+    kernels::matmul_nn(&mut mel, mel_filters, &power, MEL_BINS, n_freqs, n_frames);
+    drop(power);
+
+    // 5. Log, clamp, normalize
+    let mut global_max = -1e30f32;
+    for val in mel.iter_mut() {
+        *val = (*val).max(1e-10).log10();
+        if *val > global_max { global_max = *val; }
+    }
+    let min_val = global_max - 8.0;
+    for val in mel.iter_mut() {
+        *val = ((*val).max(min_val) + 4.0) / 4.0;
     }
 
     Some((mel, n_frames))
