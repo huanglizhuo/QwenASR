@@ -1034,6 +1034,87 @@ pub fn bidirectional_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
                                  window_starts, n_windows, 0, n_heads);
 }
 
+/// Two-pass causal attention using BLAS sgemm for batched Q·K and V accumulation.
+/// Pass 1: scores = K_h @ q_h (one BLAS call per head, replaces seq_k individual dot_f32 calls)
+/// Pass 2: standard softmax + BLAS V^T @ softmax_scores
+#[cfg(feature = "blas")]
+#[allow(clippy::too_many_arguments)]
+fn causal_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
+                           seq_q: usize, seq_k: usize, n_heads: usize, n_kv_heads: usize,
+                           head_dim: usize, scale: f32, q_offset: usize,
+                           head_start: usize, head_end: usize) {
+    let heads_per_kv = n_heads / n_kv_heads;
+    let q_hidden = n_heads * head_dim;
+    let kv_hidden = n_kv_heads * head_dim;
+
+    // Thread-local scores buffer (stack-allocated for typical sizes)
+    let max_k = seq_k;
+    let mut scores = vec![0.0f32; max_k];
+
+    for h in head_start..head_end {
+        let kv_h = h / heads_per_kv;
+
+        for i in 0..seq_q {
+            let q_off = i * q_hidden + h * head_dim;
+            let o_off = i * q_hidden + h * head_dim;
+            let o_row = &mut out[o_off..o_off + head_dim];
+            let global_pos = q_offset + i;
+            let k_end = (global_pos + 1).min(seq_k);
+
+            if k_end == 0 {
+                for val in o_row.iter_mut().take(head_dim) { *val = 0.0; }
+                continue;
+            }
+
+            // Pass 1: Compute all scores at once using BLAS sgemm (M=k_end, N=1, K=head_dim)
+            // scores[j] = K[j, kv_h*head_dim .. +head_dim] · q[h*head_dim .. +head_dim] * scale
+            // A = K_h (k_end × head_dim, lda = kv_hidden), B = q_h (head_dim × 1, ldb = 1)
+            unsafe {
+                cblas_sgemm(
+                    CBLAS_ROW_MAJOR, CBLAS_NO_TRANS, CBLAS_NO_TRANS,
+                    k_end as i32, 1, head_dim as i32,
+                    scale,
+                    k.as_ptr().add(kv_h * head_dim), kv_hidden as i32,
+                    q.as_ptr().add(q_off), 1,
+                    0.0,
+                    scores.as_mut_ptr(), 1,
+                );
+            }
+
+            // Pass 2: Softmax over scores[0..k_end]
+            let mut max_s = scores[0];
+            for j in 1..k_end { if scores[j] > max_s { max_s = scores[j]; } }
+            let mut sum_exp = 0.0f32;
+            for j in 0..k_end {
+                let e = (scores[j] - max_s).exp();
+                scores[j] = e;
+                sum_exp += e;
+            }
+            if sum_exp > 0.0 {
+                let inv = 1.0 / sum_exp;
+                for j in 0..k_end { scores[j] *= inv; }
+            }
+
+            // Pass 3: out = V_h^T @ softmax_scores using BLAS sgemm
+            // A = V_h^T (head_dim × k_end), B = scores (k_end × 1)
+            // V_h is (k_end × head_dim, lda = kv_hidden), transposed
+            unsafe {
+                cblas_sgemm(
+                    CBLAS_ROW_MAJOR, CBLAS_TRANS, CBLAS_NO_TRANS,
+                    head_dim as i32, 1, k_end as i32,
+                    1.0,
+                    v.as_ptr().add(kv_h * head_dim), kv_hidden as i32,
+                    scores.as_ptr(), 1,
+                    0.0,
+                    o_row.as_mut_ptr(), 1,
+                );
+            }
+        }
+    }
+}
+
+/// Fallback: online softmax causal attention (no BLAS)
+#[cfg(not(feature = "blas"))]
 #[allow(clippy::too_many_arguments)]
 fn causal_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
                            seq_q: usize, seq_k: usize, n_heads: usize, n_kv_heads: usize,
