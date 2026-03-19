@@ -19,6 +19,9 @@ metadata:
 
 Local, CPU-only speech-to-text powered by Qwen3-ASR. No API key or cloud needed.
 
+- Source code: [huanglizhuo/QwenASR](https://github.com/huanglizhuo/QwenASR)
+- Based on: [antirez/qwen-asr](https://github.com/antirez/qwen-asr) (original C implementation)
+
 ## Install
 
 Run the install script to download the pre-built binary and model:
