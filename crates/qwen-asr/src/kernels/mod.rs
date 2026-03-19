@@ -1166,12 +1166,21 @@ fn causal_attention_heads(out: &mut [f32], q: &[f32],
             // Pass 2: Softmax
             let mut max_s = scores[0];
             for j in 1..k_end { if scores[j] > max_s { max_s = scores[j]; } }
-            let mut sum_exp = 0.0f32;
-            for j in 0..k_end {
-                let e = (scores[j] - max_s).exp();
-                scores[j] = e;
-                sum_exp += e;
+            for j in 0..k_end { scores[j] -= max_s; }
+
+            // Vectorized exp via vDSP (falls back to scalar on non-Apple)
+            #[cfg(all(feature = "vdsp", target_vendor = "apple"))]
+            {
+                let n = k_end as i32;
+                unsafe { vvexpf(scores.as_mut_ptr(), scores.as_ptr(), &n); }
             }
+            #[cfg(not(all(feature = "vdsp", target_vendor = "apple")))]
+            {
+                for j in 0..k_end { scores[j] = scores[j].exp(); }
+            }
+
+            let mut sum_exp = 0.0f32;
+            for j in 0..k_end { sum_exp += scores[j]; }
             if sum_exp > 0.0 {
                 let inv = 1.0 / sum_exp;
                 for j in 0..k_end { scores[j] *= inv; }
