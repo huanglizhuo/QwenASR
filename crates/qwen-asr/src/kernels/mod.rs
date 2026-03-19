@@ -615,6 +615,15 @@ fn bf16_matvec_threaded(y: &mut [f32], x: &[f32], w_bf16: *const u16, bias: Opti
     });
 }
 
+/// Like linear_nobias_bf16 for seq_len=1, but ADDS to the destination: y[i] += W[i] @ x.
+/// Achieves fused residual add by passing y as its own "bias".
+pub fn linear_nobias_bf16_addto(y: &mut [f32], x: &[f32], w_bf16: *const u16, in_dim: usize, out_dim: usize) {
+    let _pg = ProfileGuard::new(&PROF.bf16_matvec);
+    // SAFETY: bf16_matvec_fused reads bias[i] before writing y[i], so aliasing y as bias is safe.
+    let bias = unsafe { std::slice::from_raw_parts(y.as_ptr(), out_dim) };
+    bf16_matvec_threaded(y, x, w_bf16, Some(bias), in_dim, out_dim);
+}
+
 pub fn linear_nobias_bf16(y: &mut [f32], x: &[f32], w_bf16: *const u16, seq_len: usize, in_dim: usize, out_dim: usize) {
     let _pg = ProfileGuard::new(&PROF.bf16_matvec);
     if seq_len == 1 {

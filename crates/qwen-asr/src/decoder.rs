@@ -564,9 +564,9 @@ pub fn decoder_forward(
                                  1, total_seq, n_heads, n_kv_heads,
                                  head_dim, scale, pos);
 
-        kernels::linear_nobias_bf16(&mut bufs.proj_out[..dim], &bufs.attn_out[..q_dim],
-                                   layer.wo_weight_bf16, 1, q_dim, dim);
-        kernels::add_inplace(&mut bufs.x[..dim], &bufs.proj_out[..dim], dim);
+        // O-projection with fused residual add: x += attn_out @ wo
+        kernels::linear_nobias_bf16_addto(&mut bufs.x[..dim], &bufs.attn_out[..q_dim],
+                                          layer.wo_weight_bf16, q_dim, dim);
 
         kernels::rms_norm(&mut bufs.x_norm[..dim], &bufs.x[..dim], &layer.post_attn_norm, 1, dim, eps);
 
@@ -574,9 +574,9 @@ pub fn decoder_forward(
             &mut bufs.ffn_out[..intermediate], &bufs.x_norm[..dim],
             layer.gate_up_fused_bf16.as_ptr(), dim, intermediate,
         );
-        kernels::linear_nobias_bf16(&mut bufs.gate_buf[..dim], &bufs.ffn_out[..intermediate],
-                                   layer.down_weight_bf16, 1, intermediate, dim);
-        kernels::add_inplace(&mut bufs.x[..dim], &bufs.gate_buf[..dim], dim);
+        // Down-projection with fused residual add: x += ffn_out @ down
+        kernels::linear_nobias_bf16_addto(&mut bufs.x[..dim], &bufs.ffn_out[..intermediate],
+                                          layer.down_weight_bf16, intermediate, dim);
     }
 
     kv_cache.len = pos + 1;
