@@ -7,6 +7,7 @@ description = "CLI for qwen-asr: Qwen3-ASR speech-to-text"
 keywords = ["asr", "speech-recognition", "qwen", "cli"]
 categories = ["command-line-utilities", "multimedia::audio"]
 repository = "https://github.com/huanglizhuo/QwenASR"
+homepage = "https://github.com/huanglizhuo/QwenASR"
 readme = "README.md"
 
 [[bin]]
