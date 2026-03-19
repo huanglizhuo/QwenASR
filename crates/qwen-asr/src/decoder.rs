@@ -574,11 +574,9 @@ pub fn decoder_forward(
 
     kv_cache.len = pos + 1;
 
-    // Final norm + streaming argmax
-    {
-        let tmp: Vec<f32> = bufs.x[..dim].to_vec();
-        kernels::rms_norm(&mut bufs.x[..dim], &tmp, &decoder.norm, 1, dim, eps);
-    }
+    // Final norm + streaming argmax (use x_norm as temp to avoid heap allocation)
+    kernels::rms_norm(&mut bufs.x_norm[..dim], &bufs.x[..dim], &decoder.norm, 1, dim, eps);
+    bufs.x[..dim].copy_from_slice(&bufs.x_norm[..dim]);
     let lm_weight = decoder.lm_head_bf16.unwrap_or(decoder.tok_embeddings_bf16);
     let lm_out_dim = cfg.lm_head_dim();
     kernels::argmax_matvec_bf16(&bufs.x[..dim], lm_weight, dim, lm_out_dim) as i32
@@ -626,7 +624,5 @@ pub fn decoder_prefill_logits(
 /// tok_emb_bf16 must point to valid memory for at least (token_id + 1) * dim bf16 values.
 pub unsafe fn tok_embed_bf16_to_f32(dst: &mut [f32], tok_emb_bf16: *const u16, token_id: i32, dim: usize) {
     let src = unsafe { std::slice::from_raw_parts(tok_emb_bf16.add(token_id as usize * dim), dim) };
-    for i in 0..dim {
-        dst[i] = f32::from_bits((src[i] as u32) << 16);
-    }
+    kernels::bf16_to_f32_buf(dst, src);
 }
