@@ -4,6 +4,46 @@ Pure Rust, CPU-only inference engine for [Qwen3-ASR](https://huggingface.co/Qwen
 
 Supports 0.6B and 1.7B models with five modes: offline, segmented, streaming, live capture, and VAD live.
 
+## Latest Benchmark Comparison
+
+Latest offline apples-to-apples benchmark on macOS, generated with [`bench/benchmark-all.sh`](bench/benchmark-all.sh) using:
+
+- input: `bench/samples/audio.wav`
+- model: `qwen3-asr-0.6b`
+- runs: `3`
+- machine: Apple Silicon macOS
+
+| Target | Total ms | Realtime Factor |
+|---|---:|---:|
+| `main+accel` | 2548 | 11.05x |
+| `main+noaccel` | 2547 | 11.05x |
+| `current+accel` | 1282 | 21.97x |
+| `current+noaccel` | 1325 | 21.26x |
+| `c+accel` | 3236.484 | 8.7x |
+| `c+noaccel` | 61548.714 | 0.46x |
+
+```mermaid
+xychart-beta
+    title "Offline Total Latency (ms)"
+    x-axis ["main+accel", "main+noaccel", "current+accel", "current+noaccel", "c+accel", "c+noaccel"]
+    y-axis "total_ms" 0 --> 70782
+    bar [2548, 2547, 1282, 1325, 3236.48, 61548.71]
+```
+
+```mermaid
+xychart-beta
+    title "Offline Realtime Factor"
+    x-axis ["main+accel", "main+noaccel", "current+accel", "current+noaccel", "c+accel", "c+noaccel"]
+    y-axis "realtime_factor" 0 --> 26
+    bar [11.05, 11.05, 21.97, 21.26, 8.7, 0.46]
+```
+
+Highlights:
+
+- The current autoresearch branch is about `1.99x` faster than local `main` with Accelerate enabled.
+- The current Rust implementation is about `2.52x` faster than the upstream C implementation with Accelerate enabled.
+- Accelerate is critical for the upstream C implementation, but only a small win for the current Rust branch on this offline benchmark.
+
 ## Quick Start (Pre-built Binary)
 
 Download a pre-built binary from [GitHub Releases](https://github.com/huanglizhuo/QwenASR/releases) — no Rust toolchain needed.
