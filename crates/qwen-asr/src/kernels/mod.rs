@@ -1492,6 +1492,107 @@ pub fn apply_rope_neox(x: &mut [f32], cos_vals: &[f32], sin_vals: &[f32],
 }
 
 /// Streaming argmax: finds argmax(W_bf16 @ x) without materializing full logits.
+/// Quantize x (f32) to int8 with absmax scaling. Returns (x_int8, scale).
+pub fn quantize_f32_to_int8(x: &[f32]) -> (Vec<i8>, f32) {
+    let mut max_abs = 0.0f32;
+    for &v in x { max_abs = max_abs.max(v.abs()); }
+    let scale = if max_abs > 0.0 { max_abs / 127.0 } else { 1.0 };
+    let inv_scale = 127.0 / max_abs.max(1e-10);
+    let int8: Vec<i8> = x.iter().map(|&v| (v * inv_scale).round().clamp(-127.0, 127.0) as i8).collect();
+    (int8, scale)
+}
+
+/// Quantize BF16 weights to INT8 per-row. Returns (int8_data, per_row_scales).
+pub fn quantize_bf16_weights_to_int8(w_bf16: *const u16, out_dim: usize, in_dim: usize) -> (Vec<i8>, Vec<f32>) {
+    #[cfg(target_arch = "aarch64")]
+    unsafe { return neon::quantize_bf16_to_int8(w_bf16, out_dim, in_dim); }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        let mut int8_data = vec![0i8; out_dim * in_dim];
+        let mut scales = vec![0.0f32; out_dim];
+        let src = unsafe { std::slice::from_raw_parts(w_bf16, out_dim * in_dim) };
+        for row in 0..out_dim {
+            let mut max_abs = 0.0f32;
+            for k in 0..in_dim {
+                let v = f32::from_bits((src[row * in_dim + k] as u32) << 16).abs();
+                if v > max_abs { max_abs = v; }
+            }
+            let scale = if max_abs > 0.0 { max_abs / 127.0 } else { 1.0 };
+            let inv_scale = 127.0 / max_abs.max(1e-10);
+            scales[row] = scale;
+            for k in 0..in_dim {
+                let v = f32::from_bits((src[row * in_dim + k] as u32) << 16);
+                int8_data[row * in_dim + k] = (v * inv_scale).round().clamp(-127.0, 127.0) as i8;
+            }
+        }
+        (int8_data, scales)
+    }
+}
+
+/// INT8 threaded argmax: find argmax(x @ W.T) using INT8 quantized weights.
+pub fn argmax_matvec_int8(x: &[f32], w_int8: &[i8], w_scales: &[f32], in_dim: usize, out_dim: usize) -> usize {
+    let (x_int8, x_scale) = quantize_f32_to_int8(x);
+    let n_threads = get_num_threads();
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        if n_threads <= 1 {
+            let (best, _) = unsafe {
+                neon::argmax_int8_range(x_int8.as_ptr(), x_scale, w_int8.as_ptr(), w_scales, in_dim, 0, out_dim)
+            };
+            return best;
+        }
+
+        let mut best_indices = vec![0usize; n_threads];
+        let mut best_vals = vec![-1e30f32; n_threads];
+
+        let x_int8_ptr = x_int8.as_ptr() as usize;
+        let w_int8_ptr = w_int8.as_ptr() as usize;
+        let w_scales_ptr = w_scales.as_ptr() as usize;
+        let bi_ptr = best_indices.as_mut_ptr() as usize;
+        let bv_ptr = best_vals.as_mut_ptr() as usize;
+
+        parallel_for(|tid, nt| {
+            let chunk = out_dim.div_ceil(nt);
+            let start = tid * chunk;
+            let end = (start + chunk).min(out_dim);
+            if start >= end {
+                unsafe {
+                    *(bv_ptr as *mut f32).add(tid) = -1e30;
+                    *(bi_ptr as *mut usize).add(tid) = 0;
+                }
+                return;
+            }
+
+            let w_scales_local = unsafe { std::slice::from_raw_parts(w_scales_ptr as *const f32, out_dim) };
+            let (best, best_val) = unsafe {
+                neon::argmax_int8_range(x_int8_ptr as *const i8, x_scale, w_int8_ptr as *const i8, w_scales_local, in_dim, start, end)
+            };
+            unsafe {
+                *(bi_ptr as *mut usize).add(tid) = best;
+                *(bv_ptr as *mut f32).add(tid) = best_val;
+            }
+        });
+
+        let mut best = best_indices[0];
+        let mut best_val = best_vals[0];
+        for i in 1..n_threads {
+            if best_vals[i] > best_val {
+                best_val = best_vals[i];
+                best = best_indices[i];
+            }
+        }
+        return best;
+    }
+
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        // Fallback: use f32 computation
+        let _ = (x, w_int8, w_scales, in_dim, out_dim, n_threads, x_int8, x_scale);
+        unimplemented!("INT8 argmax only implemented for aarch64")
+    }
+}
+
 pub fn argmax_matvec_bf16(x: &[f32], w_bf16: *const u16, in_dim: usize, out_dim: usize) -> usize {
     let n_threads = get_num_threads();
     if n_threads <= 1 {

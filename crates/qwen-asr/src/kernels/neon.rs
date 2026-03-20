@@ -583,3 +583,138 @@ pub unsafe fn gelu_inplace(x: &mut [f32], n: usize) {
         i += 1;
     }
 }
+
+/// Quantize BF16 weight matrix to INT8 per-row with absmax scaling.
+/// Returns (int8_data, scales) where scales[row] is the per-row scale factor.
+///
+/// # Safety
+/// w_bf16 must point to at least out_dim * in_dim valid bf16 values.
+/// in_dim must be a multiple of 16 for alignment.
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn quantize_bf16_to_int8(w_bf16: *const u16, out_dim: usize, in_dim: usize) -> (Vec<i8>, Vec<f32>) {
+    let mut int8_data = vec![0i8; out_dim * in_dim];
+    let mut scales = vec![0.0f32; out_dim];
+
+    for row in 0..out_dim {
+        let w_row = w_bf16.add(row * in_dim);
+
+        // Find absmax of the row
+        let mut k = 0;
+        let mut vmax = vdupq_n_f32(0.0);
+        let abs_mask = vdupq_n_u32(0x7FFF_FFFF);
+        while k + 8 <= in_dim {
+            let r0 = vld1q_u16(w_row.add(k));
+            let f0 = vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r0), 16));
+            let f1 = vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r0), 16));
+            let a0 = vreinterpretq_f32_u32(vandq_u32(vreinterpretq_u32_f32(f0), abs_mask));
+            let a1 = vreinterpretq_f32_u32(vandq_u32(vreinterpretq_u32_f32(f1), abs_mask));
+            vmax = vmaxq_f32(vmax, vmaxq_f32(a0, a1));
+            k += 8;
+        }
+        let mut max_abs = vmaxvq_f32(vmax);
+        while k < in_dim {
+            let v = f32::from_bits((*w_row.add(k) as u32) << 16).abs();
+            if v > max_abs { max_abs = v; }
+            k += 1;
+        }
+
+        let scale = if max_abs > 0.0 { max_abs / 127.0 } else { 1.0 };
+        let inv_scale = 127.0 / max_abs.max(1e-10);
+        scales[row] = scale;
+
+        // Quantize row
+        let dst = &mut int8_data[row * in_dim..(row + 1) * in_dim];
+        k = 0;
+        let inv_s = vdupq_n_f32(inv_scale);
+        while k + 8 <= in_dim {
+            let r0 = vld1q_u16(w_row.add(k));
+            let f0 = vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r0), 16));
+            let f1 = vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r0), 16));
+            let q0 = vcvtq_s32_f32(vmulq_f32(f0, inv_s));
+            let q1 = vcvtq_s32_f32(vmulq_f32(f1, inv_s));
+            let q16 = vqmovn_s32(q0);
+            let q16b = vqmovn_s32(q1);
+            let q8 = vqmovn_s16(vcombine_s16(q16, q16b));
+            vst1_s8(dst.as_mut_ptr().add(k) as *mut i8, q8);
+            k += 8;
+        }
+        while k < in_dim {
+            let v = f32::from_bits((*w_row.add(k) as u32) << 16);
+            let q = (v * inv_scale).round().clamp(-127.0, 127.0) as i8;
+            dst[k] = q;
+            k += 1;
+        }
+    }
+
+    (int8_data, scales)
+}
+
+/// SDOT via inline assembly (stable Rust, avoids unstable vdotq_s32)
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn sdot_s32(mut acc: int32x4_t, a: int8x16_t, b: int8x16_t) -> int32x4_t {
+    core::arch::asm!(
+        "sdot {acc:v}.4s, {a:v}.16b, {b:v}.16b",
+        acc = inout(vreg) acc,
+        a = in(vreg) a,
+        b = in(vreg) b,
+        options(pure, nomem, nostack, preserves_flags),
+    );
+    acc
+}
+
+/// INT8 argmax: find argmax of x @ W.T where W is int8-quantized.
+/// x_int8: quantized input [in_dim], x_scale: input quantization scale
+/// w_int8: quantized weights [out_dim, in_dim], w_scales: per-row scales [out_dim]
+///
+/// # Safety
+/// Uses NEON SDOT via inline asm. in_dim should be a multiple of 16 for best perf.
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn argmax_int8_range(
+    x_int8: *const i8, x_scale: f32,
+    w_int8: *const i8, w_scales: &[f32],
+    in_dim: usize, start: usize, end: usize,
+) -> (usize, f32) {
+    let mut best = start;
+    let mut best_val = -1e30f32;
+
+    for o in start..end {
+        let w_row = w_int8.add(o * in_dim);
+        let mut acc0 = vdupq_n_s32(0);
+        let mut acc1 = vdupq_n_s32(0);
+        let mut acc2 = vdupq_n_s32(0);
+        let mut acc3 = vdupq_n_s32(0);
+        let mut k = 0;
+
+        while k + 64 <= in_dim {
+            acc0 = sdot_s32(acc0, vld1q_s8(x_int8.add(k)), vld1q_s8(w_row.add(k)));
+            acc1 = sdot_s32(acc1, vld1q_s8(x_int8.add(k + 16)), vld1q_s8(w_row.add(k + 16)));
+            acc2 = sdot_s32(acc2, vld1q_s8(x_int8.add(k + 32)), vld1q_s8(w_row.add(k + 32)));
+            acc3 = sdot_s32(acc3, vld1q_s8(x_int8.add(k + 48)), vld1q_s8(w_row.add(k + 48)));
+            k += 64;
+        }
+
+        while k + 16 <= in_dim {
+            acc0 = sdot_s32(acc0, vld1q_s8(x_int8.add(k)), vld1q_s8(w_row.add(k)));
+            k += 16;
+        }
+
+        let sum_i32 = vaddvq_s32(vaddq_s32(vaddq_s32(acc0, acc2), vaddq_s32(acc1, acc3)));
+        let val = sum_i32 as f32 * x_scale * w_scales[o];
+
+        // Scalar tail
+        let mut tail_sum = 0i32;
+        while k < in_dim {
+            tail_sum += (*x_int8.add(k) as i32) * (*w_row.add(k) as i32);
+            k += 1;
+        }
+        let val = val + tail_sum as f32 * x_scale * w_scales[o];
+
+        if val > best_val {
+            best_val = val;
+            best = o;
+        }
+    }
+
+    (best, best_val)
+}

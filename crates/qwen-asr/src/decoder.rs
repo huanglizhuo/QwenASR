@@ -28,6 +28,9 @@ pub struct Decoder {
     pub norm: Vec<f32>,
     /// Separate lm_head for forced aligner (None = tied weights with tok_embeddings)
     pub lm_head_bf16: Option<*const u16>,
+    /// INT8 quantized lm_head weights for fast argmax
+    pub lm_head_int8: Option<Vec<i8>>,
+    pub lm_head_int8_scales: Option<Vec<f32>>,
 }
 
 unsafe impl Send for Decoder {}
@@ -113,11 +116,19 @@ impl Decoder {
             ms.get_bf16_direct("thinker.lm_head.weight")
         };
 
+        // Quantize lm_head to INT8 for fast argmax
+        let lm_weight = lm_head_bf16.unwrap_or(tok_embeddings_bf16);
+        let lm_out_dim = cfg.lm_head_dim();
+        let lm_in_dim = cfg.dec_hidden;
+        let (lm_int8, lm_scales) = kernels::quantize_bf16_weights_to_int8(lm_weight, lm_out_dim, lm_in_dim);
+
         Some(Decoder {
             tok_embeddings_bf16,
             layers,
             norm,
             lm_head_bf16,
+            lm_head_int8: Some(lm_int8),
+            lm_head_int8_scales: Some(lm_scales),
         })
     }
 }
@@ -584,8 +595,14 @@ pub fn decoder_forward(
     // Final norm + streaming argmax (use x_norm as temp to avoid heap allocation)
     kernels::rms_norm(&mut bufs.x_norm[..dim], &bufs.x[..dim], &decoder.norm, 1, dim, eps);
     bufs.x[..dim].copy_from_slice(&bufs.x_norm[..dim]);
-    let lm_weight = decoder.lm_head_bf16.unwrap_or(decoder.tok_embeddings_bf16);
     let lm_out_dim = cfg.lm_head_dim();
+
+    // Use INT8 quantized argmax if available (2x less bandwidth)
+    if let (Some(ref int8_data), Some(ref scales)) = (&decoder.lm_head_int8, &decoder.lm_head_int8_scales) {
+        return kernels::argmax_matvec_int8(&bufs.x[..dim], int8_data, scales, dim, lm_out_dim) as i32;
+    }
+
+    let lm_weight = decoder.lm_head_bf16.unwrap_or(decoder.tok_embeddings_bf16);
     kernels::argmax_matvec_bf16(&bufs.x[..dim], lm_weight, dim, lm_out_dim) as i32
 }
 
