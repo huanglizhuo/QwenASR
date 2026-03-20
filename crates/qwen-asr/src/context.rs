@@ -68,6 +68,7 @@ pub struct QwenCtx {
     pub perf_total_ms: f64,
     pub perf_text_tokens: i32,
     pub perf_audio_ms: f64,
+    /// Mel spectrogram + encoder forward pass time combined.
     pub perf_encode_ms: f64,
     pub perf_decode_ms: f64,
 }
