@@ -131,7 +131,8 @@ macro_rules! define_profile_counters {
 
 define_profile_counters!(
     rms_norm, layer_norm, gelu, swiglu,
-    bf16_matvec, bf16_to_f32_conv, attention_bidir, attention_causal
+    bf16_matvec, bf16_to_f32_conv, attention_bidir, attention_causal,
+    sgemm, conv2d_op, rope, add_inplace_op
 );
 
 pub static PROF: ProfileCounters = ProfileCounters::new();
@@ -483,6 +484,7 @@ pub fn vec_scale_add(dst: &mut [f32], src: &[f32], correction: f32, n: usize) {
 // ========================================================================
 
 pub fn add_inplace(a: &mut [f32], b: &[f32], n: usize) {
+    let _pg = ProfileGuard::new(&PROF.add_inplace_op);
     for i in 0..n { a[i] += b[i]; }
 }
 
@@ -546,6 +548,7 @@ pub fn matmul_t(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: usiz
 
 /// y = x @ W^T + b: x[seq,in], W[out,in], b[out], y[seq,out]
 pub fn linear(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>, seq_len: usize, in_dim: usize, out_dim: usize) {
+    let _pg = ProfileGuard::new(&PROF.sgemm);
     #[cfg(feature = "blas")]
     unsafe {
         cblas_sgemm(
@@ -586,6 +589,7 @@ pub fn linear_nobias(y: &mut [f32], x: &[f32], w: &[f32], seq_len: usize, in_dim
 
 /// y += bias + x @ w.T  (accumulate into existing y, fusing residual add)
 pub fn linear_accumulate(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>, seq_len: usize, in_dim: usize, out_dim: usize) {
+    let _pg = ProfileGuard::new(&PROF.sgemm);
     #[cfg(feature = "blas")]
     unsafe {
         // Add bias to y first (y already has residual)
@@ -1073,13 +1077,46 @@ fn im2col(input: &[f32], cols: &mut [f32], c_in: usize, h_in: usize, w_in: usize
 pub fn conv2d(out: &mut [f32], input: &[f32], weight: &[f32], bias: Option<&[f32]>,
               c_in: usize, c_out: usize, h_in: usize, w_in: usize,
               kh: usize, kw: usize, stride: usize, padding: usize) {
+    let _pg = ProfileGuard::new(&PROF.conv2d_op);
     let h_out = (h_in + 2 * padding - kh) / stride + 1;
     let w_out = (w_in + 2 * padding - kw) / stride + 1;
     let patch_size = c_in * kh * kw;
     let spatial_out = h_out * w_out;
 
     let mut cols = vec![0.0f32; patch_size * spatial_out];
-    im2col(input, &mut cols, c_in, h_in, w_in, kh, kw, stride, padding, h_out, w_out);
+
+    // Thread im2col across col_rows (each row is independent)
+    let n_threads = get_num_threads();
+    if n_threads > 1 && patch_size >= 16 {
+        let input_ptr = input.as_ptr() as usize;
+        let cols_ptr = cols.as_mut_ptr() as usize;
+        parallel_for(|tid, nt| {
+            let chunk = patch_size.div_ceil(nt);
+            let start = tid * chunk;
+            let end = (start + chunk).min(patch_size);
+            if start >= end { return; }
+            for col_row in start..end {
+                let ic = col_row / (kh * kw);
+                let rem = col_row % (kh * kw);
+                let ki = rem / kw;
+                let kj = rem % kw;
+                for oh in 0..h_out {
+                    let ih = (oh * stride + ki) as isize - padding as isize;
+                    for ow in 0..w_out {
+                        let iw = (ow * stride + kj) as isize - padding as isize;
+                        let val = if ih >= 0 && (ih as usize) < h_in && iw >= 0 && (iw as usize) < w_in {
+                            unsafe { *(input_ptr as *const f32).add(ic * h_in * w_in + ih as usize * w_in + iw as usize) }
+                        } else {
+                            0.0
+                        };
+                        unsafe { *(cols_ptr as *mut f32).add(col_row * spatial_out + oh * w_out + ow) = val; }
+                    }
+                }
+            }
+        });
+    } else {
+        im2col(input, &mut cols, c_in, h_in, w_in, kh, kw, stride, padding, h_out, w_out);
+    }
 
     // GEMM: weight[c_out, patch_size] @ cols[patch_size, spatial_out] = out[c_out, spatial_out]
     #[cfg(feature = "blas")]
@@ -1670,6 +1707,7 @@ pub fn compute_rope_neox(cos_out: &mut [f32], sin_out: &mut [f32], positions: &[
 
 pub fn apply_rope_neox(x: &mut [f32], cos_vals: &[f32], sin_vals: &[f32],
                         seq: usize, n_heads: usize, head_dim: usize) {
+    let _pg = ProfileGuard::new(&PROF.rope);
     let half = head_dim / 2;
     let hidden = n_heads * head_dim;
 
