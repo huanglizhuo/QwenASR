@@ -1212,6 +1212,30 @@ pub fn silu(x: &mut [f32], n: usize) {
 
 pub fn gelu(x: &mut [f32], n: usize) {
     let _pg = ProfileGuard::new(&PROF.gelu);
+    let n_threads = get_num_threads();
+    // Thread GELU for large buffers (encoder FFN: ~320K floats)
+    if n_threads > 1 && n > 4096 {
+        let x_ptr = x.as_mut_ptr() as usize;
+        parallel_for(|tid, nt| {
+            let chunk = n.div_ceil(nt);
+            let start = tid * chunk;
+            let end = (start + chunk).min(n);
+            if start >= end { return; }
+            let x_local = unsafe { std::slice::from_raw_parts_mut((x_ptr as *mut f32).add(start), end - start) };
+            #[cfg(target_arch = "aarch64")]
+            unsafe { neon::gelu_inplace(x_local, end - start); }
+            #[cfg(target_arch = "x86_64")]
+            unsafe { avx::gelu_inplace(x_local, end - start); }
+            #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+            for i in 0..(end - start) {
+                let val = x_local[i];
+                let x3 = val * val * val;
+                let inner = 0.7978845608028654f32 * (val + 0.044715 * x3);
+                x_local[i] = 0.5 * val * (1.0 + inner.tanh());
+            }
+        });
+        return;
+    }
     #[cfg(target_arch = "aarch64")]
     { unsafe { neon::gelu_inplace(x, n); } }
 
