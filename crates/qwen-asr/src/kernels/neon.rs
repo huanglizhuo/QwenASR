@@ -382,6 +382,50 @@ pub unsafe fn rms_norm_row(out: &mut [f32], x: &[f32], weight: &[f32], hidden: u
     }
 }
 
+/// NEON-accelerated in-place RMS norm for a single row: x[i] = x[i] * rms_inv * weight[i].
+///
+/// # Safety
+/// Uses NEON intrinsics; x and weight must have at least `hidden` elements.
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn rms_norm_inplace(x: &mut [f32], weight: &[f32], hidden: usize, eps: f32) {
+    let ptr = x.as_mut_ptr();
+    // Sum of squares
+    let mut i = 0usize;
+    let mut acc0 = vdupq_n_f32(0.0);
+    let mut acc1 = vdupq_n_f32(0.0);
+    while i + 8 <= hidden {
+        let x0 = vld1q_f32(ptr.add(i));
+        let x1 = vld1q_f32(ptr.add(i + 4));
+        acc0 = vfmaq_f32(acc0, x0, x0);
+        acc1 = vfmaq_f32(acc1, x1, x1);
+        i += 8;
+    }
+    let mut sum_sq = vaddvq_f32(vaddq_f32(acc0, acc1));
+    while i < hidden {
+        sum_sq += *ptr.add(i) * *ptr.add(i);
+        i += 1;
+    }
+
+    let rms_inv = 1.0 / (sum_sq / hidden as f32 + eps).sqrt();
+    let rms_v = vdupq_n_f32(rms_inv);
+
+    // Scale in-place: x[i] = x[i] * rms_inv * weight[i]
+    i = 0;
+    while i + 8 <= hidden {
+        let x0 = vld1q_f32(ptr.add(i));
+        let x1 = vld1q_f32(ptr.add(i + 4));
+        let w0 = vld1q_f32(weight.as_ptr().add(i));
+        let w1 = vld1q_f32(weight.as_ptr().add(i + 4));
+        vst1q_f32(ptr.add(i), vmulq_f32(vmulq_f32(x0, rms_v), w0));
+        vst1q_f32(ptr.add(i + 4), vmulq_f32(vmulq_f32(x1, rms_v), w1));
+        i += 8;
+    }
+    while i < hidden {
+        *ptr.add(i) = *ptr.add(i) * rms_inv * weight[i];
+        i += 1;
+    }
+}
+
 /// NEON-accelerated layer norm for a single row.
 ///
 /// # Safety

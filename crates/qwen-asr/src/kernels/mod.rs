@@ -1179,13 +1179,22 @@ pub fn rms_norm_per_head(x: &mut [f32], weight: &[f32], seq_len: usize, n_heads:
     for s in 0..seq_len {
         for h in 0..n_heads {
             let off = s * hidden + h * head_dim;
-            let vec = &mut x[off..off + head_dim];
 
-            let sum_sq: f32 = vec.iter().map(|&v| v * v).sum();
-            let rms_inv = 1.0 / (sum_sq / head_dim as f32 + eps).sqrt();
+            #[cfg(target_arch = "aarch64")]
+            {
+                let vec = &mut x[off..off + head_dim];
+                unsafe { neon::rms_norm_inplace(vec, weight, head_dim, eps); }
+                continue;
+            }
 
-            for d in 0..head_dim {
-                vec[d] = vec[d] * rms_inv * weight[d];
+            #[cfg(not(target_arch = "aarch64"))]
+            {
+                let vec = &mut x[off..off + head_dim];
+                let sum_sq: f32 = vec.iter().map(|&v| v * v).sum();
+                let rms_inv = 1.0 / (sum_sq / head_dim as f32 + eps).sqrt();
+                for d in 0..head_dim {
+                    vec[d] = vec[d] * rms_inv * weight[d];
+                }
             }
         }
     }
