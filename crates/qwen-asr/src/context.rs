@@ -68,6 +68,7 @@ pub struct QwenCtx {
     pub perf_total_ms: f64,
     pub perf_text_tokens: i32,
     pub perf_audio_ms: f64,
+    /// Mel spectrogram + encoder forward pass time combined.
     pub perf_encode_ms: f64,
     pub perf_decode_ms: f64,
 }
@@ -122,8 +123,7 @@ impl QwenCtx {
         }
         let decoder = Decoder::load(&ms, &cfg)?;
 
-        let kv_dim = cfg.dec_kv_heads * cfg.dec_head_dim;
-        let kv_cache = KvCache::new(cfg.dec_layers, 2048, kv_dim);
+        let kv_cache = KvCache::new(cfg.dec_layers, 2048, cfg.dec_kv_heads, cfg.dec_head_dim);
         let dec_bufs = DecoderBuffers::new(&cfg);
 
         if kernels::verbose() >= 1 {

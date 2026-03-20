@@ -25,7 +25,7 @@ Usage: bench/run.sh [options]
   --output-dir DIR    Where to save results (default: bench/results)
   --modes LIST        Comma-separated: offline,segmented,streaming (default: all)
   --threads N         Thread count (default: system CPUs)
-  --runs N            Repeat each test N times, take median (default: 1)
+  --runs N            Repeat each test N times, take best (lowest latency) (default: 1)
   -h, --help          Show this help
 EOF
     exit 1
@@ -113,18 +113,6 @@ echo "Samples: ${#WAV_FILES[@]} files in $SAMPLES_DIR"
 echo "Results: $RESULT_DIR"
 echo ""
 
-# Helper: compute median of values (one per line)
-median() {
-    sort -n | awk '{a[NR]=$1} END {
-        if (NR%2==1) print a[(NR+1)/2];
-        else print (a[NR/2]+a[NR/2+1])/2;
-    }'
-}
-
-# Helper: emit JSON string (escape quotes/backslashes/newlines)
-json_str() {
-    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' '
-}
 
 # Build mode list
 IFS=',' read -ra MODE_LIST <<< "$MODES"
@@ -254,43 +242,54 @@ for wav in "${WAV_FILES[@]}"; do
             fi
         fi
 
-        # Write JSON result
+        # Write JSON result via Python for safe serialization
         OUT_FILE="$RESULT_DIR/${base}_${mode}.json"
-        cat > "$OUT_FILE" <<ENDJSON
-{
-  "version": "qwen-asr-bench-v1",
-  "label": "$(json_str "$LABEL")",
-  "binary": "$(json_str "$BINARY")",
-  "git_rev": "$(json_str "$GIT_REV")",
-  "timestamp": "$TIMESTAMP",
-  "file": "$base.wav",
-  "mode": "$mode",
-  "threads": $THREAD_COUNT,
-  "config": {
-    "segment_sec": $SEGMENT_SEC,
-    "model_dir": "$(json_str "$MODEL_DIR")"
-  },
-  "audio_duration_s": $audio_duration_s,
-  "transcript": "$(json_str "$TRANSCRIPT")",
-  "reference": "$(json_str "$REFERENCE")",
-  "timing": {
-    "total_ms": $total_ms,
-    "encode_ms": $encode_ms,
-    "decode_ms": $decode_ms,
-    "tokens": $tokens,
-    "tokens_per_sec": $tokens_per_sec,
-    "realtime_factor": $realtime_factor
-  },
-  "profile": $PROFILE_JSON,
-  "accuracy": {
-    "wer": $WER,
-    "cer": $CER,
-    "levenshtein_words": $LEV_WORDS,
-    "levenshtein_chars": $LEV_CHARS,
-    "exact_match": $EXACT
-  }
+        python3 -c "
+import json, sys
+data = {
+    'version': 'qwen-asr-bench-v1',
+    'label': sys.argv[1],
+    'binary': sys.argv[2],
+    'git_rev': sys.argv[3],
+    'timestamp': sys.argv[4],
+    'file': sys.argv[5],
+    'mode': sys.argv[6],
+    'threads': int(sys.argv[7]),
+    'config': {
+        'segment_sec': int(sys.argv[8]),
+        'model_dir': sys.argv[9],
+    },
+    'audio_duration_s': float(sys.argv[10]),
+    'transcript': sys.argv[11],
+    'reference': sys.argv[12],
+    'timing': {
+        'total_ms': float(sys.argv[13]),
+        'encode_ms': float(sys.argv[14]),
+        'decode_ms': float(sys.argv[15]),
+        'tokens': int(float(sys.argv[16])),
+        'tokens_per_sec': float(sys.argv[17]),
+        'realtime_factor': float(sys.argv[18]),
+    },
+    'profile': json.loads(sys.argv[19]),
+    'accuracy': {
+        'wer': None if sys.argv[20] == 'null' else float(sys.argv[20]),
+        'cer': None if sys.argv[21] == 'null' else float(sys.argv[21]),
+        'levenshtein_words': None if sys.argv[22] == 'null' else int(sys.argv[22]),
+        'levenshtein_chars': None if sys.argv[23] == 'null' else int(sys.argv[23]),
+        'exact_match': None if sys.argv[24] == 'null' else (sys.argv[24] == 'true'),
+    },
 }
-ENDJSON
+with open(sys.argv[25], 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+    f.write('\n')
+" \
+            "$LABEL" "$BINARY" "$GIT_REV" "$TIMESTAMP" \
+            "$base.wav" "$mode" "$THREAD_COUNT" "$SEGMENT_SEC" "$MODEL_DIR" \
+            "$audio_duration_s" "$TRANSCRIPT" "$REFERENCE" \
+            "$total_ms" "$encode_ms" "$decode_ms" "$tokens" "$tokens_per_sec" "$realtime_factor" \
+            "$PROFILE_JSON" \
+            "$WER" "$CER" "$LEV_WORDS" "$LEV_CHARS" "$EXACT" \
+            "$OUT_FILE"
 
         echo "  -> $OUT_FILE (${total_ms}ms, ${realtime_factor}x)"
         rm -f "$BEST_STDOUT" "$BEST_STDERR"

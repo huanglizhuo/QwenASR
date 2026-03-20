@@ -2,7 +2,11 @@
 /target
 /qwen3-asr-0.6b
 /bench/results/
+/bench/compare-results/
+/bench/.venv-bench/
+/bench/__pycache__/
 /qwen3-aligner-0.6b
+/tmp/
 
 /flutter/qwen_asr/rust/target
 
