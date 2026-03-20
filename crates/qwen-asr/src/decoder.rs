@@ -17,10 +17,18 @@ pub struct DecLayer {
     pub up_weight_bf16: *const u16,
     pub down_weight_bf16: *const u16,
     pub gate_up_fused_bf16: Vec<u16>, // owned, interleaved
-    /// INT8 quantized gate_up_fused weights [2*intermediate, hidden] + per-row scales
+    /// INT8 quantized attention weights + per-row scales
+    pub wq_int8: Vec<i8>,
+    pub wq_int8_scales: Vec<f32>,
+    pub wk_int8: Vec<i8>,
+    pub wk_int8_scales: Vec<f32>,
+    pub wv_int8: Vec<i8>,
+    pub wv_int8_scales: Vec<f32>,
+    pub wo_int8: Vec<i8>,
+    pub wo_int8_scales: Vec<f32>,
+    /// INT8 quantized FFN weights + per-row scales
     pub gate_up_int8: Vec<i8>,
     pub gate_up_int8_scales: Vec<f32>,
-    /// INT8 quantized down weights [hidden, intermediate] + per-row scales
     pub down_int8: Vec<i8>,
     pub down_int8_scales: Vec<f32>,
 }
@@ -95,7 +103,13 @@ impl Decoder {
                 }
             }
 
-            // INT8 quantize gate_up_fused and down weights
+            // INT8 quantize all decoder layer weights
+            let q_dim = cfg.dec_heads * cfg.dec_head_dim;
+            let kv_dim = cfg.dec_kv_heads * cfg.dec_head_dim;
+            let (wq_int8, wq_int8_scales) = kernels::quantize_bf16_weights_to_int8(wq, q_dim, hidden);
+            let (wk_int8, wk_int8_scales) = kernels::quantize_bf16_weights_to_int8(wk, kv_dim, hidden);
+            let (wv_int8, wv_int8_scales) = kernels::quantize_bf16_weights_to_int8(wv, kv_dim, hidden);
+            let (wo_int8, wo_int8_scales) = kernels::quantize_bf16_weights_to_int8(wo, hidden, q_dim);
             let (gate_up_int8, gate_up_int8_scales) = kernels::quantize_bf16_weights_to_int8(
                 gate_up_fused.as_ptr(), 2 * inter, hidden,
             );
@@ -116,10 +130,12 @@ impl Decoder {
                 up_weight_bf16: up_bf16,
                 down_weight_bf16: down_bf16,
                 gate_up_fused_bf16: gate_up_fused,
-                gate_up_int8,
-                gate_up_int8_scales,
-                down_int8,
-                down_int8_scales,
+                wq_int8, wq_int8_scales,
+                wk_int8, wk_int8_scales,
+                wv_int8, wv_int8_scales,
+                wo_int8, wo_int8_scales,
+                gate_up_int8, gate_up_int8_scales,
+                down_int8, down_int8_scales,
             });
         }
 
@@ -566,10 +582,13 @@ pub fn decoder_forward(
     for (layer_idx, layer) in decoder.layers.iter().enumerate() {
         kernels::rms_norm(&mut bufs.x_norm[..dim], &bufs.x[..dim], &layer.input_norm, 1, dim, eps);
 
-        kernels::linear_nobias_bf16_qkv(
+        // INT8 fused QKV projection
+        kernels::linear_nobias_int8_qkv(
             &mut bufs.q[..q_dim], &mut bufs.k[..kv_dim], &mut bufs.v[..kv_dim],
             &bufs.x_norm[..dim],
-            layer.wq_weight_bf16, layer.wk_weight_bf16, layer.wv_weight_bf16,
+            &layer.wq_int8, &layer.wq_int8_scales,
+            &layer.wk_int8, &layer.wk_int8_scales,
+            &layer.wv_int8, &layer.wv_int8_scales,
             dim, q_dim, kv_dim,
         );
 
@@ -593,9 +612,9 @@ pub fn decoder_forward(
                                  1, total_seq, n_heads, n_kv_heads,
                                  head_dim, scale, pos);
 
-        // O-projection with fused residual add: x += attn_out @ wo
-        kernels::linear_nobias_bf16_addto(&mut bufs.x[..dim], &bufs.attn_out[..q_dim],
-                                          layer.wo_weight_bf16, q_dim, dim);
+        // INT8 O-projection with fused residual add: x += attn_out @ wo
+        kernels::linear_nobias_int8_addto(&mut bufs.x[..dim], &bufs.attn_out[..q_dim],
+                                          &layer.wo_int8, &layer.wo_int8_scales, q_dim, dim);
 
         kernels::rms_norm(&mut bufs.x_norm[..dim], &bufs.x[..dim], &layer.post_attn_norm, 1, dim, eps);
 

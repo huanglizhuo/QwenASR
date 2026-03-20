@@ -875,6 +875,93 @@ fn int8_matvec_threaded(y: &mut [f32], x: &[f32], w_int8: &[i8], w_scales: &[f32
     }
 }
 
+/// INT8 fused QKV matvec for single-token decode
+#[allow(clippy::too_many_arguments)]
+pub fn linear_nobias_int8_qkv(
+    q: &mut [f32], k: &mut [f32], v: &mut [f32], x: &[f32],
+    wq_int8: &[i8], wq_scales: &[f32],
+    wk_int8: &[i8], wk_scales: &[f32],
+    wv_int8: &[i8], wv_scales: &[f32],
+    in_dim: usize, q_dim: usize, kv_dim: usize,
+) {
+    let _pg = ProfileGuard::new(&PROF.bf16_matvec);
+    let (x_int8, x_scale) = quantize_f32_to_int8(x);
+    let n_threads = get_num_threads();
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        if n_threads <= 1 {
+            unsafe {
+                neon::matvec_int8(q, x_int8.as_ptr(), x_scale, wq_int8.as_ptr(), wq_scales, None, in_dim, q_dim);
+                neon::matvec_int8(k, x_int8.as_ptr(), x_scale, wk_int8.as_ptr(), wk_scales, None, in_dim, kv_dim);
+                neon::matvec_int8(v, x_int8.as_ptr(), x_scale, wv_int8.as_ptr(), wv_scales, None, in_dim, kv_dim);
+            }
+            return;
+        }
+
+        let total_dim = q_dim + 2 * kv_dim;
+        let q_ptr = q.as_mut_ptr() as usize;
+        let k_ptr = k.as_mut_ptr() as usize;
+        let v_ptr = v.as_mut_ptr() as usize;
+        let x_int8_ptr = x_int8.as_ptr() as usize;
+        let wq_ptr = wq_int8.as_ptr() as usize;
+        let wk_ptr = wk_int8.as_ptr() as usize;
+        let wv_ptr = wv_int8.as_ptr() as usize;
+        let wq_scales_ptr = wq_scales.as_ptr() as usize;
+        let wk_scales_ptr = wk_scales.as_ptr() as usize;
+        let wv_scales_ptr = wv_scales.as_ptr() as usize;
+
+        parallel_for(|tid, nt| {
+            let chunk = total_dim.div_ceil(nt);
+            let start = tid * chunk;
+            let end = (start + chunk).min(total_dim);
+            if start >= end { return; }
+
+            let q_end = q_dim;
+            let k_end = q_end + kv_dim;
+
+            // Q range
+            if start < q_end {
+                let s = start;
+                let e = end.min(q_end);
+                if s < e {
+                    let y_local = unsafe { std::slice::from_raw_parts_mut((q_ptr as *mut f32).add(s), e - s) };
+                    let w_local = unsafe { (wq_ptr as *const i8).add(s * in_dim) };
+                    let scales_local = unsafe { std::slice::from_raw_parts((wq_scales_ptr as *const f32).add(s), e - s) };
+                    unsafe { neon::matvec_int8(y_local, x_int8_ptr as *const i8, x_scale, w_local, scales_local, None, in_dim, e - s); }
+                }
+            }
+            // K range
+            if start < k_end && end > q_end {
+                let s = start.max(q_end) - q_end;
+                let e = end.min(k_end) - q_end;
+                if s < e {
+                    let y_local = unsafe { std::slice::from_raw_parts_mut((k_ptr as *mut f32).add(s), e - s) };
+                    let w_local = unsafe { (wk_ptr as *const i8).add(s * in_dim) };
+                    let scales_local = unsafe { std::slice::from_raw_parts((wk_scales_ptr as *const f32).add(s), e - s) };
+                    unsafe { neon::matvec_int8(y_local, x_int8_ptr as *const i8, x_scale, w_local, scales_local, None, in_dim, e - s); }
+                }
+            }
+            // V range
+            if end > k_end {
+                let s = start.max(k_end) - k_end;
+                let e = end.min(total_dim) - k_end;
+                if s < e {
+                    let y_local = unsafe { std::slice::from_raw_parts_mut((v_ptr as *mut f32).add(s), e - s) };
+                    let w_local = unsafe { (wv_ptr as *const i8).add(s * in_dim) };
+                    let scales_local = unsafe { std::slice::from_raw_parts((wv_scales_ptr as *const f32).add(s), e - s) };
+                    unsafe { neon::matvec_int8(y_local, x_int8_ptr as *const i8, x_scale, w_local, scales_local, None, in_dim, e - s); }
+                }
+            }
+        });
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        let _ = (q, k, v, x, wq_int8, wq_scales, wk_int8, wk_scales, wv_int8, wv_scales, in_dim, q_dim, kv_dim, x_int8, x_scale, n_threads);
+        unimplemented!("INT8 QKV only on aarch64");
+    }
+}
+
 /// INT8 fused gate_up + SwiGLU
 pub fn linear_nobias_int8_swiglu(
     ffn_out: &mut [f32], x: &[f32],
