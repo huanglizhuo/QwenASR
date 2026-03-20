@@ -17,6 +17,12 @@ pub struct DecLayer {
     pub up_weight_bf16: *const u16,
     pub down_weight_bf16: *const u16,
     pub gate_up_fused_bf16: Vec<u16>, // owned, interleaved
+    /// INT8 quantized gate_up_fused weights [2*intermediate, hidden] + per-row scales
+    pub gate_up_int8: Vec<i8>,
+    pub gate_up_int8_scales: Vec<f32>,
+    /// INT8 quantized down weights [hidden, intermediate] + per-row scales
+    pub down_int8: Vec<i8>,
+    pub down_int8_scales: Vec<f32>,
 }
 
 unsafe impl Send for DecLayer {}
@@ -89,6 +95,14 @@ impl Decoder {
                 }
             }
 
+            // INT8 quantize gate_up_fused and down weights
+            let (gate_up_int8, gate_up_int8_scales) = kernels::quantize_bf16_weights_to_int8(
+                gate_up_fused.as_ptr(), 2 * inter, hidden,
+            );
+            let (down_int8, down_int8_scales) = kernels::quantize_bf16_weights_to_int8(
+                down_bf16, hidden, inter,
+            );
+
             layers.push(DecLayer {
                 wq_weight_bf16: wq,
                 wk_weight_bf16: wk,
@@ -102,6 +116,10 @@ impl Decoder {
                 up_weight_bf16: up_bf16,
                 down_weight_bf16: down_bf16,
                 gate_up_fused_bf16: gate_up_fused,
+                gate_up_int8,
+                gate_up_int8_scales,
+                down_int8,
+                down_int8_scales,
             });
         }
 
@@ -581,13 +599,14 @@ pub fn decoder_forward(
 
         kernels::rms_norm(&mut bufs.x_norm[..dim], &bufs.x[..dim], &layer.post_attn_norm, 1, dim, eps);
 
-        kernels::linear_nobias_bf16_swiglu(
+        // INT8 gate_up + SwiGLU
+        kernels::linear_nobias_int8_swiglu(
             &mut bufs.ffn_out[..intermediate], &bufs.x_norm[..dim],
-            layer.gate_up_fused_bf16.as_ptr(), dim, intermediate,
+            &layer.gate_up_int8, &layer.gate_up_int8_scales, dim, intermediate,
         );
-        // Down-projection with fused residual add: x += ffn_out @ down
-        kernels::linear_nobias_bf16_addto(&mut bufs.x[..dim], &bufs.ffn_out[..intermediate],
-                                          layer.down_weight_bf16, intermediate, dim);
+        // INT8 down-projection with fused residual add: x += ffn_out @ down
+        kernels::linear_nobias_int8_addto(&mut bufs.x[..dim], &bufs.ffn_out[..intermediate],
+                                          &layer.down_int8, &layer.down_int8_scales, intermediate, dim);
     }
 
     kv_cache.len = pos + 1;

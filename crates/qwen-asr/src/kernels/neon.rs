@@ -663,6 +663,91 @@ unsafe fn sdot_s32(mut acc: int32x4_t, a: int8x16_t, b: int8x16_t) -> int32x4_t 
     acc
 }
 
+/// INT8 matvec: y = W_int8 @ x_int8 * (x_scale * w_scales[row])
+/// Produces f32 output. Optionally adds bias (for fused residual add).
+///
+/// # Safety
+/// Uses NEON SDOT via inline asm.
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn matvec_int8(
+    y: &mut [f32], x_int8: *const i8, x_scale: f32,
+    w_int8: *const i8, w_scales: &[f32],
+    bias: Option<&[f32]>,
+    in_dim: usize, out_dim: usize,
+) {
+    let mut o = 0;
+    while o + 1 < out_dim {
+        let w0 = w_int8.add(o * in_dim);
+        let w1 = w_int8.add((o + 1) * in_dim);
+        let mut acc0a = vdupq_n_s32(0);
+        let mut acc0b = vdupq_n_s32(0);
+        let mut acc1a = vdupq_n_s32(0);
+        let mut acc1b = vdupq_n_s32(0);
+        let mut k = 0;
+
+        while k + 32 <= in_dim {
+            let x0 = vld1q_s8(x_int8.add(k));
+            let x1 = vld1q_s8(x_int8.add(k + 16));
+            acc0a = sdot_s32(acc0a, x0, vld1q_s8(w0.add(k)));
+            acc0b = sdot_s32(acc0b, x1, vld1q_s8(w0.add(k + 16)));
+            acc1a = sdot_s32(acc1a, x0, vld1q_s8(w1.add(k)));
+            acc1b = sdot_s32(acc1b, x1, vld1q_s8(w1.add(k + 16)));
+            k += 32;
+        }
+        while k + 16 <= in_dim {
+            let xv = vld1q_s8(x_int8.add(k));
+            acc0a = sdot_s32(acc0a, xv, vld1q_s8(w0.add(k)));
+            acc1a = sdot_s32(acc1a, xv, vld1q_s8(w1.add(k)));
+            k += 16;
+        }
+
+        let sum0 = vaddvq_s32(vaddq_s32(acc0a, acc0b));
+        let sum1 = vaddvq_s32(vaddq_s32(acc1a, acc1b));
+
+        let mut v0 = sum0 as f32 * x_scale * w_scales[o];
+        let mut v1 = sum1 as f32 * x_scale * w_scales[o + 1];
+
+        // Scalar tail
+        while k < in_dim {
+            let xv = *x_int8.add(k) as i32;
+            v0 += xv as f32 * (*w0.add(k) as i32) as f32 * x_scale * w_scales[o];
+            v1 += xv as f32 * (*w1.add(k) as i32) as f32 * x_scale * w_scales[o + 1];
+            k += 1;
+        }
+
+        if let Some(b) = bias {
+            v0 += b[o];
+            v1 += b[o + 1];
+        }
+        y[o] = v0;
+        y[o + 1] = v1;
+        o += 2;
+    }
+    while o < out_dim {
+        let w_row = w_int8.add(o * in_dim);
+        let mut acc0 = vdupq_n_s32(0);
+        let mut acc1 = vdupq_n_s32(0);
+        let mut k = 0;
+        while k + 32 <= in_dim {
+            acc0 = sdot_s32(acc0, vld1q_s8(x_int8.add(k)), vld1q_s8(w_row.add(k)));
+            acc1 = sdot_s32(acc1, vld1q_s8(x_int8.add(k + 16)), vld1q_s8(w_row.add(k + 16)));
+            k += 32;
+        }
+        while k + 16 <= in_dim {
+            acc0 = sdot_s32(acc0, vld1q_s8(x_int8.add(k)), vld1q_s8(w_row.add(k)));
+            k += 16;
+        }
+        let mut val = vaddvq_s32(vaddq_s32(acc0, acc1)) as f32 * x_scale * w_scales[o];
+        while k < in_dim {
+            val += (*x_int8.add(k) as f32) * (*w_row.add(k) as f32) * x_scale * w_scales[o];
+            k += 1;
+        }
+        if let Some(b) = bias { val += b[o]; }
+        y[o] = val;
+        o += 1;
+    }
+}
+
 /// INT8 argmax: find argmax of x @ W.T where W is int8-quantized.
 /// x_int8: quantized input [in_dim], x_scale: input quantization scale
 /// w_int8: quantized weights [out_dim, in_dim], w_scales: per-row scales [out_dim]

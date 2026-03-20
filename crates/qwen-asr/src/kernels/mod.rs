@@ -831,6 +831,117 @@ pub fn linear_nobias_bf16_swiglu(
     });
 }
 
+/// INT8 threaded matvec: y = W_int8 @ x + bias  (x is f32, quantized on the fly)
+fn int8_matvec_threaded(y: &mut [f32], x: &[f32], w_int8: &[i8], w_scales: &[f32], bias: Option<&[f32]>, in_dim: usize, out_dim: usize) {
+    let (x_int8, x_scale) = quantize_f32_to_int8(x);
+    let n_threads = get_num_threads();
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        if n_threads <= 1 {
+            unsafe {
+                neon::matvec_int8(y, x_int8.as_ptr(), x_scale, w_int8.as_ptr(), w_scales, bias, in_dim, out_dim);
+            }
+            return;
+        }
+
+        let x_int8_ptr = x_int8.as_ptr() as usize;
+        let w_int8_ptr = w_int8.as_ptr() as usize;
+        let w_scales_ptr = w_scales.as_ptr() as usize;
+        let y_ptr = y.as_mut_ptr() as usize;
+        let bias_ptr = bias.map(|b| b.as_ptr() as usize);
+
+        parallel_for(|tid, nt| {
+            let chunk = out_dim.div_ceil(nt);
+            let start = tid * chunk;
+            let end = (start + chunk).min(out_dim);
+            if start >= end { return; }
+
+            let y_local = unsafe { std::slice::from_raw_parts_mut((y_ptr as *mut f32).add(start), end - start) };
+            let w_local = unsafe { (w_int8_ptr as *const i8).add(start * in_dim) };
+            let w_scales_local = unsafe { std::slice::from_raw_parts((w_scales_ptr as *const f32).add(start), end - start) };
+            let bias_local = bias_ptr.map(|p| unsafe { std::slice::from_raw_parts((p as *const f32).add(start), end - start) });
+
+            unsafe {
+                neon::matvec_int8(y_local, x_int8_ptr as *const i8, x_scale, w_local, w_scales_local, bias_local, in_dim, end - start);
+            }
+        });
+    }
+
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        let _ = (y, x, w_int8, w_scales, bias, in_dim, out_dim, x_int8, x_scale, n_threads);
+        unimplemented!("INT8 matvec only on aarch64");
+    }
+}
+
+/// INT8 fused gate_up + SwiGLU
+pub fn linear_nobias_int8_swiglu(
+    ffn_out: &mut [f32], x: &[f32],
+    w_int8: &[i8], w_scales: &[f32],
+    in_dim: usize, intermediate: usize,
+) {
+    let _pg = ProfileGuard::new(&PROF.bf16_matvec);
+    let (x_int8, x_scale) = quantize_f32_to_int8(x);
+    let n_threads = get_num_threads();
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        let x_int8_ptr = x_int8.as_ptr() as usize;
+        let w_int8_ptr = w_int8.as_ptr() as usize;
+        let w_scales_ptr = w_scales.as_ptr() as usize;
+        let ffn_ptr = ffn_out.as_mut_ptr() as usize;
+
+        if n_threads <= 1 {
+            let mut gate_buf = vec![0.0f32; 2 * intermediate];
+            unsafe {
+                neon::matvec_int8(&mut gate_buf, x_int8.as_ptr(), x_scale, w_int8.as_ptr(), w_scales, None, in_dim, 2 * intermediate);
+            }
+            for j in 0..intermediate {
+                let g = gate_buf[2 * j];
+                let u = gate_buf[2 * j + 1];
+                ffn_out[j] = g / (1.0 + (-g).exp()) * u;
+            }
+            return;
+        }
+
+        parallel_for(|tid, nt| {
+            let chunk = intermediate.div_ceil(nt);
+            let start = tid * chunk;
+            let end = (start + chunk).min(intermediate);
+            if start >= end { return; }
+            let n_rows = end - start;
+
+            let w_local = unsafe { (w_int8_ptr as *const i8).add(2 * start * in_dim) };
+            let w_scales_local = unsafe { std::slice::from_raw_parts((w_scales_ptr as *const f32).add(2 * start), 2 * n_rows) };
+
+            let mut gate_up_local = vec![0.0f32; 2 * n_rows];
+            unsafe {
+                neon::matvec_int8(&mut gate_up_local, x_int8_ptr as *const i8, x_scale, w_local, w_scales_local, None, in_dim, 2 * n_rows);
+            }
+
+            let ffn_local = unsafe { std::slice::from_raw_parts_mut((ffn_ptr as *mut f32).add(start), n_rows) };
+            for j in 0..n_rows {
+                let g = gate_up_local[2 * j];
+                let u = gate_up_local[2 * j + 1];
+                ffn_local[j] = g / (1.0 + (-g).exp()) * u;
+            }
+        });
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        let _ = (ffn_out, x, w_int8, w_scales, in_dim, intermediate, x_int8, x_scale, n_threads);
+        unimplemented!("INT8 swiglu only on aarch64");
+    }
+}
+
+/// INT8 matvec with fused residual add: y += W_int8 @ x  (y acts as bias)
+pub fn linear_nobias_int8_addto(y: &mut [f32], x: &[f32], w_int8: &[i8], w_scales: &[f32], in_dim: usize, out_dim: usize) {
+    let _pg = ProfileGuard::new(&PROF.bf16_matvec);
+    let bias = unsafe { std::slice::from_raw_parts(y.as_ptr(), out_dim) };
+    int8_matvec_threaded(y, x, w_int8, w_scales, Some(bias), in_dim, out_dim);
+}
+
 pub fn matmul_t_bf16(c: &mut [f32], a: &[f32], b_bf16: *const u16, m: usize, k: usize, n: usize) {
     if m == 1 {
         bf16_matvec_threaded(c, a, b_bf16, None, k, n);
