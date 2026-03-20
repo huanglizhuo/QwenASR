@@ -1290,6 +1290,36 @@ pub fn gelu(x: &mut [f32], n: usize) {
 
 pub fn swiglu_multiply(out: &mut [f32], gate_up: &[f32], seq_len: usize, intermediate: usize) {
     let _pg = ProfileGuard::new(&PROF.swiglu);
+    let total = seq_len * intermediate;
+    let n_threads = get_num_threads();
+
+    // Thread SwiGLU for large prefill buffers
+    if n_threads > 1 && total > 4096 {
+        let out_ptr = out.as_mut_ptr() as usize;
+        let gu_ptr = gate_up.as_ptr() as usize;
+        parallel_for(|tid, nt| {
+            let chunk = seq_len.div_ceil(nt);
+            let start = tid * chunk;
+            let end = (start + chunk).min(seq_len);
+            if start >= end { return; }
+            for s in start..end {
+                let gu = unsafe { std::slice::from_raw_parts((gu_ptr as *const f32).add(s * 2 * intermediate), 2 * intermediate) };
+                let o = unsafe { std::slice::from_raw_parts_mut((out_ptr as *mut f32).add(s * intermediate), intermediate) };
+                #[cfg(target_arch = "aarch64")]
+                { unsafe { neon::swiglu_interleaved(o, gu, intermediate); } continue; }
+                #[cfg(target_arch = "x86_64")]
+                { unsafe { avx::swiglu_interleaved(o, gu, intermediate); } continue; }
+                #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+                for j in 0..intermediate {
+                    let g = gu[2 * j];
+                    let u = gu[2 * j + 1];
+                    o[j] = g / (1.0 + (-g).exp()) * u;
+                }
+            }
+        });
+        return;
+    }
+
     for s in 0..seq_len {
         let gu = &gate_up[s * 2 * intermediate..s * 2 * intermediate + 2 * intermediate];
         let o = &mut out[s * intermediate..(s + 1) * intermediate];
