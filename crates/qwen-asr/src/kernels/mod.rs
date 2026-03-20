@@ -584,6 +584,45 @@ pub fn linear_nobias(y: &mut [f32], x: &[f32], w: &[f32], seq_len: usize, in_dim
     linear(y, x, w, None, seq_len, in_dim, out_dim);
 }
 
+/// y += bias + x @ w.T  (accumulate into existing y, fusing residual add)
+pub fn linear_accumulate(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>, seq_len: usize, in_dim: usize, out_dim: usize) {
+    #[cfg(feature = "blas")]
+    unsafe {
+        // Add bias to y first (y already has residual)
+        if let Some(b) = b {
+            for s in 0..seq_len {
+                let row = &mut y[s * out_dim..(s + 1) * out_dim];
+                for o in 0..out_dim {
+                    row[o] += b[o];
+                }
+            }
+        }
+        // y = 1.0 * x @ w.T + 1.0 * y  (accumulate matmul into y)
+        cblas_sgemm(
+            CBLAS_ROW_MAJOR, CBLAS_NO_TRANS, CBLAS_TRANS,
+            seq_len as i32, out_dim as i32, in_dim as i32,
+            1.0, x.as_ptr(), in_dim as i32,
+            w.as_ptr(), in_dim as i32,
+            1.0, y.as_mut_ptr(), out_dim as i32,
+        );
+    }
+
+    #[cfg(not(feature = "blas"))]
+    {
+        for s in 0..seq_len {
+            let x_row = &x[s * in_dim..(s + 1) * in_dim];
+            for o in 0..out_dim {
+                let w_row = &w[o * in_dim..(o + 1) * in_dim];
+                let mut sum = b.map_or(0.0, |bb| bb[o]);
+                for i in 0..in_dim {
+                    sum += x_row[i] * w_row[i];
+                }
+                y[s * out_dim + o] += sum;
+            }
+        }
+    }
+}
+
 fn bf16_to_f32_view(src: *const u16, n: usize) -> Vec<f32> {
     let mut buf = vec![0.0f32; n];
     let src_slice = unsafe { std::slice::from_raw_parts(src, n) };

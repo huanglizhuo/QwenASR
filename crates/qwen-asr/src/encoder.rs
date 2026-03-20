@@ -324,9 +324,9 @@ impl Encoder {
                                            total_tokens, n_heads, head_dim, scale,
                                            &window_starts, n_windows);
 
-            kernels::linear(&mut bufs.proj_out[..td], &bufs.attn_out[..td], &layer.wo_weight, Some(&layer.wo_bias),
+            // Fused: x += wo_bias + attn_out @ wo_weight.T
+            kernels::linear_accumulate(&mut x, &bufs.attn_out[..td], &layer.wo_weight, Some(&layer.wo_bias),
                           total_tokens, d_model, d_model);
-            kernels::add_inplace(&mut x, &bufs.proj_out[..td], td);
 
             // FFN
             kernels::layer_norm(&mut bufs.x_norm[..td], &x, &layer.ffn_norm_weight, &layer.ffn_norm_bias,
@@ -335,9 +335,9 @@ impl Encoder {
             kernels::linear(&mut bufs.ffn_mid[..tf], &bufs.x_norm[..td], &layer.fc1_weight, Some(&layer.fc1_bias),
                           total_tokens, d_model, ffn_dim);
             kernels::gelu(&mut bufs.ffn_mid[..tf], tf);
-            kernels::linear(&mut bufs.ffn_out[..td], &bufs.ffn_mid[..tf], &layer.fc2_weight, Some(&layer.fc2_bias),
+            // Fused: x += fc2_bias + ffn_mid @ fc2_weight.T
+            kernels::linear_accumulate(&mut x, &bufs.ffn_mid[..tf], &layer.fc2_weight, Some(&layer.fc2_bias),
                           total_tokens, ffn_dim, d_model);
-            kernels::add_inplace(&mut x, &bufs.ffn_out[..td], td);
         }
 
         // Final LayerNorm: use x_norm as temp, then swap into x
