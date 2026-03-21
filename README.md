@@ -4,9 +4,14 @@ Pure Rust, CPU-only inference engine for [Qwen3-ASR](https://huggingface.co/Qwen
 
 Supports 0.6B and 1.7B models. Modes: offline, segmented, streaming, live capture, VAD live, forced alignment.
 
+
+## Auto Research
+
+Performance optimizations were discovered autonomously using the [autoresearch](https://github.com/karpathy/autoresearch) pattern: an AI agent loops over hypothesize-implement-benchmark-keep/revert cycles on the inference code. The experiment protocol is defined in [`program.md`](program.md).
+
 ## Benchmark
 
-Offline benchmark on macOS (Apple Silicon, Accelerate enabled, 3 runs best-of, 28.2s audio):
+Offline benchmark on macOS (Apple Silicon, Accelerate enabled, 3 runs average-of, 28.2s audio):
 
 | Implementation | Commit | Total ms | Realtime Factor |
 |---|---:|---:|---:|
@@ -22,10 +27,6 @@ Offline benchmark on macOS (Apple Silicon, Accelerate enabled, 3 runs best-of, 2
 - **2.08x** faster than the upstream pure C implementation
 
 Reproduce with `./bench/benchmark-all.sh`.
-
-## Auto Research
-
-Performance optimizations were discovered autonomously using the [autoresearch](https://github.com/karpathy/autoresearch) pattern: an AI agent loops over hypothesize-implement-benchmark-keep/revert cycles on the inference code. The experiment protocol is defined in [`program.md`](program.md).
 
 ## Quick Start
 
@@ -122,7 +123,7 @@ bash skills/qwen-asr/scripts/transcribe.sh audio.wav
 
 ## Acknowledgments
 
-Rust port of [antirez/qwen-asr](https://github.com/antirez/qwen-asr), a pure C implementation of Qwen3-ASR inference by Salvatore Sanfilippo (antirez).
+Rust port of [antirez/qwen-asr](https://github.com/antirez/qwen-asr), a pure C implementation of Qwen3-ASR inference by antirez.
 
 ## License
 
