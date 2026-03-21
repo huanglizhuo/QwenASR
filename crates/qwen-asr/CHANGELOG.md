@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.4.2...qwen-asr-v0.5.0) (2026-03-20)
+
+
+### Features
+
+* optimize the speed with auto research pattern ([9c13daa](https://github.com/huanglizhuo/QwenASR/commit/9c13daaadd964a6c2d79bed99364b26a368c305f))
+
 ## [0.4.2](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.4.1...qwen-asr-v0.4.2) (2026-03-14)
 
 
