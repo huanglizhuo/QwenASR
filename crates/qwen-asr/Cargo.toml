@@ -15,7 +15,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 name = "qwen_asr"
 
 [dependencies]
-libc = "0.2"
+memmap2 = "0.9"
 
 [package.metadata.docs.rs]
 no-default-features = true
