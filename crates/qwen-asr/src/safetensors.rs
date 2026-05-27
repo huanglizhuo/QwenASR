@@ -1,7 +1,6 @@
 //! Safetensors mmap reader with multi-shard support.
 
 use std::collections::HashMap;
-use std::os::unix::io::RawFd;
 use std::path::Path;
 
 const MAX_TENSORS: usize = 1024;
@@ -57,7 +56,7 @@ impl TensorMeta {
 }
 
 pub struct SafetensorsFile {
-    _fd: RawFd,
+    _mmap: memmap2::Mmap,
     data: *mut u8,
     file_size: usize,
     header_size: usize,
@@ -70,46 +69,13 @@ unsafe impl Sync for SafetensorsFile {}
 
 impl SafetensorsFile {
     pub fn open(path: &str) -> Option<Self> {
-        use libc::*;
-        use std::ffi::CString;
-
-        let c_path = CString::new(path).ok()?;
-        let fd = unsafe { open(c_path.as_ptr(), O_RDONLY) };
-        if fd < 0 {
-            return None;
-        }
-
-        let mut stat_buf = unsafe { std::mem::zeroed::<stat>() };
-        if unsafe { fstat(fd, &mut stat_buf) } < 0 {
-            unsafe { close(fd); }
-            return None;
-        }
-
-        let file_size = stat_buf.st_size as usize;
+        let file = std::fs::File::open(path).ok()?;
+        let mmap = unsafe { memmap2::Mmap::map(&file).ok()? };
+        let file_size = mmap.len();
         if file_size < 8 {
-            unsafe { close(fd); }
             return None;
         }
-
-        let data = unsafe {
-            mmap(
-                std::ptr::null_mut(),
-                file_size,
-                PROT_READ,
-                MAP_PRIVATE,
-                fd,
-                0,
-            )
-        };
-        // Keep fd open for mmap lifetime? Actually mmap doesn't need it.
-        // But we close it since MAP_PRIVATE doesn't need fd after mmap.
-        let raw_fd = fd;
-        unsafe { close(fd); }
-
-        if data == libc::MAP_FAILED {
-            return None;
-        }
-        let data = data as *mut u8;
+        let data = mmap.as_ptr() as *mut u8;
 
         // Read header size (first 8 bytes, little-endian u64)
         let header_size = unsafe {
@@ -119,7 +85,6 @@ impl SafetensorsFile {
         };
 
         if header_size > file_size - 8 {
-            unsafe { munmap(data as *mut _, file_size); }
             return None;
         }
 
@@ -136,7 +101,7 @@ impl SafetensorsFile {
         }
 
         Some(SafetensorsFile {
-            _fd: raw_fd,
+            _mmap: mmap,
             data,
             file_size,
             header_size,
@@ -196,11 +161,7 @@ impl SafetensorsFile {
 
 impl Drop for SafetensorsFile {
     fn drop(&mut self) {
-        if !self.data.is_null() {
-            unsafe {
-                libc::munmap(self.data as *mut _, self.file_size);
-            }
-        }
+        // memmap2::Mmap handles unmapping on drop
     }
 }
 

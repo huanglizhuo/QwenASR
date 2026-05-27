@@ -10,6 +10,12 @@ fn main() {
             "linux" => {
                 println!("cargo:rustc-link-lib=openblas");
             }
+            "windows" => {
+                if let Ok(dir) = std::env::var("OPENBLAS_LIB_DIR") {
+                    println!("cargo:rustc-link-search=native={dir}");
+                }
+                println!("cargo:rustc-link-lib=openblas_64");
+            }
             _ => {
                 // No BLAS available, will use fallback matmul
             }
