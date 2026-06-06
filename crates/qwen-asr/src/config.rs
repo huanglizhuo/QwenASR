@@ -105,6 +105,97 @@ pub struct DetectInfo<'a> {
 }
 
 impl QwenConfig {
+    /// Detect model config from a GGUF file.
+    ///
+    /// Reads standard llama.cpp KV pairs first. Falls back to tensor-shape detection
+    /// (same as safetensors path) for keys that are absent.
+    pub fn detect_from_gguf(gguf: &crate::gguf::GgufFile) -> Self {
+        let mut cfg = Self::default();
+
+        // Decoder params from KV — try qwen3vl.* (ggml-org) then qwen3.* prefix
+        let kv_u32 = |key_vl: &str, key_plain: &str| -> Option<u32> {
+            gguf.get_kv_u32(key_vl).or_else(|| gguf.get_kv_u32(key_plain))
+        };
+        let kv_f32 = |key_vl: &str, key_plain: &str| -> Option<f32> {
+            gguf.get_kv_f32(key_vl).or_else(|| gguf.get_kv_f32(key_plain))
+        };
+        if let Some(v) = kv_u32("qwen3vl.block_count",                    "qwen3.block_count")                    { cfg.dec_layers       = v as usize; }
+        if let Some(v) = kv_u32("qwen3vl.embedding_length",               "qwen3.embedding_length")               { cfg.dec_hidden       = v as usize; }
+        if let Some(v) = kv_u32("qwen3vl.feed_forward_length",            "qwen3.feed_forward_length")            { cfg.dec_intermediate = v as usize; }
+        if let Some(v) = kv_u32("qwen3vl.attention.head_count",           "qwen3.attention.head_count")           { cfg.dec_heads        = v as usize; }
+        if let Some(v) = kv_u32("qwen3vl.attention.head_count_kv",        "qwen3.attention.head_count_kv")        { cfg.dec_kv_heads     = v as usize; }
+        if let Some(v) = kv_u32("qwen3vl.attention.key_length",           "qwen3.attention.key_length")           { cfg.dec_head_dim     = v as usize; }
+        if let Some(v) = kv_f32("qwen3vl.rope.freq_base",                 "qwen3.rope.freq_base")                 { cfg.dec_rope_theta   = v; }
+        if let Some(v) = kv_f32("qwen3vl.attention.layer_norm_rms_epsilon","qwen3.attention.layer_norm_rms_epsilon") { cfg.dec_rms_norm_eps = v; }
+
+        // If KV pairs were present, dec_hidden and dec_layers are now set.
+        // If not, fall back to tensor-shape detection using whichever names are present:
+        if cfg.dec_hidden == 0 || cfg.dec_layers == 0 {
+            // Try both ggml-org (output.weight) and HuggingFace-style names.
+            let lm_head_i64: Option<Vec<i64>> = gguf.find("thinker.lm_head.weight")
+                .or_else(|| gguf.find("output.weight"))
+                .map(|t| t.shape.iter().map(|&x| x as i64).collect());
+            let embed_tok_i64: Option<Vec<i64>> = gguf.find("thinker.model.embed_tokens.weight")
+                .or_else(|| gguf.find("token_embd.weight"))
+                .map(|t| t.shape.iter().map(|&x| x as i64).collect());
+            let gate_proj_i64: Option<Vec<i64>> = gguf.find("thinker.model.layers.0.mlp.gate_proj.weight")
+                .or_else(|| gguf.find("blk.0.ffn_gate.weight"))
+                .map(|t| t.shape.iter().map(|&x| x as i64).collect());
+            // GGUF shapes are Vec<u64>; DetectInfo expects &[i64] — convert via temp Vecs.
+            let info = crate::config::DetectInfo {
+                has_enc_layer_18: gguf.has_tensor("thinker.audio_tower.layers.18.self_attn.q_proj.weight")
+                    || gguf.has_tensor("a.blk.18.attn_q.weight"),
+                lm_head_shape:       lm_head_i64.as_deref(),
+                embed_tokens_shape:  embed_tok_i64.as_deref(),
+                gate_proj_shape:     gate_proj_i64.as_deref(),
+            };
+            return Self::detect(&info);
+        }
+
+        // Encoder detection — use tensor shapes (no standard KV for audio encoder)
+        // Check both HuggingFace-style and mmproj (a.*) names
+        let has_enc_layer_18 = gguf.has_tensor("thinker.audio_tower.layers.18.self_attn.q_proj.weight")
+            || gguf.has_tensor("a.blk.18.attn_q.weight");
+        if has_enc_layer_18 {
+            cfg.enc_d_model = 1024;
+            cfg.enc_layers = 24;
+            cfg.enc_heads = 16;
+            cfg.enc_head_dim = 64;
+            cfg.enc_ffn_dim = 4096;
+        } else {
+            cfg.enc_d_model = 896;
+            cfg.enc_layers = 18;
+            cfg.enc_heads = 14;
+            cfg.enc_head_dim = 64;
+            cfg.enc_ffn_dim = 3584;
+        }
+        cfg.enc_output_dim = cfg.dec_hidden;
+
+        // Fill defaults for fields not in KV
+        if cfg.dec_intermediate == 0 {
+            cfg.dec_intermediate = if cfg.dec_hidden >= 2048 { 6144 } else { 3072 };
+        }
+        if cfg.dec_heads == 0 { cfg.dec_heads = 16; }
+        if cfg.dec_kv_heads == 0 { cfg.dec_kv_heads = 8; }
+        if cfg.dec_head_dim == 0 { cfg.dec_head_dim = 128; }
+
+        // Forced aligner detection — try both naming conventions
+        let lm_head_t = gguf.find("thinker.lm_head.weight").or_else(|| gguf.find("output.weight"));
+        if let Some(t) = lm_head_t {
+            if t.shape.len() >= 2 {
+                // GGUF shape is innermost-first: [hidden_dim, vocab_or_classify]
+                let out_dim = t.shape[t.shape.len() - 1] as usize;
+                if out_dim != VOCAB_SIZE {
+                    cfg.classify_num = out_dim;
+                    cfg.timestamp_segment_time = 80.0;
+                }
+            }
+        }
+
+        cfg.enc_chunk_size = cfg.enc_n_window * 2;
+        cfg
+    }
+
     /// Detect model variant from safetensors tensor shapes.
     /// Handles ASR 0.6B, ASR 1.7B, and ForcedAligner 0.6B (which has 1.7B encoder + 0.6B decoder).
     pub fn detect(info: &DetectInfo) -> Self {

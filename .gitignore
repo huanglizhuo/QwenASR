@@ -21,3 +21,6 @@
 # Flutter / FRB generated files
 /flutter/qwen_asr/rust/src/frb_generated.rs
 /flutter/qwen_asr/lib/src/rust/frb_generated*.dart
+
+/qwen3-asr-0.6b-gguf-bf16/
+/qwen3-asr-0.6b-gguf-q8_0/

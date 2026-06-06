@@ -4,9 +4,19 @@ use crate::config::*;
 use crate::decoder::*;
 use crate::encoder::*;
 use crate::encoder::EncoderBuffers;
+use crate::gguf::GgufFile;
 use crate::kernels;
 use crate::safetensors::MultiSafetensors;
 use crate::tokenizer::QwenTokenizer;
+
+/// Keeps either an mmap'd safetensors or GGUF file alive as long as QwenCtx lives,
+/// because DecLayer raw pointers (Bf16Ptr / Q8_0Ptr / Q4KPtr) point into it.
+#[allow(dead_code)]
+enum ModelStorage {
+    Safetensors(MultiSafetensors),
+    /// Two-file GGUF: main decoder GGUF + optional mmproj encoder GGUF
+    Gguf { main: GgufFile, mmproj: Option<GgufFile> },
+}
 
 pub type TokenCallback = Box<dyn Fn(&str) + Send>;
 
@@ -27,7 +37,7 @@ pub struct QwenCtx {
     pub config: QwenConfig,
     pub encoder: Encoder,
     pub decoder: Decoder,
-    pub _safetensors: MultiSafetensors, // kept alive for mmap'd BF16 pointers
+    _storage: ModelStorage, // kept alive for mmap'd BF16/quant pointers
     pub model_dir: String,
 
     // KV cache
@@ -88,40 +98,83 @@ impl QwenCtx {
             eprintln!("Loading model from {}", model_dir);
         }
 
-        let ms = MultiSafetensors::open(model_dir)?;
+        // Try GGUF first, fall back to safetensors
+        let gguf_path = format!("{}/model.gguf", model_dir);
+        let use_gguf = std::path::Path::new(&gguf_path).exists();
 
-        // Detect model variant from tensor shapes
-        let info = crate::config::DetectInfo {
-            has_enc_layer_18: ms.has_tensor("thinker.audio_tower.layers.18.self_attn.q_proj.weight"),
-            lm_head_shape: ms.find("thinker.lm_head.weight").map(|(_, t)| t.shape.as_slice()),
-            embed_tokens_shape: ms.find("thinker.model.embed_tokens.weight").map(|(_, t)| t.shape.as_slice()),
-            gate_proj_shape: ms.find("thinker.model.layers.0.mlp.gate_proj.weight").map(|(_, t)| t.shape.as_slice()),
-        };
-        let cfg = QwenConfig::detect(&info);
-
-        if kernels::verbose() >= 1 {
-            let variant = if cfg.dec_hidden >= 2048 { "1.7B" } else { "0.6B" };
-            let model_type = if cfg.is_aligner() { "ForcedAligner" } else { "ASR" };
-            eprintln!("Detected: Qwen3-{}-{}", model_type, variant);
-            if cfg.is_aligner() {
-                eprintln!("  classify_num={}, timestamp_segment_time={:.0}ms",
-                          cfg.classify_num, cfg.timestamp_segment_time);
-                eprintln!("  encoder: {}d {}L, decoder: {}d {}L",
-                          cfg.enc_d_model, cfg.enc_layers, cfg.dec_hidden, cfg.dec_layers);
+        let (cfg, encoder, decoder, storage) = if use_gguf {
+            if kernels::verbose() >= 1 {
+                eprintln!("Detected GGUF format: {}", gguf_path);
             }
-        }
+            let mut gguf = GgufFile::open(&gguf_path)?;
+            // Remap llama.cpp decoder tensor names → internal HuggingFace-style names
+            gguf.remap_decoder_names();
 
-        // Load encoder
-        if kernels::verbose() >= 1 {
-            eprintln!("Loading encoder weights...");
-        }
-        let encoder = Encoder::load(&ms, &cfg)?;
+            // Look for mmproj encoder file (ggml-org two-file format)
+            let mmproj = Self::find_mmproj(model_dir);
 
-        // Load decoder
-        if kernels::verbose() >= 1 {
-            eprintln!("Loading decoder weights...");
-        }
-        let decoder = Decoder::load(&ms, &cfg)?;
+            // Config detection: use KV from main GGUF (decoder config)
+            let mut cfg = QwenConfig::detect_from_gguf(&gguf);
+
+            // Override encoder config from mmproj KV if available
+            if let Some(ref mp) = mmproj {
+                if let Some(v) = mp.get_kv_u32("clip.audio.block_count") { cfg.enc_layers = v as usize; }
+                if let Some(v) = mp.get_kv_u32("clip.audio.embedding_length") { cfg.enc_d_model = v as usize; }
+                if let Some(v) = mp.get_kv_u32("clip.audio.feed_forward_length") { cfg.enc_ffn_dim = v as usize; }
+                if let Some(v) = mp.get_kv_u32("clip.audio.attention.head_count") { cfg.enc_heads = v as usize; }
+                cfg.enc_head_dim = cfg.enc_d_model / cfg.enc_heads;
+                cfg.enc_output_dim = cfg.dec_hidden;
+            }
+
+            if kernels::verbose() >= 1 {
+                let variant = if cfg.dec_hidden >= 2048 { "1.7B" } else { "0.6B" };
+                let model_type = if cfg.is_aligner() { "ForcedAligner" } else { "ASR" };
+                eprintln!("Detected: Qwen3-{}-{} (GGUF)", model_type, variant);
+            }
+
+            if kernels::verbose() >= 1 { eprintln!("Loading encoder weights..."); }
+            let encoder = if let Some(ref mp) = mmproj {
+                Encoder::load_from_gguf(mp, &cfg)?
+            } else {
+                Encoder::load_from_gguf(&gguf, &cfg)?
+            };
+
+            if kernels::verbose() >= 1 { eprintln!("Loading decoder weights..."); }
+            let decoder = Decoder::load_from_gguf(&gguf, &cfg)?;
+
+            (cfg, encoder, decoder, ModelStorage::Gguf { main: gguf, mmproj })
+        } else {
+            let ms = MultiSafetensors::open(model_dir)?;
+
+            // Detect model variant from tensor shapes
+            let info = crate::config::DetectInfo {
+                has_enc_layer_18: ms.has_tensor("thinker.audio_tower.layers.18.self_attn.q_proj.weight"),
+                lm_head_shape: ms.find("thinker.lm_head.weight").map(|(_, t)| t.shape.as_slice()),
+                embed_tokens_shape: ms.find("thinker.model.embed_tokens.weight").map(|(_, t)| t.shape.as_slice()),
+                gate_proj_shape: ms.find("thinker.model.layers.0.mlp.gate_proj.weight").map(|(_, t)| t.shape.as_slice()),
+            };
+            let cfg = QwenConfig::detect(&info);
+
+            if kernels::verbose() >= 1 {
+                let variant = if cfg.dec_hidden >= 2048 { "1.7B" } else { "0.6B" };
+                let model_type = if cfg.is_aligner() { "ForcedAligner" } else { "ASR" };
+                eprintln!("Detected: Qwen3-{}-{}", model_type, variant);
+                if cfg.is_aligner() {
+                    eprintln!("  classify_num={}, timestamp_segment_time={:.0}ms",
+                              cfg.classify_num, cfg.timestamp_segment_time);
+                    eprintln!("  encoder: {}d {}L, decoder: {}d {}L",
+                              cfg.enc_d_model, cfg.enc_layers, cfg.dec_hidden, cfg.dec_layers);
+                }
+            }
+
+            if kernels::verbose() >= 1 { eprintln!("Loading encoder weights..."); }
+            let encoder = Encoder::load(&ms, &cfg)?;
+
+            if kernels::verbose() >= 1 { eprintln!("Loading decoder weights..."); }
+            let decoder = Decoder::load(&ms, &cfg)?;
+
+            (cfg, encoder, decoder, ModelStorage::Safetensors(ms))
+        };
 
         let kv_cache = KvCache::new(cfg.dec_layers, 2048, cfg.dec_kv_heads, cfg.dec_head_dim);
         let dec_bufs = DecoderBuffers::new(&cfg);
@@ -134,7 +187,7 @@ impl QwenCtx {
             config: cfg,
             encoder,
             decoder,
-            _safetensors: ms,
+            _storage: storage,
             model_dir: model_dir.to_string(),
             kv_cache,
             dec_bufs,
@@ -238,5 +291,35 @@ impl QwenCtx {
         self.perf_audio_ms = 0.0;
         self.perf_encode_ms = 0.0;
         self.perf_decode_ms = 0.0;
+    }
+
+    /// Find mmproj GGUF encoder file in a model directory.
+    /// Looks for `mmproj-*.gguf` files; prefers quantized over BF16 when both exist.
+    fn find_mmproj(model_dir: &str) -> Option<GgufFile> {
+        let dir = std::fs::read_dir(model_dir).ok()?;
+        let mut candidates: Vec<String> = dir
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let name = e.file_name().into_string().ok()?;
+                if name.starts_with("mmproj") && name.ends_with(".gguf") {
+                    Some(format!("{}/{}", model_dir, name))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if candidates.is_empty() {
+            return None;
+        }
+        // Prefer quantized (non-bf16) file when multiple candidates exist
+        candidates.sort_by_key(|p| if p.contains("bf16") || p.contains("BF16") { 1usize } else { 0usize });
+        let path = &candidates[0];
+        if kernels::verbose() >= 1 {
+            eprintln!("Loading encoder from mmproj: {}", path);
+        }
+        let mut gguf = GgufFile::open(path)?;
+        gguf.remap_encoder_names();
+        Some(gguf)
     }
 }

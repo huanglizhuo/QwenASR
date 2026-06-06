@@ -1,6 +1,7 @@
 //! Audio encoder: Conv2D stem + windowed transformer + projection cascade.
 
 use crate::config::*;
+use crate::gguf::GgufFile;
 use crate::kernels;
 use crate::safetensors::MultiSafetensors;
 
@@ -218,6 +219,72 @@ impl Encoder {
             proj1_bias,
             proj2_weight,
             proj2_bias,
+        })
+    }
+
+    /// Load encoder weights from a GGUF file (always dequantizes to F32).
+    pub fn load_from_gguf(gguf: &GgufFile, cfg: &QwenConfig) -> Option<Self> {
+        let p = ENC_PREFIX;
+
+        let load = |name: &str| -> Option<Vec<f32>> {
+            let t = gguf.find(name).or_else(|| {
+                eprintln!("encoder(gguf): weight not found: {}", name);
+                None
+            })?;
+            gguf.get_f32(t).or_else(|| {
+                eprintln!("encoder(gguf): failed to dequant: {}", name);
+                None
+            })
+        };
+
+        let conv1_weight = load(&format!("{}conv2d1.weight", p))?;
+        let conv1_bias   = load(&format!("{}conv2d1.bias", p))?;
+        let conv2_weight = load(&format!("{}conv2d2.weight", p))?;
+        let conv2_bias   = load(&format!("{}conv2d2.bias", p))?;
+        let conv3_weight = load(&format!("{}conv2d3.weight", p))?;
+        let conv3_bias   = load(&format!("{}conv2d3.bias", p))?;
+        let conv_out_weight = load(&format!("{}conv_out.weight", p))?;
+
+        let mut layers = Vec::new();
+        for i in 0..cfg.enc_layers {
+            let lp = format!("{}layers.{}", p, i);
+            let layer = EncLayer {
+                wq_weight:       load(&format!("{}.self_attn.q_proj.weight", lp))?,
+                wq_bias:         load(&format!("{}.self_attn.q_proj.bias", lp))?,
+                wk_weight:       load(&format!("{}.self_attn.k_proj.weight", lp))?,
+                wk_bias:         load(&format!("{}.self_attn.k_proj.bias", lp))?,
+                wv_weight:       load(&format!("{}.self_attn.v_proj.weight", lp))?,
+                wv_bias:         load(&format!("{}.self_attn.v_proj.bias", lp))?,
+                wo_weight:       load(&format!("{}.self_attn.out_proj.weight", lp))?,
+                wo_bias:         load(&format!("{}.self_attn.out_proj.bias", lp))?,
+                attn_norm_weight: load(&format!("{}.self_attn_layer_norm.weight", lp))?,
+                attn_norm_bias:   load(&format!("{}.self_attn_layer_norm.bias", lp))?,
+                fc1_weight:      load(&format!("{}.fc1.weight", lp))?,
+                fc1_bias:        load(&format!("{}.fc1.bias", lp))?,
+                fc2_weight:      load(&format!("{}.fc2.weight", lp))?,
+                fc2_bias:        load(&format!("{}.fc2.bias", lp))?,
+                ffn_norm_weight: load(&format!("{}.final_layer_norm.weight", lp))?,
+                ffn_norm_bias:   load(&format!("{}.final_layer_norm.bias", lp))?,
+            };
+            layers.push(layer);
+        }
+
+        let ln_post_weight = load(&format!("{}ln_post.weight", p))?;
+        let ln_post_bias   = load(&format!("{}ln_post.bias", p))?;
+        let proj1_weight   = load(&format!("{}proj1.weight", p))?;
+        let proj1_bias     = load(&format!("{}proj1.bias", p))?;
+        let proj2_weight   = load(&format!("{}proj2.weight", p))?;
+        let proj2_bias     = load(&format!("{}proj2.bias", p))?;
+
+        Some(Encoder {
+            conv1_weight, conv1_bias,
+            conv2_weight, conv2_bias,
+            conv3_weight, conv3_bias,
+            conv_out_weight,
+            layers,
+            ln_post_weight, ln_post_bias,
+            proj1_weight, proj1_bias,
+            proj2_weight, proj2_bias,
         })
     }
 

@@ -1,56 +1,86 @@
 //! Qwen3 LLM decoder with GQA, KV cache, and generation.
 
 use crate::config::*;
+use crate::gguf::{self, GgufFile, GgmlType};
 use crate::kernels;
 use crate::safetensors::MultiSafetensors;
 
+// ========================================================================
+// Weight representation — covers safetensors BF16, runtime INT8, and GGUF quants
+// ========================================================================
+
+/// Quantized weight payload for a single projection matrix (decode path).
+pub enum QWeight {
+    /// mmap'd BF16 pointer (safetensors zero-copy).
+    Bf16Ptr(*const u16),
+    /// Runtime-quantized INT8 with per-row f32 scales.
+    Int8Owned { data: Vec<i8>, scales: Vec<f32> },
+    /// GGUF Q8_0: mmap'd blocks [f16 scale, i8×32] (34 bytes/block).
+    Q8_0Ptr(*const u8),
+    /// GGUF Q4_K: mmap'd super-blocks (144 bytes each, 256 elements).
+    Q4KPtr(*const u8),
+    /// GGUF Q4_0: mmap'd blocks (18 bytes/block, 32 elements).
+    Q4_0Ptr(*const u8),
+}
+
+unsafe impl Send for QWeight {}
+unsafe impl Sync for QWeight {}
+
+/// Gate+Up weight pair for SwiGLU FFN (decode path).
+pub enum GateUpWeights {
+    /// Interleaved BF16 owned buffer (safetensors decode path).
+    Bf16Fused(Vec<u16>),
+    /// Interleaved INT8 + per-row scales (aarch64 INT8 decode path).
+    Int8Fused { data: Vec<i8>, scales: Vec<f32> },
+    /// Separate GGUF-quantized gate and up (not interleaved).
+    Separate { gate: QWeight, up: QWeight },
+}
+
+unsafe impl Send for GateUpWeights {}
+unsafe impl Sync for GateUpWeights {}
+
+// ========================================================================
+// Layer weights
+// ========================================================================
+
 pub struct DecLayer {
-    pub wq_weight_bf16: *const u16,
-    pub wk_weight_bf16: *const u16,
-    pub wv_weight_bf16: *const u16,
-    pub wo_weight_bf16: *const u16,
-    pub wq_weight_f32_prefill: Vec<f32>,
-    pub wk_weight_f32_prefill: Vec<f32>,
-    pub wv_weight_f32_prefill: Vec<f32>,
-    pub wo_weight_f32_prefill: Vec<f32>,
-    pub q_norm_weight: Vec<f32>,
-    pub k_norm_weight: Vec<f32>,
-    pub input_norm: Vec<f32>,
+    // Decode path — dispatched via QWeight / GateUpWeights
+    pub wq:      QWeight,
+    pub wk:      QWeight,
+    pub wv:      QWeight,
+    pub wo:      QWeight,
+    pub gate_up: GateUpWeights,
+    pub down:    QWeight,
+
+    // Prefill path — always F32, dequanted at load time
+    pub wq_f32_prefill:      Vec<f32>,
+    pub wk_f32_prefill:      Vec<f32>,
+    pub wv_f32_prefill:      Vec<f32>,
+    pub wo_f32_prefill:      Vec<f32>,
+    pub gate_up_f32_prefill: Vec<f32>,  // interleaved gate+up rows
+    pub down_f32_prefill:    Vec<f32>,
+
+    // RMSNorms (always F32)
+    pub q_norm_weight:  Vec<f32>,
+    pub k_norm_weight:  Vec<f32>,
+    pub input_norm:     Vec<f32>,
     pub post_attn_norm: Vec<f32>,
-    pub gate_weight_bf16: *const u16,
-    pub up_weight_bf16: *const u16,
-    pub down_weight_bf16: *const u16,
-    pub gate_up_fused_bf16: Vec<u16>, // owned, interleaved
-    pub gate_up_fused_f32_prefill: Vec<f32>,
-    pub down_weight_f32_prefill: Vec<f32>,
-    /// INT8 quantized attention weights + per-row scales
-    pub wq_int8: Vec<i8>,
-    pub wq_int8_scales: Vec<f32>,
-    pub wk_int8: Vec<i8>,
-    pub wk_int8_scales: Vec<f32>,
-    pub wv_int8: Vec<i8>,
-    pub wv_int8_scales: Vec<f32>,
-    pub wo_int8: Vec<i8>,
-    pub wo_int8_scales: Vec<f32>,
-    /// INT8 quantized FFN weights + per-row scales
-    pub gate_up_int8: Vec<i8>,
-    pub gate_up_int8_scales: Vec<f32>,
-    pub down_int8: Vec<i8>,
-    pub down_int8_scales: Vec<f32>,
 }
 
 unsafe impl Send for DecLayer {}
 unsafe impl Sync for DecLayer {}
 
+// ========================================================================
+// Decoder
+// ========================================================================
+
 pub struct Decoder {
-    pub tok_embeddings_bf16: *const u16,
+    /// Token embedding table.
+    pub tok_embeddings: QWeight,
     pub layers: Vec<DecLayer>,
     pub norm: Vec<f32>,
-    /// Separate lm_head for forced aligner (None = tied weights with tok_embeddings)
-    pub lm_head_bf16: Option<*const u16>,
-    /// INT8 quantized lm_head weights for fast argmax
-    pub lm_head_int8: Option<Vec<i8>>,
-    pub lm_head_int8_scales: Option<Vec<f32>>,
+    /// Separate lm_head (forced aligner) or `None` = tied with tok_embeddings.
+    pub lm_head: Option<QWeight>,
 }
 
 unsafe impl Send for Decoder {}
@@ -90,146 +120,277 @@ fn load_bf16_as_f32(
 
 impl Decoder {
     pub fn load(ms: &MultiSafetensors, cfg: &QwenConfig) -> Option<Self> {
-        let tok_embeddings_bf16 = load_bf16_direct(ms, "thinker.model.embed_tokens.weight")?;
+        let tok_emb_ptr = load_bf16_direct(ms, "thinker.model.embed_tokens.weight")?;
 
         let mut layers = Vec::new();
         for i in 0..cfg.dec_layers {
             let lp = format!("thinker.model.layers.{}", i);
 
-            let wq = load_bf16_direct(ms, &format!("{}.self_attn.q_proj.weight", lp))?;
-            let wk = load_bf16_direct(ms, &format!("{}.self_attn.k_proj.weight", lp))?;
-            let wv = load_bf16_direct(ms, &format!("{}.self_attn.v_proj.weight", lp))?;
-            let wo = load_bf16_direct(ms, &format!("{}.self_attn.o_proj.weight", lp))?;
+            let wq_ptr = load_bf16_direct(ms, &format!("{}.self_attn.q_proj.weight", lp))?;
+            let wk_ptr = load_bf16_direct(ms, &format!("{}.self_attn.k_proj.weight", lp))?;
+            let wv_ptr = load_bf16_direct(ms, &format!("{}.self_attn.v_proj.weight", lp))?;
+            let wo_ptr = load_bf16_direct(ms, &format!("{}.self_attn.o_proj.weight", lp))?;
             let q_dim = cfg.dec_heads * cfg.dec_head_dim;
             let kv_dim = cfg.dec_kv_heads * cfg.dec_head_dim;
             let hidden = cfg.dec_hidden;
             let inter = cfg.dec_intermediate;
 
-            let wq_weight_f32_prefill = load_bf16_as_f32(
-                ms,
-                &format!("{}.self_attn.q_proj.weight", lp),
-                q_dim,
-                hidden,
-            )?;
-            let wk_weight_f32_prefill = load_bf16_as_f32(
-                ms,
-                &format!("{}.self_attn.k_proj.weight", lp),
-                kv_dim,
-                hidden,
-            )?;
-            let wv_weight_f32_prefill = load_bf16_as_f32(
-                ms,
-                &format!("{}.self_attn.v_proj.weight", lp),
-                kv_dim,
-                hidden,
-            )?;
-            let wo_weight_f32_prefill = load_bf16_as_f32(
-                ms,
-                &format!("{}.self_attn.o_proj.weight", lp),
-                hidden,
-                q_dim,
-            )?;
+            let wq_f32 = load_bf16_as_f32(ms, &format!("{}.self_attn.q_proj.weight", lp), q_dim, hidden)?;
+            let wk_f32 = load_bf16_as_f32(ms, &format!("{}.self_attn.k_proj.weight", lp), kv_dim, hidden)?;
+            let wv_f32 = load_bf16_as_f32(ms, &format!("{}.self_attn.v_proj.weight", lp), kv_dim, hidden)?;
+            let wo_f32 = load_bf16_as_f32(ms, &format!("{}.self_attn.o_proj.weight", lp), hidden, q_dim)?;
 
             let q_norm = load_f32(ms, &format!("{}.self_attn.q_norm.weight", lp))?;
             let k_norm = load_f32(ms, &format!("{}.self_attn.k_norm.weight", lp))?;
             let input_norm = load_f32(ms, &format!("{}.input_layernorm.weight", lp))?;
             let post_attn_norm = load_f32(ms, &format!("{}.post_attention_layernorm.weight", lp))?;
 
-            let gate_bf16 = load_bf16_direct(ms, &format!("{}.mlp.gate_proj.weight", lp))?;
-            let up_bf16 = load_bf16_direct(ms, &format!("{}.mlp.up_proj.weight", lp))?;
-            let down_bf16 = load_bf16_direct(ms, &format!("{}.mlp.down_proj.weight", lp))?;
+            let gate_ptr = load_bf16_direct(ms, &format!("{}.mlp.gate_proj.weight", lp))?;
+            let up_ptr = load_bf16_direct(ms, &format!("{}.mlp.up_proj.weight", lp))?;
+            let down_ptr = load_bf16_direct(ms, &format!("{}.mlp.down_proj.weight", lp))?;
 
-            // Fuse gate+up: interleave rows
+            // Fuse gate+up rows: [gate[0], up[0], gate[1], up[1], ...]
             let mut gate_up_fused = vec![0u16; 2 * inter * hidden];
             unsafe {
-                let gate_slice = std::slice::from_raw_parts(gate_bf16, inter * hidden);
-                let up_slice = std::slice::from_raw_parts(up_bf16, inter * hidden);
+                let gate_sl = std::slice::from_raw_parts(gate_ptr, inter * hidden);
+                let up_sl   = std::slice::from_raw_parts(up_ptr,   inter * hidden);
                 for r in 0..inter {
-                    gate_up_fused[2 * r * hidden..(2 * r + 1) * hidden]
-                        .copy_from_slice(&gate_slice[r * hidden..(r + 1) * hidden]);
-                    gate_up_fused[(2 * r + 1) * hidden..(2 * r + 2) * hidden]
-                        .copy_from_slice(&up_slice[r * hidden..(r + 1) * hidden]);
+                    gate_up_fused[2*r*hidden..(2*r+1)*hidden].copy_from_slice(&gate_sl[r*hidden..(r+1)*hidden]);
+                    gate_up_fused[(2*r+1)*hidden..(2*r+2)*hidden].copy_from_slice(&up_sl[r*hidden..(r+1)*hidden]);
                 }
             }
-            let mut gate_up_fused_f32_prefill = vec![0.0f32; 2 * inter * hidden];
-            kernels::bf16_to_f32_buf(&mut gate_up_fused_f32_prefill, &gate_up_fused);
-            let down_weight_f32_prefill =
-                load_bf16_as_f32(ms, &format!("{}.mlp.down_proj.weight", lp), hidden, inter)?;
+            let mut gate_up_f32 = vec![0.0f32; 2 * inter * hidden];
+            kernels::bf16_to_f32_buf(&mut gate_up_f32, &gate_up_fused);
+            let down_f32 = load_bf16_as_f32(ms, &format!("{}.mlp.down_proj.weight", lp), hidden, inter)?;
 
-            // INT8 quantize all decoder layer weights
-            let (wq_int8, wq_int8_scales) =
-                kernels::quantize_bf16_weights_to_int8(wq, q_dim, hidden);
-            let (wk_int8, wk_int8_scales) =
-                kernels::quantize_bf16_weights_to_int8(wk, kv_dim, hidden);
-            let (wv_int8, wv_int8_scales) =
-                kernels::quantize_bf16_weights_to_int8(wv, kv_dim, hidden);
-            let (wo_int8, wo_int8_scales) =
-                kernels::quantize_bf16_weights_to_int8(wo, hidden, q_dim);
-            let (gate_up_int8, gate_up_int8_scales) =
-                kernels::quantize_bf16_weights_to_int8(gate_up_fused.as_ptr(), 2 * inter, hidden);
-            let (down_int8, down_int8_scales) =
-                kernels::quantize_bf16_weights_to_int8(down_bf16, hidden, inter);
+            // Build decode-path weights: INT8 on aarch64, BF16 on x86_64
+            let (wq_dec, wk_dec, wv_dec, wo_dec, gate_up_dec, down_dec) = {
+                #[cfg(target_arch = "aarch64")]
+                {
+                    let (wq_i, wq_s) = kernels::quantize_bf16_weights_to_int8(wq_ptr, q_dim, hidden);
+                    let (wk_i, wk_s) = kernels::quantize_bf16_weights_to_int8(wk_ptr, kv_dim, hidden);
+                    let (wv_i, wv_s) = kernels::quantize_bf16_weights_to_int8(wv_ptr, kv_dim, hidden);
+                    let (wo_i, wo_s) = kernels::quantize_bf16_weights_to_int8(wo_ptr, hidden, q_dim);
+                    let (gu_i, gu_s) = kernels::quantize_bf16_weights_to_int8(gate_up_fused.as_ptr(), 2 * inter, hidden);
+                    let (dn_i, dn_s) = kernels::quantize_bf16_weights_to_int8(down_ptr, hidden, inter);
+                    (
+                        QWeight::Int8Owned { data: wq_i, scales: wq_s },
+                        QWeight::Int8Owned { data: wk_i, scales: wk_s },
+                        QWeight::Int8Owned { data: wv_i, scales: wv_s },
+                        QWeight::Int8Owned { data: wo_i, scales: wo_s },
+                        GateUpWeights::Int8Fused { data: gu_i, scales: gu_s },
+                        QWeight::Int8Owned { data: dn_i, scales: dn_s },
+                    )
+                }
+                #[cfg(not(target_arch = "aarch64"))]
+                {
+                    (
+                        QWeight::Bf16Ptr(wq_ptr),
+                        QWeight::Bf16Ptr(wk_ptr),
+                        QWeight::Bf16Ptr(wv_ptr),
+                        QWeight::Bf16Ptr(wo_ptr),
+                        GateUpWeights::Bf16Fused(gate_up_fused),
+                        QWeight::Bf16Ptr(down_ptr),
+                    )
+                }
+            };
 
             layers.push(DecLayer {
-                wq_weight_bf16: wq,
-                wk_weight_bf16: wk,
-                wv_weight_bf16: wv,
-                wo_weight_bf16: wo,
-                wq_weight_f32_prefill,
-                wk_weight_f32_prefill,
-                wv_weight_f32_prefill,
-                wo_weight_f32_prefill,
+                wq: wq_dec,
+                wk: wk_dec,
+                wv: wv_dec,
+                wo: wo_dec,
+                gate_up: gate_up_dec,
+                down: down_dec,
+                wq_f32_prefill: wq_f32,
+                wk_f32_prefill: wk_f32,
+                wv_f32_prefill: wv_f32,
+                wo_f32_prefill: wo_f32,
+                gate_up_f32_prefill: gate_up_f32,
+                down_f32_prefill: down_f32,
                 q_norm_weight: q_norm,
                 k_norm_weight: k_norm,
                 input_norm,
                 post_attn_norm,
-                gate_weight_bf16: gate_bf16,
-                up_weight_bf16: up_bf16,
-                down_weight_bf16: down_bf16,
-                gate_up_fused_bf16: gate_up_fused,
-                gate_up_fused_f32_prefill,
-                down_weight_f32_prefill,
-                wq_int8,
-                wq_int8_scales,
-                wk_int8,
-                wk_int8_scales,
-                wv_int8,
-                wv_int8_scales,
-                wo_int8,
-                wo_int8_scales,
-                gate_up_int8,
-                gate_up_int8_scales,
-                down_int8,
-                down_int8_scales,
             });
         }
 
         let norm = load_f32(ms, "thinker.model.norm.weight")?;
 
-        // Load separate lm_head if present (forced aligner has untied lm_head)
-        let lm_head_bf16 = if cfg.classify_num > 0 {
-            let ptr = load_bf16_direct(ms, "thinker.lm_head.weight")?;
-            Some(ptr)
+        // lm_head: separate for forced aligner, tied for ASR
+        let lm_head_ptr = if cfg.classify_num > 0 {
+            Some(load_bf16_direct(ms, "thinker.lm_head.weight")?)
         } else {
-            // For normal ASR, lm_head is tied with tok_embeddings (no separate weight)
             ms.get_bf16_direct("thinker.lm_head.weight")
         };
 
-        // Quantize lm_head to INT8 for fast argmax
-        let lm_weight = lm_head_bf16.unwrap_or(tok_embeddings_bf16);
+        // Build lm_head decode weight
         let lm_out_dim = cfg.lm_head_dim();
         let lm_in_dim = cfg.dec_hidden;
-        let (lm_int8, lm_scales) =
-            kernels::quantize_bf16_weights_to_int8(lm_weight, lm_out_dim, lm_in_dim);
+        let lm_head = lm_head_ptr.map(|ptr| {
+            #[cfg(target_arch = "aarch64")]
+            {
+                let (d, s) = kernels::quantize_bf16_weights_to_int8(ptr, lm_out_dim, lm_in_dim);
+                QWeight::Int8Owned { data: d, scales: s }
+            }
+            #[cfg(not(target_arch = "aarch64"))]
+            { QWeight::Bf16Ptr(ptr) }
+        });
+
+        // lm_head for ASR: use tok_embeddings (tied), quantize once
+        let tok_emb_dec = {
+            #[cfg(target_arch = "aarch64")]
+            {
+                // If no separate lm_head, lm_head uses tok_emb INT8
+                // tok_embeddings for lookup stays as Bf16Ptr
+                QWeight::Bf16Ptr(tok_emb_ptr)
+            }
+            #[cfg(not(target_arch = "aarch64"))]
+            { QWeight::Bf16Ptr(tok_emb_ptr) }
+        };
+
+        // If no separate lm_head, build INT8 lm_head from tok_emb for fast argmax on aarch64
+        let lm_head = if lm_head.is_none() {
+            #[cfg(target_arch = "aarch64")]
+            {
+                let (d, s) = kernels::quantize_bf16_weights_to_int8(tok_emb_ptr, lm_out_dim, lm_in_dim);
+                Some(QWeight::Int8Owned { data: d, scales: s })
+            }
+            #[cfg(not(target_arch = "aarch64"))]
+            { None }
+        } else {
+            lm_head
+        };
 
         Some(Decoder {
-            tok_embeddings_bf16,
+            tok_embeddings: tok_emb_dec,
             layers,
             norm,
-            lm_head_bf16,
-            lm_head_int8: Some(lm_int8),
-            lm_head_int8_scales: Some(lm_scales),
+            lm_head,
         })
+    }
+
+    /// Load decoder weights from a GGUF file.
+    pub fn load_from_gguf(gguf: &GgufFile, cfg: &QwenConfig) -> Option<Self> {
+        let load_qw = |name: &str| -> Option<QWeight> {
+            let t = gguf.find(name).or_else(|| {
+                eprintln!("decoder(gguf): weight not found: {}", name);
+                None
+            })?;
+            let ptr = gguf.tensor_data(t);
+            Some(match t.ggml_type {
+                GgmlType::BF16 => QWeight::Bf16Ptr(ptr as *const u16),
+                GgmlType::Q8_0 => QWeight::Q8_0Ptr(ptr),
+                GgmlType::Q4_K => QWeight::Q4KPtr(ptr),
+                GgmlType::Q4_0 => QWeight::Q4_0Ptr(ptr),
+                _ => {
+                    // Fall back: dequant to F32 and convert to BF16 owned
+                    let f32_data = gguf.get_f32(t)?;
+                    let bf16: Vec<u16> = f32_data.iter().map(|&f| {
+                        let bits = f.to_bits();
+                        ((bits >> 16) + ((bits >> 15) & 1)) as u16
+                    }).collect();
+                    // Keep the Vec alive via a leak for now (GGUF path is expected to use
+                    // Q8_0/Q4_K; this fallback is for unexpected float types)
+                    let raw = bf16.leak().as_ptr();
+                    QWeight::Bf16Ptr(raw)
+                }
+            })
+        };
+
+        let load_f32_gguf = |name: &str| -> Option<Vec<f32>> {
+            let t = gguf.find(name).or_else(|| {
+                eprintln!("decoder(gguf): weight not found: {}", name);
+                None
+            })?;
+            gguf.get_f32(t)
+        };
+
+        let tok_emb_t = gguf.find("thinker.model.embed_tokens.weight").or_else(|| {
+            eprintln!("decoder(gguf): embed_tokens not found");
+            None
+        })?;
+        let tok_emb_ptr = gguf.tensor_data(tok_emb_t);
+        let tok_embeddings = match tok_emb_t.ggml_type {
+            GgmlType::BF16 => QWeight::Bf16Ptr(tok_emb_ptr as *const u16),
+            GgmlType::Q8_0 => QWeight::Q8_0Ptr(tok_emb_ptr),
+            GgmlType::Q4_K => QWeight::Q4KPtr(tok_emb_ptr),
+            GgmlType::Q4_0 => QWeight::Q4_0Ptr(tok_emb_ptr),
+            _ => QWeight::Bf16Ptr(tok_emb_ptr as *const u16),
+        };
+
+        let mut layers = Vec::new();
+        for i in 0..cfg.dec_layers {
+            let lp = format!("thinker.model.layers.{}", i);
+            let hidden = cfg.dec_hidden;
+            let inter = cfg.dec_intermediate;
+
+            let wq = load_qw(&format!("{}.self_attn.q_proj.weight", lp))?;
+            let wk = load_qw(&format!("{}.self_attn.k_proj.weight", lp))?;
+            let wv = load_qw(&format!("{}.self_attn.v_proj.weight", lp))?;
+            let wo = load_qw(&format!("{}.self_attn.o_proj.weight", lp))?;
+
+            // Prefill path: always dequant to F32
+            let wq_f32 = load_f32_gguf(&format!("{}.self_attn.q_proj.weight", lp))?;
+            let wk_f32 = load_f32_gguf(&format!("{}.self_attn.k_proj.weight", lp))?;
+            let wv_f32 = load_f32_gguf(&format!("{}.self_attn.v_proj.weight", lp))?;
+            let wo_f32 = load_f32_gguf(&format!("{}.self_attn.o_proj.weight", lp))?;
+
+            let q_norm = load_f32_gguf(&format!("{}.self_attn.q_norm.weight", lp))?;
+            let k_norm = load_f32_gguf(&format!("{}.self_attn.k_norm.weight", lp))?;
+            let input_norm = load_f32_gguf(&format!("{}.input_layernorm.weight", lp))?;
+            let post_attn_norm = load_f32_gguf(&format!("{}.post_attention_layernorm.weight", lp))?;
+
+            let gate_qw = load_qw(&format!("{}.mlp.gate_proj.weight", lp))?;
+            let up_qw   = load_qw(&format!("{}.mlp.up_proj.weight", lp))?;
+            let down_qw = load_qw(&format!("{}.mlp.down_proj.weight", lp))?;
+
+            // Prefill gate+up: dequant separately then interleave rows
+            let gate_f32 = load_f32_gguf(&format!("{}.mlp.gate_proj.weight", lp))?;
+            let up_f32   = load_f32_gguf(&format!("{}.mlp.up_proj.weight", lp))?;
+            let mut gate_up_f32 = vec![0.0f32; 2 * inter * hidden];
+            for r in 0..inter {
+                gate_up_f32[2*r*hidden..(2*r+1)*hidden].copy_from_slice(&gate_f32[r*hidden..(r+1)*hidden]);
+                gate_up_f32[(2*r+1)*hidden..(2*r+2)*hidden].copy_from_slice(&up_f32[r*hidden..(r+1)*hidden]);
+            }
+            let down_f32 = load_f32_gguf(&format!("{}.mlp.down_proj.weight", lp))?;
+
+            layers.push(DecLayer {
+                wq,
+                wk,
+                wv,
+                wo,
+                gate_up: GateUpWeights::Separate { gate: gate_qw, up: up_qw },
+                down: down_qw,
+                wq_f32_prefill: wq_f32,
+                wk_f32_prefill: wk_f32,
+                wv_f32_prefill: wv_f32,
+                wo_f32_prefill: wo_f32,
+                gate_up_f32_prefill: gate_up_f32,
+                down_f32_prefill: down_f32,
+                q_norm_weight: q_norm,
+                k_norm_weight: k_norm,
+                input_norm,
+                post_attn_norm,
+            });
+        }
+
+        let norm = load_f32_gguf("thinker.model.norm.weight")?;
+
+        let lm_head = if let Some(t) = gguf.find("thinker.lm_head.weight") {
+            let ptr = gguf.tensor_data(t);
+            Some(match t.ggml_type {
+                GgmlType::BF16 => QWeight::Bf16Ptr(ptr as *const u16),
+                GgmlType::Q8_0 => QWeight::Q8_0Ptr(ptr),
+                GgmlType::Q4_K => QWeight::Q4KPtr(ptr),
+                GgmlType::Q4_0 => QWeight::Q4_0Ptr(ptr),
+                _ => QWeight::Bf16Ptr(ptr as *const u16),
+            })
+        } else {
+            None
+        };
+
+        Some(Decoder { tok_embeddings, layers, norm, lm_head })
     }
 }
 
@@ -574,23 +735,9 @@ pub fn decoder_prefill(
         let k = &mut bufs.pref_k[..seq_len * kv_dim];
         let v = &mut bufs.pref_v[..seq_len * kv_dim];
 
-        kernels::linear_nobias(q, x_norm, &layer.wq_weight_f32_prefill, seq_len, dim, q_dim);
-        kernels::linear_nobias(
-            k,
-            x_norm,
-            &layer.wk_weight_f32_prefill,
-            seq_len,
-            dim,
-            kv_dim,
-        );
-        kernels::linear_nobias(
-            v,
-            x_norm,
-            &layer.wv_weight_f32_prefill,
-            seq_len,
-            dim,
-            kv_dim,
-        );
+        kernels::linear_nobias(q, x_norm, &layer.wq_f32_prefill, seq_len, dim, q_dim);
+        kernels::linear_nobias(k, x_norm, &layer.wk_f32_prefill, seq_len, dim, kv_dim);
+        kernels::linear_nobias(v, x_norm, &layer.wv_f32_prefill, seq_len, dim, kv_dim);
 
         kernels::rms_norm_per_head(q, &layer.q_norm_weight, seq_len, n_heads, head_dim, eps);
         kernels::rms_norm_per_head(k, &layer.k_norm_weight, seq_len, n_kv_heads, head_dim, eps);
@@ -634,14 +781,7 @@ pub fn decoder_prefill(
         );
 
         let proj_out = &mut bufs.pref_proj_out[..seq_len * dim];
-        kernels::linear_nobias(
-            proj_out,
-            attn_out,
-            &layer.wo_weight_f32_prefill,
-            seq_len,
-            q_dim,
-            dim,
-        );
+        kernels::linear_nobias(proj_out, attn_out, &layer.wo_f32_prefill, seq_len, q_dim, dim);
         kernels::add_inplace(&mut bufs.pref_x[..seq_len * dim], proj_out, seq_len * dim);
 
         // Post-attention RMSNorm + SwiGLU MLP
@@ -656,27 +796,13 @@ pub fn decoder_prefill(
         );
 
         let gate_up = &mut bufs.pref_gate_up[..seq_len * 2 * intermediate];
-        kernels::linear_nobias(
-            gate_up,
-            x_norm2,
-            &layer.gate_up_fused_f32_prefill,
-            seq_len,
-            dim,
-            2 * intermediate,
-        );
+        kernels::linear_nobias(gate_up, x_norm2, &layer.gate_up_f32_prefill, seq_len, dim, 2 * intermediate);
 
         let gate = &mut bufs.pref_gate[..seq_len * intermediate];
         kernels::swiglu_multiply(gate, gate_up, seq_len, intermediate);
 
         let ffn_out = &mut bufs.pref_ffn_out[..seq_len * dim];
-        kernels::linear_nobias(
-            ffn_out,
-            gate,
-            &layer.down_weight_f32_prefill,
-            seq_len,
-            intermediate,
-            dim,
-        );
+        kernels::linear_nobias(ffn_out, gate, &layer.down_f32_prefill, seq_len, intermediate, dim);
         kernels::add_inplace(&mut bufs.pref_x[..seq_len * dim], ffn_out, seq_len * dim);
     }
 
@@ -726,28 +852,21 @@ pub fn decoder_forward(
             eps,
         );
 
-        // INT8 fused QKV projection (aarch64 only, BF16 fallback on x86_64)
-        #[cfg(target_arch = "aarch64")]
-        kernels::linear_nobias_int8_qkv(
-            &mut bufs.q[..q_dim],
-            &mut bufs.k[..kv_dim],
-            &mut bufs.v[..kv_dim],
-            &bufs.x_norm[..dim],
-            &layer.wq_int8,
-            &layer.wq_int8_scales,
-            &layer.wk_int8,
-            &layer.wk_int8_scales,
-            &layer.wv_int8,
-            &layer.wv_int8_scales,
-            dim,
-            q_dim,
-            kv_dim,
-        );
-        #[cfg(not(target_arch = "aarch64"))]
-        unsafe {
-            kernels::linear_nobias_bf16(&mut bufs.q[..q_dim], &bufs.x_norm[..dim], layer.wq_weight_bf16, 1, dim, q_dim);
-            kernels::linear_nobias_bf16(&mut bufs.k[..kv_dim], &bufs.x_norm[..dim], layer.wk_weight_bf16, 1, dim, kv_dim);
-            kernels::linear_nobias_bf16(&mut bufs.v[..kv_dim], &bufs.x_norm[..dim], layer.wv_weight_bf16, 1, dim, kv_dim);
+        // QKV projection — dispatch on QWeight type
+        match (&layer.wq, &layer.wk, &layer.wv) {
+            (
+                QWeight::Int8Owned { data: dq, scales: sq },
+                QWeight::Int8Owned { data: dk, scales: sk },
+                QWeight::Int8Owned { data: dv, scales: sv },
+            ) => kernels::linear_nobias_int8_qkv(
+                &mut bufs.q[..q_dim], &mut bufs.k[..kv_dim], &mut bufs.v[..kv_dim],
+                &bufs.x_norm[..dim], dq, sq, dk, sk, dv, sv, dim, q_dim, kv_dim,
+            ),
+            (wq, wk, wv) => {
+                kernels::qweight_matvec(&mut bufs.q[..q_dim],   &bufs.x_norm[..dim], wq, q_dim, dim);
+                kernels::qweight_matvec(&mut bufs.k[..kv_dim],  &bufs.x_norm[..dim], wk, kv_dim, dim);
+                kernels::qweight_matvec(&mut bufs.v[..kv_dim],  &bufs.x_norm[..dim], wv, kv_dim, dim);
+            }
         }
 
         kernels::rms_norm_per_head(
@@ -807,24 +926,19 @@ pub fn decoder_forward(
             pos,
         );
 
-        // O-projection with fused residual add: x += attn_out @ wo (INT8 on aarch64, BF16 on x86_64)
-        #[cfg(target_arch = "aarch64")]
-        kernels::linear_nobias_int8_addto(
-            &mut bufs.x[..dim],
-            &bufs.attn_out[..q_dim],
-            &layer.wo_int8,
-            &layer.wo_int8_scales,
-            q_dim,
-            dim,
-        );
-        #[cfg(not(target_arch = "aarch64"))]
-        kernels::linear_nobias_bf16_addto(
-            &mut bufs.x[..dim],
-            &bufs.attn_out[..q_dim],
-            layer.wo_weight_bf16,
-            q_dim,
-            dim,
-        );
+        // O-projection: x += attn_out @ wo — dispatch on weight type
+        match &layer.wo {
+            QWeight::Int8Owned { data, scales } => {
+                kernels::linear_nobias_int8_addto(&mut bufs.x[..dim], &bufs.attn_out[..q_dim], data, scales, q_dim, dim);
+            }
+            QWeight::Bf16Ptr(ptr) => {
+                kernels::linear_nobias_bf16_addto(&mut bufs.x[..dim], &bufs.attn_out[..q_dim], *ptr, q_dim, dim);
+            }
+            w => {
+                kernels::qweight_matvec(&mut bufs.proj_out[..dim], &bufs.attn_out[..q_dim], w, dim, q_dim);
+                kernels::add_inplace(&mut bufs.x[..dim], &bufs.proj_out[..dim], dim);
+            }
+        }
 
         kernels::rms_norm(
             &mut bufs.x_norm[..dim],
@@ -835,43 +949,32 @@ pub fn decoder_forward(
             eps,
         );
 
-        // gate_up + SwiGLU (INT8 on aarch64, BF16 on x86_64)
-        #[cfg(target_arch = "aarch64")]
-        kernels::linear_nobias_int8_swiglu(
-            &mut bufs.ffn_out[..intermediate],
-            &bufs.x_norm[..dim],
-            &layer.gate_up_int8,
-            &layer.gate_up_int8_scales,
-            dim,
-            intermediate,
-        );
-        #[cfg(not(target_arch = "aarch64"))]
-        kernels::linear_nobias_bf16_swiglu(
-            &mut bufs.ffn_out[..intermediate],
-            &bufs.x_norm[..dim],
-            layer.gate_up_fused_bf16.as_ptr(),
-            dim,
-            intermediate,
-        );
+        // gate_up SwiGLU — dispatch on GateUpWeights variant
+        match &layer.gate_up {
+            GateUpWeights::Int8Fused { data, scales } => {
+                kernels::linear_nobias_int8_swiglu(&mut bufs.ffn_out[..intermediate], &bufs.x_norm[..dim], data, scales, dim, intermediate);
+            }
+            GateUpWeights::Bf16Fused(fused) => {
+                kernels::linear_nobias_bf16_swiglu(&mut bufs.ffn_out[..intermediate], &bufs.x_norm[..dim], fused.as_ptr(), dim, intermediate);
+            }
+            GateUpWeights::Separate { gate, up } => {
+                kernels::qweight_swiglu_separate(&mut bufs.ffn_out[..intermediate], &bufs.x_norm[..dim], gate, up, &mut bufs.gate_buf[..2*intermediate], dim, intermediate);
+            }
+        }
 
-        // down-projection with fused residual add: x += ffn_out @ down (INT8 on aarch64, BF16 on x86_64)
-        #[cfg(target_arch = "aarch64")]
-        kernels::linear_nobias_int8_addto(
-            &mut bufs.x[..dim],
-            &bufs.ffn_out[..intermediate],
-            &layer.down_int8,
-            &layer.down_int8_scales,
-            intermediate,
-            dim,
-        );
-        #[cfg(not(target_arch = "aarch64"))]
-        kernels::linear_nobias_bf16_addto(
-            &mut bufs.x[..dim],
-            &bufs.ffn_out[..intermediate],
-            layer.down_weight_bf16,
-            intermediate,
-            dim,
-        );
+        // down-projection: x += ffn_out @ down — dispatch on weight type
+        match &layer.down {
+            QWeight::Int8Owned { data, scales } => {
+                kernels::linear_nobias_int8_addto(&mut bufs.x[..dim], &bufs.ffn_out[..intermediate], data, scales, intermediate, dim);
+            }
+            QWeight::Bf16Ptr(ptr) => {
+                kernels::linear_nobias_bf16_addto(&mut bufs.x[..dim], &bufs.ffn_out[..intermediate], *ptr, intermediate, dim);
+            }
+            w => {
+                kernels::qweight_matvec(&mut bufs.proj_out[..dim], &bufs.ffn_out[..intermediate], w, dim, intermediate);
+                kernels::add_inplace(&mut bufs.x[..dim], &bufs.proj_out[..dim], dim);
+            }
+        }
     }
 
     kv_cache.len = pos + 1;
@@ -888,17 +991,8 @@ pub fn decoder_forward(
     bufs.x[..dim].copy_from_slice(&bufs.x_norm[..dim]);
     let lm_out_dim = cfg.lm_head_dim();
 
-    // Use INT8 quantized argmax on aarch64 (2x less bandwidth), BF16 on x86_64
-    #[cfg(target_arch = "aarch64")]
-    if let (Some(ref int8_data), Some(ref scales)) =
-        (&decoder.lm_head_int8, &decoder.lm_head_int8_scales)
-    {
-        return kernels::argmax_matvec_int8(&bufs.x[..dim], int8_data, scales, dim, lm_out_dim)
-            as i32;
-    }
-
-    let lm_weight = decoder.lm_head_bf16.unwrap_or(decoder.tok_embeddings_bf16);
-    kernels::argmax_matvec_bf16(&bufs.x[..dim], lm_weight, dim, lm_out_dim) as i32
+    let lm_weight = decoder.lm_head.as_ref().unwrap_or(&decoder.tok_embeddings);
+    kernels::argmax_qweight(&bufs.x[..dim], lm_weight, dim, lm_out_dim) as i32
 }
 
 /// Decoder prefill that returns per-position logits (for forced aligner).
@@ -925,35 +1019,70 @@ pub fn decoder_prefill_logits(
     let mut x_norm = vec![0.0f32; seq_len * dim];
     kernels::rms_norm(&mut x_norm, x, &decoder.norm, seq_len, dim, eps);
 
-    let lm_weight = decoder.lm_head_bf16.unwrap_or(decoder.tok_embeddings_bf16);
+    let lm_weight = decoder.lm_head.as_ref().unwrap_or(&decoder.tok_embeddings);
 
-    // Project each position through lm_head: [seq_len × dim] × [out_dim × dim]^T → [seq_len × out_dim]
+    // Project each position through lm_head: [seq_len × dim] × [out_dim × dim]^T
     let mut logits = vec![0.0f32; seq_len * out_dim];
-    unsafe {
-        kernels::linear_nobias_bf16_scratch(
-            &mut logits,
-            &x_norm,
-            lm_weight,
-            seq_len,
-            dim,
-            out_dim,
-            &mut bufs.bf16_scratch,
-        );
+    match lm_weight {
+        QWeight::Bf16Ptr(ptr) => unsafe {
+            kernels::linear_nobias_bf16_scratch(&mut logits, &x_norm, *ptr, seq_len, dim, out_dim, &mut bufs.bf16_scratch);
+        },
+        QWeight::Int8Owned { .. } => {
+            for s in 0..seq_len {
+                let x_row = &x_norm[s * dim..(s + 1) * dim];
+                let out_row = &mut logits[s * out_dim..(s + 1) * out_dim];
+                kernels::qweight_matvec(out_row, x_row, lm_weight, out_dim, dim);
+            }
+        }
+        w => {
+            for s in 0..seq_len {
+                let x_row = &x_norm[s * dim..(s + 1) * dim];
+                let out_row = &mut logits[s * out_dim..(s + 1) * out_dim];
+                kernels::qweight_matvec(out_row, x_row, w, out_dim, dim);
+            }
+        }
     }
 
     logits
 }
 
-/// Convert a token embedding from bf16 to f32.
+/// Extract one token's embedding row from any `QWeight` type.
+pub fn tok_embed_to_f32(dst: &mut [f32], w: &QWeight, token_id: i32, dim: usize) {
+    let tid = token_id as usize;
+    match w {
+        QWeight::Bf16Ptr(ptr) => unsafe {
+            let src = std::slice::from_raw_parts(ptr.add(tid * dim), dim);
+            kernels::bf16_to_f32_buf(dst, src);
+        },
+        QWeight::Int8Owned { data, scales } => {
+            let scale = scales[tid];
+            let base = tid * dim;
+            for i in 0..dim {
+                dst[i] = data[base + i] as f32 * scale;
+            }
+        }
+        QWeight::Q8_0Ptr(ptr) => {
+            gguf::dequant_q8_0_row(dst, *ptr, tid, dim);
+        }
+        QWeight::Q4KPtr(ptr) => {
+            gguf::dequant_q4k_row(dst, *ptr, tid, dim);
+        }
+        QWeight::Q4_0Ptr(ptr) => {
+            gguf::dequant_q4_0_row(dst, *ptr, tid, dim);
+        }
+    }
+}
+
+/// Legacy alias kept for callers that haven't migrated yet.
 ///
 /// # Safety
-/// tok_emb_bf16 must point to valid memory for at least (token_id + 1) * dim bf16 values.
+/// `tok_emb_bf16` must point to valid BF16 data for at least `(token_id + 1) * dim` elements.
 pub unsafe fn tok_embed_bf16_to_f32(
     dst: &mut [f32],
     tok_emb_bf16: *const u16,
     token_id: i32,
     dim: usize,
 ) {
-    let src = unsafe { std::slice::from_raw_parts(tok_emb_bf16.add(token_id as usize * dim), dim) };
-    kernels::bf16_to_f32_buf(dst, src);
+    let w = QWeight::Bf16Ptr(tok_emb_bf16);
+    tok_embed_to_f32(dst, &w, token_id, dim);
 }

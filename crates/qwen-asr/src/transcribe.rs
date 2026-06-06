@@ -3,7 +3,7 @@
 use crate::audio;
 use crate::config::*;
 use crate::context::QwenCtx;
-use crate::decoder::{self, tok_embed_bf16_to_f32};
+use crate::decoder;
 use crate::kernels;
 use crate::tokenizer::QwenTokenizer;
 
@@ -166,47 +166,41 @@ fn transcribe_segment(
     let total_seq = prefix_len + enc_seq_len + suffix_len + n_past_prompt_tokens;
 
     let mut input_embeds = vec![0.0f32; total_seq * dim];
-    let tok_emb = ctx.decoder.tok_embeddings_bf16;
+    let tok_emb = &ctx.decoder.tok_embeddings;
 
     // Embed prefix head
     let mut off = 0;
     for &tok in PREFIX_HEAD {
-        unsafe {
-            tok_embed_bf16_to_f32(
-                &mut input_embeds[off * dim..(off + 1) * dim],
-                tok_emb,
-                tok,
-                dim,
-            )
-        };
+        decoder::tok_embed_to_f32(
+            &mut input_embeds[off * dim..(off + 1) * dim],
+            tok_emb,
+            tok,
+            dim,
+        );
         off += 1;
     }
 
     // Optional prompt
     if let Some(ref ptoks) = ctx.prompt_tokens {
         for &tok in ptoks {
-            unsafe {
-                tok_embed_bf16_to_f32(
-                    &mut input_embeds[off * dim..(off + 1) * dim],
-                    tok_emb,
-                    tok,
-                    dim,
-                )
-            };
+            decoder::tok_embed_to_f32(
+                &mut input_embeds[off * dim..(off + 1) * dim],
+                tok_emb,
+                tok,
+                dim,
+            );
             off += 1;
         }
     }
 
     // Prefix tail
     for &tok in PREFIX_TAIL {
-        unsafe {
-            tok_embed_bf16_to_f32(
-                &mut input_embeds[off * dim..(off + 1) * dim],
-                tok_emb,
-                tok,
-                dim,
-            )
-        };
+        decoder::tok_embed_to_f32(
+            &mut input_embeds[off * dim..(off + 1) * dim],
+            tok_emb,
+            tok,
+            dim,
+        );
         off += 1;
     }
 
@@ -219,28 +213,24 @@ fn transcribe_segment(
     // Suffix base
     let suffix_off = prefix_len + enc_seq_len;
     for (i, &tok) in SUFFIX_BASE.iter().enumerate() {
-        unsafe {
-            tok_embed_bf16_to_f32(
-            &mut input_embeds[(suffix_off + i) * dim..(suffix_off + i + 1) * dim],
-                tok_emb,
-                tok,
-                dim,
-            )
-        };
+        decoder::tok_embed_to_f32(
+        &mut input_embeds[(suffix_off + i) * dim..(suffix_off + i + 1) * dim],
+            tok_emb,
+            tok,
+            dim,
+        );
     }
 
     // Force language tokens
     if let Some(ref ftoks) = ctx.force_prompt_tokens {
         for (i, &tok) in ftoks.iter().enumerate() {
-            unsafe {
-                tok_embed_bf16_to_f32(
-                &mut input_embeds[(suffix_off + SUFFIX_BASE.len() + i) * dim
-                    ..(suffix_off + SUFFIX_BASE.len() + i + 1) * dim],
-                    tok_emb,
-                    tok,
-                    dim,
-                )
-            };
+            decoder::tok_embed_to_f32(
+            &mut input_embeds[(suffix_off + SUFFIX_BASE.len() + i) * dim
+                ..(suffix_off + SUFFIX_BASE.len() + i + 1) * dim],
+                tok_emb,
+                tok,
+                dim,
+            );
         }
     }
 
@@ -248,24 +238,20 @@ fn transcribe_segment(
     let past_off = suffix_off + suffix_len;
     if let Some(ptoks) = past_tokens {
         for (i, &tok) in ptoks.iter().enumerate() {
-            unsafe {
-                tok_embed_bf16_to_f32(
-                &mut input_embeds[(past_off + i) * dim..(past_off + i + 1) * dim],
-                    tok_emb,
-                    tok,
-                    dim,
-                )
-            };
-        }
-        unsafe {
-            tok_embed_bf16_to_f32(
-                &mut input_embeds
-                    [(past_off + ptoks.len()) * dim..(past_off + ptoks.len() + 1) * dim],
+            decoder::tok_embed_to_f32(
+            &mut input_embeds[(past_off + i) * dim..(past_off + i + 1) * dim],
                 tok_emb,
-                TOKEN_ASR_TEXT,
+                tok,
                 dim,
-            )
-        };
+            );
+        }
+        decoder::tok_embed_to_f32(
+            &mut input_embeds
+                [(past_off + ptoks.len()) * dim..(past_off + ptoks.len() + 1) * dim],
+            tok_emb,
+            TOKEN_ASR_TEXT,
+            dim,
+        );
     }
 
     // Decoder prefill
@@ -335,7 +321,7 @@ fn transcribe_segment(
             }
         }
 
-        unsafe { tok_embed_bf16_to_f32(&mut tmp_embed, tok_emb, token, dim) };
+        decoder::tok_embed_to_f32(&mut tmp_embed, tok_emb, token, dim);
         token = decoder::decoder_forward(
             &ctx.decoder,
             cfg,
@@ -749,7 +735,7 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
     let enc_window_frames = cfg.enc_n_window_infer.clamp(100, 800);
     let enc_window_samples = enc_window_frames * HOP_LENGTH;
 
-    let tok_emb = ctx.decoder.tok_embeddings_bf16;
+    let tok_emb = &ctx.decoder.tok_embeddings;
 
     let mut raw_tokens: Vec<i32> = Vec::new();
     let mut stable_text_tokens: Vec<i32> = Vec::new();
@@ -860,40 +846,34 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         let mut off = 0;
 
         for &tok in PREFIX_HEAD {
-            unsafe {
-                tok_embed_bf16_to_f32(
-                    &mut input_embeds[off * dim..(off + 1) * dim],
-                    tok_emb,
-                    tok,
-                    dim,
-                )
-            };
+            decoder::tok_embed_to_f32(
+                &mut input_embeds[off * dim..(off + 1) * dim],
+                tok_emb,
+                tok,
+                dim,
+            );
             prefill_keys[off] = prefill_token_key(tok);
             off += 1;
         }
         if let Some(ref ptoks) = ctx.prompt_tokens {
             for &tok in ptoks {
-                unsafe {
-                    tok_embed_bf16_to_f32(
-                        &mut input_embeds[off * dim..(off + 1) * dim],
-                        tok_emb,
-                        tok,
-                        dim,
-                    )
-                };
+                decoder::tok_embed_to_f32(
+                    &mut input_embeds[off * dim..(off + 1) * dim],
+                    tok_emb,
+                    tok,
+                    dim,
+                );
                 prefill_keys[off] = prefill_token_key(tok);
                 off += 1;
             }
         }
         for &tok in PREFIX_TAIL {
-            unsafe {
-                tok_embed_bf16_to_f32(
-                    &mut input_embeds[off * dim..(off + 1) * dim],
-                    tok_emb,
-                    tok,
-                    dim,
-                )
-            };
+            decoder::tok_embed_to_f32(
+                &mut input_embeds[off * dim..(off + 1) * dim],
+                tok_emb,
+                tok,
+                dim,
+            );
             prefill_keys[off] = prefill_token_key(tok);
             off += 1;
         }
@@ -926,41 +906,35 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
 
         let suffix_off = prefix_len + enc_seq_len;
         for (i, &tok) in SUFFIX_BASE.iter().enumerate() {
-            unsafe {
-                tok_embed_bf16_to_f32(
-                &mut input_embeds[(suffix_off + i) * dim..(suffix_off + i + 1) * dim],
-                    tok_emb,
-                    tok,
-                    dim,
-                )
-            };
+            decoder::tok_embed_to_f32(
+            &mut input_embeds[(suffix_off + i) * dim..(suffix_off + i + 1) * dim],
+                tok_emb,
+                tok,
+                dim,
+            );
             prefill_keys[suffix_off + i] = prefill_token_key(tok);
         }
         if let Some(ref ftoks) = ctx.force_prompt_tokens {
             for (i, &tok) in ftoks.iter().enumerate() {
-                unsafe {
-                    tok_embed_bf16_to_f32(
-                    &mut input_embeds[(suffix_off + SUFFIX_BASE.len() + i) * dim
-                        ..(suffix_off + SUFFIX_BASE.len() + i + 1) * dim],
-                        tok_emb,
-                        tok,
-                        dim,
-                    )
-                };
+                decoder::tok_embed_to_f32(
+                &mut input_embeds[(suffix_off + SUFFIX_BASE.len() + i) * dim
+                    ..(suffix_off + SUFFIX_BASE.len() + i + 1) * dim],
+                    tok_emb,
+                    tok,
+                    dim,
+                );
                 prefill_keys[suffix_off + SUFFIX_BASE.len() + i] = prefill_token_key(tok);
             }
         }
 
         let text_off = suffix_off + suffix_len;
         for i in 0..n_prefix_tokens {
-            unsafe {
-                tok_embed_bf16_to_f32(
-                &mut input_embeds[(text_off + i) * dim..(text_off + i + 1) * dim],
-                    tok_emb,
-                    raw_tokens[i],
-                    dim,
-                )
-            };
+            decoder::tok_embed_to_f32(
+            &mut input_embeds[(text_off + i) * dim..(text_off + i + 1) * dim],
+                tok_emb,
+                raw_tokens[i],
+                dim,
+            );
             prefill_keys[text_off + i] = prefill_token_key(raw_tokens[i]);
         }
 
@@ -1012,9 +986,7 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
                 break;
             }
             chunk_tokens.push(token);
-            unsafe {
-                tok_embed_bf16_to_f32(&mut tmp_embed, tok_emb, token, dim);
-            }
+            decoder::tok_embed_to_f32(&mut tmp_embed, tok_emb, token, dim);
             token = decoder::decoder_forward(
                 &ctx.decoder,
                 &cfg,
@@ -1290,7 +1262,7 @@ pub fn stream_push_audio(
 
     let enc_window_frames = cfg.enc_n_window_infer.clamp(100, 800);
     let enc_window_samples = enc_window_frames * HOP_LENGTH;
-    let tok_emb = ctx.decoder.tok_embeddings_bf16;
+    let tok_emb = &ctx.decoder.tok_embeddings;
     let mut tmp_embed = vec![0.0f32; dim];
     let mut delta_bytes: Vec<u8> = Vec::new();
 
@@ -1405,40 +1377,34 @@ pub fn stream_push_audio(
     let mut off = 0;
 
     for &tok in PREFIX_HEAD {
-            unsafe {
-                tok_embed_bf16_to_f32(
-                    &mut input_embeds[off * dim..(off + 1) * dim],
-                    tok_emb,
-                    tok,
-                    dim,
-                );
-            }
+            decoder::tok_embed_to_f32(
+                &mut input_embeds[off * dim..(off + 1) * dim],
+                tok_emb,
+                tok,
+                dim,
+            );
             prefill_keys[off] = prefill_token_key(tok);
         off += 1;
     }
     if let Some(ref ptoks) = ctx.prompt_tokens {
         for &tok in ptoks {
-                unsafe {
-                    tok_embed_bf16_to_f32(
-                        &mut input_embeds[off * dim..(off + 1) * dim],
-                        tok_emb,
-                        tok,
-                        dim,
-                    );
-                }
-                prefill_keys[off] = prefill_token_key(tok);
-            off += 1;
-        }
-    }
-    for &tok in PREFIX_TAIL {
-            unsafe {
-                tok_embed_bf16_to_f32(
+                decoder::tok_embed_to_f32(
                     &mut input_embeds[off * dim..(off + 1) * dim],
                     tok_emb,
                     tok,
                     dim,
                 );
-            }
+                prefill_keys[off] = prefill_token_key(tok);
+            off += 1;
+        }
+    }
+    for &tok in PREFIX_TAIL {
+            decoder::tok_embed_to_f32(
+                &mut input_embeds[off * dim..(off + 1) * dim],
+                tok_emb,
+                tok,
+                dim,
+            );
             prefill_keys[off] = prefill_token_key(tok);
         off += 1;
     }
@@ -1471,41 +1437,35 @@ pub fn stream_push_audio(
 
     let suffix_off = prefix_len + enc_seq_len;
     for (i, &tok) in SUFFIX_BASE.iter().enumerate() {
-            unsafe {
-                tok_embed_bf16_to_f32(
+            decoder::tok_embed_to_f32(
             &mut input_embeds[(suffix_off + i) * dim..(suffix_off + i + 1) * dim],
-                    tok_emb,
-                    tok,
-                    dim,
-                );
-            }
+                tok_emb,
+                tok,
+                dim,
+            );
             prefill_keys[suffix_off + i] = prefill_token_key(tok);
     }
     if let Some(ref ftoks) = ctx.force_prompt_tokens {
         for (i, &tok) in ftoks.iter().enumerate() {
-                unsafe {
-                    tok_embed_bf16_to_f32(
+                decoder::tok_embed_to_f32(
                 &mut input_embeds[(suffix_off + SUFFIX_BASE.len() + i) * dim
-                    ..(suffix_off + SUFFIX_BASE.len() + i + 1) * dim],
-                        tok_emb,
-                        tok,
-                        dim,
-                    );
-                }
+                ..(suffix_off + SUFFIX_BASE.len() + i + 1) * dim],
+                    tok_emb,
+                    tok,
+                    dim,
+                );
                 prefill_keys[suffix_off + SUFFIX_BASE.len() + i] = prefill_token_key(tok);
         }
     }
 
     let text_off = suffix_off + suffix_len;
     for i in 0..n_prefix_tokens {
-            unsafe {
-                tok_embed_bf16_to_f32(
+            decoder::tok_embed_to_f32(
             &mut input_embeds[(text_off + i) * dim..(text_off + i + 1) * dim],
-                    tok_emb,
-                    state.raw_tokens[i],
-                    dim,
-                );
-            }
+                tok_emb,
+                state.raw_tokens[i],
+                dim,
+            );
             prefill_keys[text_off + i] = prefill_token_key(state.raw_tokens[i]);
     }
 
@@ -1566,9 +1526,7 @@ pub fn stream_push_audio(
                 break;
             }
         chunk_tokens.push(token);
-            unsafe {
-                tok_embed_bf16_to_f32(&mut tmp_embed, tok_emb, token, dim);
-            }
+            decoder::tok_embed_to_f32(&mut tmp_embed, tok_emb, token, dim);
         token = decoder::decoder_forward(
                 &ctx.decoder,
                 &cfg,

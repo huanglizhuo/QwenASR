@@ -55,6 +55,7 @@
 
 pub mod config;
 pub mod safetensors;
+pub mod gguf;
 pub mod audio;
 pub mod tokenizer;
 pub mod kernels;

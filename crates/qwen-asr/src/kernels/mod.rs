@@ -1939,3 +1939,302 @@ pub fn argmax_matvec_bf16(x: &[f32], w_bf16: *const u16, in_dim: usize, out_dim:
     }
     best
 }
+
+// ========================================================================
+// QWeight dispatch — unified matvec for all quantization types
+// ========================================================================
+
+use crate::decoder::QWeight;
+use crate::gguf;
+
+/// Single-token matvec: y = W @ x, dispatching on QWeight variant.
+/// `rows` = output dim, `cols` = input dim.
+pub fn qweight_matvec(y: &mut [f32], x: &[f32], w: &QWeight, rows: usize, cols: usize) {
+    match w {
+        QWeight::Bf16Ptr(ptr) => {
+            bf16_matvec_threaded(y, x, *ptr, None, cols, rows);
+        }
+        QWeight::Int8Owned { data, scales } => {
+            int8_matvec_threaded(y, x, data, scales, None, cols, rows);
+        }
+        QWeight::Q8_0Ptr(ptr) => {
+            q8_0_matvec_threaded(y, x, *ptr, rows, cols);
+        }
+        QWeight::Q4KPtr(ptr) => {
+            q4k_matvec_threaded(y, x, *ptr, rows, cols);
+        }
+        QWeight::Q4_0Ptr(ptr) => {
+            q4_0_matvec_threaded(y, x, *ptr, rows, cols);
+        }
+    }
+}
+
+/// Argmax over rows of W (argmax(W @ x)).
+pub fn argmax_qweight(x: &[f32], w: &QWeight, in_dim: usize, out_dim: usize) -> usize {
+    match w {
+        QWeight::Bf16Ptr(ptr) => argmax_matvec_bf16(x, *ptr, in_dim, out_dim),
+        QWeight::Int8Owned { data, scales } => argmax_matvec_int8(x, data, scales, in_dim, out_dim),
+        QWeight::Q8_0Ptr(ptr) => q8_0_argmax_matvec(x, *ptr, in_dim, out_dim),
+        QWeight::Q4KPtr(ptr)  => q4k_argmax_matvec(x, *ptr, in_dim, out_dim),
+        QWeight::Q4_0Ptr(ptr) => q4_0_argmax_matvec(x, *ptr, in_dim, out_dim),
+    }
+}
+
+/// SwiGLU with separate gate and up weights (GGUF path).
+/// gate_buf is a scratch buffer of size >= 2 * intermediate.
+pub fn qweight_swiglu_separate(
+    ffn_out: &mut [f32],
+    x: &[f32],
+    gate: &QWeight,
+    up: &QWeight,
+    gate_buf: &mut [f32],
+    in_dim: usize,
+    intermediate: usize,
+) {
+    // gate_buf[0..intermediate] = gate @ x
+    // gate_buf[intermediate..2*intermediate] = up @ x
+    let (gate_half, up_half) = gate_buf[..2 * intermediate].split_at_mut(intermediate);
+    qweight_matvec(gate_half, x, gate, intermediate, in_dim);
+    qweight_matvec(up_half, x, up, intermediate, in_dim);
+    // ffn_out[i] = silu(gate_half[i]) * up_half[i]
+    for i in 0..intermediate {
+        let g = gate_half[i];
+        let u = up_half[i];
+        let sig = 1.0 / (1.0 + (-g).exp());
+        ffn_out[i] = g * sig * u;
+    }
+}
+
+// ========================================================================
+// Q8_0 scalar matvec kernels
+// ========================================================================
+
+fn q8_0_dot_row(x: &[f32], w_ptr: *const u8, row: usize, cols: usize) -> f32 {
+    let blocks_per_row = cols / 32;
+    let row_ptr = unsafe { w_ptr.add(row * blocks_per_row * 34) };
+    #[cfg(target_arch = "aarch64")]
+    return unsafe { q8_0_dot_row_neon(x, row_ptr, blocks_per_row) };
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        let mut acc = 0.0f32;
+        for b in 0..blocks_per_row {
+            let block = unsafe { row_ptr.add(b * 34) };
+            let d_bits = unsafe { u16::from_le_bytes([*block, *block.add(1)]) };
+            let d = gguf::f16_to_f32_pub(d_bits);
+            let mut fdot = 0.0f32;
+            for i in 0..32 {
+                let q = unsafe { *block.add(2 + i) as i8 };
+                fdot += q as f32 * x[b * 32 + i];
+            }
+            acc += fdot * d;
+        }
+        acc
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn q8_0_dot_row_neon(x: &[f32], row_ptr: *const u8, blocks: usize) -> f32 {
+    use std::arch::aarch64::*;
+    let mut acc0 = vdupq_n_f32(0.0f32);
+    let mut acc1 = vdupq_n_f32(0.0f32);
+    let mut x_ptr = x.as_ptr();
+    let mut b_ptr = row_ptr;
+    for _ in 0..blocks {
+        let d_bits = u16::from_le_bytes([*b_ptr, *b_ptr.add(1)]);
+        let d = gguf::f16_to_f32_pub(d_bits);
+        let dv = vdupq_n_f32(d);
+        let q_ptr = b_ptr.add(2) as *const i8;
+        // First 16 i8 weights → float32x4_t × 4
+        let q0 = vld1q_s8(q_ptr);
+        let lo0 = vmovl_s8(vget_low_s8(q0));
+        let hi0 = vmovl_high_s8(q0);
+        let f00 = vcvtq_f32_s32(vmovl_s16(vget_low_s16(lo0)));
+        let f01 = vcvtq_f32_s32(vmovl_high_s16(lo0));
+        let f02 = vcvtq_f32_s32(vmovl_s16(vget_low_s16(hi0)));
+        let f03 = vcvtq_f32_s32(vmovl_high_s16(hi0));
+        // Second 16 i8 weights
+        let q1 = vld1q_s8(q_ptr.add(16));
+        let lo1 = vmovl_s8(vget_low_s8(q1));
+        let hi1 = vmovl_high_s8(q1);
+        let f10 = vcvtq_f32_s32(vmovl_s16(vget_low_s16(lo1)));
+        let f11 = vcvtq_f32_s32(vmovl_high_s16(lo1));
+        let f12 = vcvtq_f32_s32(vmovl_s16(vget_low_s16(hi1)));
+        let f13 = vcvtq_f32_s32(vmovl_high_s16(hi1));
+        // Multiply i8 floats by scale d
+        let w00 = vmulq_f32(f00, dv); let w01 = vmulq_f32(f01, dv);
+        let w02 = vmulq_f32(f02, dv); let w03 = vmulq_f32(f03, dv);
+        let w10 = vmulq_f32(f10, dv); let w11 = vmulq_f32(f11, dv);
+        let w12 = vmulq_f32(f12, dv); let w13 = vmulq_f32(f13, dv);
+        // Fused multiply-add: acc += w * x
+        acc0 = vmlaq_f32(acc0, w00, vld1q_f32(x_ptr));
+        acc0 = vmlaq_f32(acc0, w01, vld1q_f32(x_ptr.add(4)));
+        acc0 = vmlaq_f32(acc0, w02, vld1q_f32(x_ptr.add(8)));
+        acc0 = vmlaq_f32(acc0, w03, vld1q_f32(x_ptr.add(12)));
+        acc1 = vmlaq_f32(acc1, w10, vld1q_f32(x_ptr.add(16)));
+        acc1 = vmlaq_f32(acc1, w11, vld1q_f32(x_ptr.add(20)));
+        acc1 = vmlaq_f32(acc1, w12, vld1q_f32(x_ptr.add(24)));
+        acc1 = vmlaq_f32(acc1, w13, vld1q_f32(x_ptr.add(28)));
+        x_ptr = x_ptr.add(32);
+        b_ptr = b_ptr.add(34);
+    }
+    vaddvq_f32(vaddq_f32(acc0, acc1))
+}
+
+fn q8_0_matvec_threaded(y: &mut [f32], x: &[f32], w_ptr: *const u8, rows: usize, cols: usize) {
+    let n_threads = get_num_threads();
+    if n_threads <= 1 {
+        for r in 0..rows {
+            y[r] = q8_0_dot_row(x, w_ptr, r, cols);
+        }
+        return;
+    }
+    let y_ptr = y.as_mut_ptr() as usize;
+    let x_ptr = x.as_ptr() as usize;
+    let w_addr = w_ptr as usize;
+    parallel_for(|tid, nt| {
+        let chunk = rows.div_ceil(nt);
+        let start = tid * chunk;
+        let end = (start + chunk).min(rows);
+        let x_local = unsafe { std::slice::from_raw_parts(x_ptr as *const f32, cols) };
+        for r in start..end {
+            let val = q8_0_dot_row(x_local, w_addr as *const u8, r, cols);
+            unsafe { *(y_ptr as *mut f32).add(r) = val; }
+        }
+    });
+}
+
+fn q8_0_argmax_matvec(x: &[f32], w_ptr: *const u8, in_dim: usize, out_dim: usize) -> usize {
+    let mut best = 0;
+    let mut best_val = f32::NEG_INFINITY;
+    for r in 0..out_dim {
+        let v = q8_0_dot_row(x, w_ptr, r, in_dim);
+        if v > best_val { best_val = v; best = r; }
+    }
+    best
+}
+
+// ========================================================================
+// Q4_K scalar matvec kernels
+// ========================================================================
+
+fn q4k_dot_row(x: &[f32], w_ptr: *const u8, row: usize, cols: usize) -> f32 {
+    let blocks_per_row = cols / 256;
+    let row_ptr = unsafe { w_ptr.add(row * blocks_per_row * 144) };
+    let mut acc = 0.0f32;
+    for b in 0..blocks_per_row {
+        let p = unsafe { row_ptr.add(b * 144) };
+        let d_bits    = unsafe { u16::from_le_bytes([*p,        *p.add(1)]) };
+        let dmin_bits = unsafe { u16::from_le_bytes([*p.add(2), *p.add(3)]) };
+        let d    = gguf::f16_to_f32_pub(d_bits);
+        let dmin = gguf::f16_to_f32_pub(dmin_bits);
+        let scales_ptr = unsafe { p.add(4) };
+        let qs_ptr     = unsafe { p.add(16) };
+        let base = b * 256;
+        let mut q_off = 0usize;
+        let mut is = 0usize;
+        for j_step in 0..4 {
+            let (sc0, mc0) = gguf::get_scale_min_k4_pub(is,     scales_ptr);
+            let (sc1, mc1) = gguf::get_scale_min_k4_pub(is + 1, scales_ptr);
+            let sc0f = d * sc0 as f32; let mc0f = dmin * mc0 as f32;
+            let sc1f = d * sc1 as f32; let mc1f = dmin * mc1 as f32;
+            for l in 0..32 {
+                let byte = unsafe { *qs_ptr.add(q_off + l) };
+                let col0 = base + j_step * 64 + l;
+                let col1 = base + j_step * 64 + 32 + l;
+                let v0 = sc0f * (byte & 0xF) as f32 - mc0f;
+                let v1 = sc1f * (byte >> 4)  as f32 - mc1f;
+                acc += v0 * x[col0];
+                acc += v1 * x[col1];
+            }
+            q_off += 32;
+            is += 2;
+        }
+    }
+    acc
+}
+
+fn q4k_matvec_threaded(y: &mut [f32], x: &[f32], w_ptr: *const u8, rows: usize, cols: usize) {
+    let n_threads = get_num_threads();
+    if n_threads <= 1 {
+        for r in 0..rows { y[r] = q4k_dot_row(x, w_ptr, r, cols); }
+        return;
+    }
+    let y_ptr = y.as_mut_ptr() as usize;
+    let x_ptr = x.as_ptr() as usize;
+    let w_addr = w_ptr as usize;
+    parallel_for(|tid, nt| {
+        let chunk = rows.div_ceil(nt);
+        let start = tid * chunk;
+        let end = (start + chunk).min(rows);
+        let x_local = unsafe { std::slice::from_raw_parts(x_ptr as *const f32, cols) };
+        for r in start..end {
+            let val = q4k_dot_row(x_local, w_addr as *const u8, r, cols);
+            unsafe { *(y_ptr as *mut f32).add(r) = val; }
+        }
+    });
+}
+
+fn q4k_argmax_matvec(x: &[f32], w_ptr: *const u8, in_dim: usize, out_dim: usize) -> usize {
+    let mut best = 0;
+    let mut best_val = f32::NEG_INFINITY;
+    for r in 0..out_dim {
+        let v = q4k_dot_row(x, w_ptr, r, in_dim);
+        if v > best_val { best_val = v; best = r; }
+    }
+    best
+}
+
+// ========================================================================
+// Q4_0 scalar matvec kernels
+// ========================================================================
+
+fn q4_0_dot_row(x: &[f32], w_ptr: *const u8, row: usize, cols: usize) -> f32 {
+    let blocks_per_row = cols / 32;
+    let row_ptr = unsafe { w_ptr.add(row * blocks_per_row * 18) };
+    let mut acc = 0.0f32;
+    for b in 0..blocks_per_row {
+        let block = unsafe { row_ptr.add(b * 18) };
+        let d_bits = unsafe { u16::from_le_bytes([*block, *block.add(1)]) };
+        let d = gguf::f16_to_f32_pub(d_bits);
+        for i in 0..16 {
+            let byte = unsafe { *block.add(2 + i) };
+            let lo = (byte & 0xF) as i32 - 8;
+            let hi = (byte >> 4) as i32 - 8;
+            acc += lo as f32 * d * x[b * 32 + i];
+            acc += hi as f32 * d * x[b * 32 + 16 + i];
+        }
+    }
+    acc
+}
+
+fn q4_0_matvec_threaded(y: &mut [f32], x: &[f32], w_ptr: *const u8, rows: usize, cols: usize) {
+    let n_threads = get_num_threads();
+    if n_threads <= 1 {
+        for r in 0..rows { y[r] = q4_0_dot_row(x, w_ptr, r, cols); }
+        return;
+    }
+    let y_ptr = y.as_mut_ptr() as usize;
+    let x_ptr = x.as_ptr() as usize;
+    let w_addr = w_ptr as usize;
+    parallel_for(|tid, nt| {
+        let chunk = rows.div_ceil(nt);
+        let start = tid * chunk;
+        let end = (start + chunk).min(rows);
+        let x_local = unsafe { std::slice::from_raw_parts(x_ptr as *const f32, cols) };
+        for r in start..end {
+            let val = q4_0_dot_row(x_local, w_addr as *const u8, r, cols);
+            unsafe { *(y_ptr as *mut f32).add(r) = val; }
+        }
+    });
+}
+
+fn q4_0_argmax_matvec(x: &[f32], w_ptr: *const u8, in_dim: usize, out_dim: usize) -> usize {
+    let mut best = 0;
+    let mut best_val = f32::NEG_INFINITY;
+    for r in 0..out_dim {
+        let v = q4_0_dot_row(x, w_ptr, r, in_dim);
+        if v > best_val { best_val = v; best = r; }
+    }
+    best
+}
