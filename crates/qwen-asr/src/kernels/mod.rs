@@ -716,6 +716,33 @@ pub fn linear_bf16(y: &mut [f32], x: &[f32], w_bf16: *const u16, b: Option<&[f32
     linear(y, x, &w_f32, b, seq_len, in_dim, out_dim);
 }
 
+/// Bias-supporting variant of `linear_nobias_bf16_scratch`: streams a BF16 weight
+/// matrix through a caller-provided f32 scratch buffer instead of allocating.
+/// # Safety
+/// Caller must ensure `w_bf16` points to at least `out_dim * in_dim` valid bf16 values.
+pub unsafe fn linear_bf16_scratch(y: &mut [f32], x: &[f32], w_bf16: *const u16, b: Option<&[f32]>, seq_len: usize, in_dim: usize, out_dim: usize, scratch: &mut [f32]) {
+    let _pg = ProfileGuard::new(&PROF.bf16_matvec);
+    if seq_len == 1 {
+        bf16_matvec_threaded(y, x, w_bf16, b, in_dim, out_dim);
+        return;
+    }
+    let n = out_dim * in_dim;
+    let src = unsafe { std::slice::from_raw_parts(w_bf16, n) };
+    bf16_to_f32_buf(&mut scratch[..n], src);
+    linear(y, x, &scratch[..n], b, seq_len, in_dim, out_dim);
+}
+
+/// y += bias + x @ w_bf16.T  — bias optional, BF16 weights streamed through scratch.
+/// # Safety
+/// Caller must ensure `w_bf16` points to at least `out_dim * in_dim` valid bf16 values.
+pub unsafe fn linear_accumulate_bf16_scratch(y: &mut [f32], x: &[f32], w_bf16: *const u16, b: Option<&[f32]>, seq_len: usize, in_dim: usize, out_dim: usize, scratch: &mut [f32]) {
+    let _pg = ProfileGuard::new(&PROF.bf16_matvec);
+    let n = out_dim * in_dim;
+    let src = unsafe { std::slice::from_raw_parts(w_bf16, n) };
+    bf16_to_f32_buf(&mut scratch[..n], src);
+    linear_accumulate(y, x, &scratch[..n], b, seq_len, in_dim, out_dim);
+}
+
 /// Fused Q/K/V matvec for single-token decode
 #[allow(clippy::too_many_arguments)]
 pub fn linear_nobias_bf16_qkv(
@@ -1369,6 +1396,72 @@ pub fn swiglu_multiply(out: &mut [f32], gate_up: &[f32], seq_len: usize, interme
             let g_silu = g / (1.0 + (-g).exp());
             o[j] = g_silu * u;
         }
+    }
+}
+
+/// SwiGLU in place: `gate[i] = silu(gate[i]) * up[i]`. Reads `up` and overwrites
+/// `gate` with the final activation, avoiding an extra output buffer.
+pub fn swiglu_separate_inplace(gate: &mut [f32], up: &[f32], seq_len: usize, intermediate: usize) {
+    let _pg = ProfileGuard::new(&PROF.swiglu);
+    let total = seq_len * intermediate;
+    let n_threads = get_num_threads();
+
+    if n_threads > 1 && total > 4096 {
+        let gate_ptr = gate.as_mut_ptr() as usize;
+        let up_ptr = up.as_ptr() as usize;
+        parallel_for(|tid, nt| {
+            let chunk = total.div_ceil(nt);
+            let start = tid * chunk;
+            let end = (start + chunk).min(total);
+            if start >= end { return; }
+            let g = unsafe { std::slice::from_raw_parts_mut((gate_ptr as *mut f32).add(start), end - start) };
+            let u = unsafe { std::slice::from_raw_parts((up_ptr as *const f32).add(start), end - start) };
+            for j in 0..(end - start) {
+                let gv = g[j];
+                g[j] = gv / (1.0 + (-gv).exp()) * u[j];
+            }
+        });
+        return;
+    }
+
+    for j in 0..total {
+        let gv = gate[j];
+        gate[j] = gv / (1.0 + (-gv).exp()) * up[j];
+    }
+}
+
+/// SwiGLU with gate and up provided as separate (non-interleaved) tensors.
+/// `out[i] = silu(gate[i]) * up[i]`, all sized `seq_len * intermediate`.
+pub fn swiglu_separate(out: &mut [f32], gate: &[f32], up: &[f32], seq_len: usize, intermediate: usize) {
+    let _pg = ProfileGuard::new(&PROF.swiglu);
+    let total = seq_len * intermediate;
+    let n_threads = get_num_threads();
+
+    if n_threads > 1 && total > 4096 {
+        let out_ptr = out.as_mut_ptr() as usize;
+        let gate_ptr = gate.as_ptr() as usize;
+        let up_ptr = up.as_ptr() as usize;
+        parallel_for(|tid, nt| {
+            let chunk = total.div_ceil(nt);
+            let start = tid * chunk;
+            let end = (start + chunk).min(total);
+            if start >= end { return; }
+            let o = unsafe { std::slice::from_raw_parts_mut((out_ptr as *mut f32).add(start), end - start) };
+            let g = unsafe { std::slice::from_raw_parts((gate_ptr as *const f32).add(start), end - start) };
+            let u = unsafe { std::slice::from_raw_parts((up_ptr as *const f32).add(start), end - start) };
+            for j in 0..(end - start) {
+                let gv = g[j];
+                let uv = u[j];
+                o[j] = gv / (1.0 + (-gv).exp()) * uv;
+            }
+        });
+        return;
+    }
+
+    for j in 0..total {
+        let g = gate[j];
+        let u = up[j];
+        out[j] = g / (1.0 + (-g).exp()) * u;
     }
 }
 
