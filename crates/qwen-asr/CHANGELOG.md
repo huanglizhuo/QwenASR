@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.3](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.7.2...qwen-asr-v0.7.3) (2026-06-27)
+
+
+### Bug Fixes
+
+* harden encoder BF16 scratch sizing for proj2 ([#33](https://github.com/huanglizhuo/QwenASR/issues/33)) ([4078f51](https://github.com/huanglizhuo/QwenASR/commit/4078f51c3c22a0800e02fa708d530bae73bcbea4))
+
+
+### Performance Improvements
+
+* keep weights as BF16 mmap views to fit on iOS ([#32](https://github.com/huanglizhuo/QwenASR/issues/32)) ([64fff76](https://github.com/huanglizhuo/QwenASR/commit/64fff76c1154318a211657d0f5076cc6aa5f79cc)) — streams BF16 weights through a shared f32 scratch buffer instead of upconverting every tensor to `Vec<f32>` at load. Cuts peak memory **~6.4× (4.54 GB → 0.70 GB)** on the 0.6B forced aligner and **~42–57%** across ASR offline/segmented/streaming, with model load **~4× faster** and alignment output bit-identical.
+
 ## [0.7.2](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.7.1...qwen-asr-v0.7.2) (2026-06-13)
 
 
