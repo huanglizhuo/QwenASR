@@ -44,10 +44,6 @@ pub struct DecLayer {
     pub wk_weight_bf16: *const u16,
     pub wv_weight_bf16: *const u16,
     pub wo_weight_bf16: *const u16,
-    pub wq_weight_f32_prefill: Vec<f32>,
-    pub wk_weight_f32_prefill: Vec<f32>,
-    pub wv_weight_f32_prefill: Vec<f32>,
-    pub wo_weight_f32_prefill: Vec<f32>,
     pub q_norm_weight: Vec<f32>,
     pub k_norm_weight: Vec<f32>,
     pub input_norm: Vec<f32>,
@@ -55,10 +51,12 @@ pub struct DecLayer {
     pub gate_weight_bf16: *const u16,
     pub up_weight_bf16: *const u16,
     pub down_weight_bf16: *const u16,
-    pub gate_up_fused_bf16: Vec<u16>, // owned, interleaved
-    pub gate_up_fused_f32_prefill: Vec<f32>,
-    pub down_weight_f32_prefill: Vec<f32>,
-    /// INT8 quantized attention weights + per-row scales
+    /// Owned interleaved bf16 fusion of gate+up — populated only for non-aligner
+    /// configs (single-token decode path uses it). Empty for forced-aligner since
+    /// aligner only ever runs prefill, which streams gate/up separately.
+    pub gate_up_fused_bf16: Vec<u16>,
+    /// INT8 quantized attention weights + per-row scales — populated only for
+    /// non-aligner configs (used by aarch64 single-token decode). Empty for aligner.
     pub wq_int8: Vec<i8>,
     pub wq_int8_scales: Vec<f32>,
     pub wk_int8: Vec<i8>,
@@ -67,7 +65,6 @@ pub struct DecLayer {
     pub wv_int8_scales: Vec<f32>,
     pub wo_int8: Vec<i8>,
     pub wo_int8_scales: Vec<f32>,
-    /// INT8 quantized FFN weights + per-row scales
     pub gate_up_int8: Vec<i8>,
     pub gate_up_int8_scales: Vec<f32>,
     pub down_int8: Vec<i8>,
@@ -83,7 +80,7 @@ pub struct Decoder {
     pub norm: Vec<f32>,
     /// Separate lm_head for forced aligner (None = tied weights with tok_embeddings)
     pub lm_head_bf16: Option<*const u16>,
-    /// INT8 quantized lm_head weights for fast argmax
+    /// INT8 quantized lm_head weights for fast argmax — None for aligner (uses bf16 path).
     pub lm_head_int8: Option<Vec<i8>>,
     pub lm_head_int8_scales: Option<Vec<f32>>,
 }
@@ -107,17 +104,11 @@ fn load_bf16_direct(ms: &MultiSafetensors, name: &str) -> Option<*const u16> {
     result
 }
 
-fn load_bf16_as_f32_into(ms: &MultiSafetensors, name: &str, out: &mut [f32]) -> Option<()> {
-    let ptr = load_bf16_direct(ms, name)?;
-    unsafe {
-        let src = std::slice::from_raw_parts(ptr, out.len());
-        kernels::bf16_to_f32_buf(out, src);
-    }
-    Some(())
-}
-
-/// Load and preprocess a single decoder layer's weights (bf16->f32 prefill copies
-/// + INT8 quantized copies). Independent per layer, so callable in parallel.
+/// Load a single decoder layer. For non-aligner configs we still build the
+/// INT8 + interleaved-bf16 fusion that the single-token decode path needs;
+/// for aligner configs (which only ever runs prefill) we skip those — saving
+/// roughly 700 MB across the model — and let the prefill code stream BF16
+/// weights through a shared f32 scratch buffer.
 fn load_dec_layer(ms: &MultiSafetensors, cfg: &QwenConfig, i: usize) -> Option<DecLayer> {
     let lp = format!("thinker.model.layers.{}", i);
 
@@ -130,27 +121,6 @@ fn load_dec_layer(ms: &MultiSafetensors, cfg: &QwenConfig, i: usize) -> Option<D
     let hidden = cfg.dec_hidden;
     let inter = cfg.dec_intermediate;
 
-    let wq_weight_f32_prefill = {
-        let mut v = superpage_vec::<f32>(q_dim * hidden);
-        load_bf16_as_f32_into(ms, &format!("{}.self_attn.q_proj.weight", lp), &mut v)?;
-        v
-    };
-    let wk_weight_f32_prefill = {
-        let mut v = superpage_vec::<f32>(kv_dim * hidden);
-        load_bf16_as_f32_into(ms, &format!("{}.self_attn.k_proj.weight", lp), &mut v)?;
-        v
-    };
-    let wv_weight_f32_prefill = {
-        let mut v = superpage_vec::<f32>(kv_dim * hidden);
-        load_bf16_as_f32_into(ms, &format!("{}.self_attn.v_proj.weight", lp), &mut v)?;
-        v
-    };
-    let wo_weight_f32_prefill = {
-        let mut v = superpage_vec::<f32>(hidden * q_dim);
-        load_bf16_as_f32_into(ms, &format!("{}.self_attn.o_proj.weight", lp), &mut v)?;
-        v
-    };
-
     let q_norm = load_f32(ms, &format!("{}.self_attn.q_norm.weight", lp))?;
     let k_norm = load_f32(ms, &format!("{}.self_attn.k_norm.weight", lp))?;
     let input_norm = load_f32(ms, &format!("{}.input_layernorm.weight", lp))?;
@@ -160,44 +130,50 @@ fn load_dec_layer(ms: &MultiSafetensors, cfg: &QwenConfig, i: usize) -> Option<D
     let up_bf16 = load_bf16_direct(ms, &format!("{}.mlp.up_proj.weight", lp))?;
     let down_bf16 = load_bf16_direct(ms, &format!("{}.mlp.down_proj.weight", lp))?;
 
-    // Fuse gate+up: interleave rows
-    let mut gate_up_fused = vec![0u16; 2 * inter * hidden];
-    unsafe {
-        let gate_slice = std::slice::from_raw_parts(gate_bf16, inter * hidden);
-        let up_slice = std::slice::from_raw_parts(up_bf16, inter * hidden);
-        for r in 0..inter {
-            gate_up_fused[2 * r * hidden..(2 * r + 1) * hidden]
-                .copy_from_slice(&gate_slice[r * hidden..(r + 1) * hidden]);
-            gate_up_fused[(2 * r + 1) * hidden..(2 * r + 2) * hidden]
-                .copy_from_slice(&up_slice[r * hidden..(r + 1) * hidden]);
-        }
-    }
-    let mut gate_up_fused_f32_prefill = superpage_vec::<f32>(2 * inter * hidden);
-    kernels::bf16_to_f32_buf(&mut gate_up_fused_f32_prefill, &gate_up_fused);
-    let down_weight_f32_prefill = {
-        let mut v = superpage_vec::<f32>(hidden * inter);
-        load_bf16_as_f32_into(ms, &format!("{}.mlp.down_proj.weight", lp), &mut v)?;
-        v
-    };
+    let is_aligner = cfg.is_aligner();
 
-    // INT8 quantize all decoder layer weights into superpage-aligned buffers
-    let (wq_int8, wq_int8_scales) = quantize_to_superpage(wq, q_dim, hidden);
-    let (wk_int8, wk_int8_scales) = quantize_to_superpage(wk, kv_dim, hidden);
-    let (wv_int8, wv_int8_scales) = quantize_to_superpage(wv, kv_dim, hidden);
-    let (wo_int8, wo_int8_scales) = quantize_to_superpage(wo, hidden, q_dim);
-    let (gate_up_int8, gate_up_int8_scales) =
-        quantize_to_superpage(gate_up_fused.as_ptr(), 2 * inter, hidden);
-    let (down_int8, down_int8_scales) = quantize_to_superpage(down_bf16, hidden, inter);
+    // Non-aligner: build interleaved bf16 fusion + INT8 quant for fast decode.
+    // Aligner: leave them empty (saves ~700 MB across the model).
+    let (gate_up_fused_bf16, wq_int8, wq_int8_scales, wk_int8, wk_int8_scales,
+         wv_int8, wv_int8_scales, wo_int8, wo_int8_scales,
+         gate_up_int8, gate_up_int8_scales, down_int8, down_int8_scales) = if is_aligner {
+        (Vec::new(),
+         Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+         Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+         Vec::new(), Vec::new(), Vec::new(), Vec::new())
+    } else {
+        // Fuse gate+up: interleave rows
+        let mut gate_up_fused = vec![0u16; 2 * inter * hidden];
+        unsafe {
+            let gate_slice = std::slice::from_raw_parts(gate_bf16, inter * hidden);
+            let up_slice = std::slice::from_raw_parts(up_bf16, inter * hidden);
+            for r in 0..inter {
+                gate_up_fused[2 * r * hidden..(2 * r + 1) * hidden]
+                    .copy_from_slice(&gate_slice[r * hidden..(r + 1) * hidden]);
+                gate_up_fused[(2 * r + 1) * hidden..(2 * r + 2) * hidden]
+                    .copy_from_slice(&up_slice[r * hidden..(r + 1) * hidden]);
+            }
+        }
+
+        let (wq_int8, wq_int8_scales) = quantize_to_superpage(wq, q_dim, hidden);
+        let (wk_int8, wk_int8_scales) = quantize_to_superpage(wk, kv_dim, hidden);
+        let (wv_int8, wv_int8_scales) = quantize_to_superpage(wv, kv_dim, hidden);
+        let (wo_int8, wo_int8_scales) = quantize_to_superpage(wo, hidden, q_dim);
+        let (gate_up_int8, gate_up_int8_scales) =
+            quantize_to_superpage(gate_up_fused.as_ptr(), 2 * inter, hidden);
+        let (down_int8, down_int8_scales) = quantize_to_superpage(down_bf16, hidden, inter);
+
+        (gate_up_fused,
+         wq_int8, wq_int8_scales, wk_int8, wk_int8_scales,
+         wv_int8, wv_int8_scales, wo_int8, wo_int8_scales,
+         gate_up_int8, gate_up_int8_scales, down_int8, down_int8_scales)
+    };
 
     Some(DecLayer {
         wq_weight_bf16: wq,
         wk_weight_bf16: wk,
         wv_weight_bf16: wv,
         wo_weight_bf16: wo,
-        wq_weight_f32_prefill,
-        wk_weight_f32_prefill,
-        wv_weight_f32_prefill,
-        wo_weight_f32_prefill,
         q_norm_weight: q_norm,
         k_norm_weight: k_norm,
         input_norm,
@@ -205,9 +181,7 @@ fn load_dec_layer(ms: &MultiSafetensors, cfg: &QwenConfig, i: usize) -> Option<D
         gate_weight_bf16: gate_bf16,
         up_weight_bf16: up_bf16,
         down_weight_bf16: down_bf16,
-        gate_up_fused_bf16: gate_up_fused,
-        gate_up_fused_f32_prefill,
-        down_weight_f32_prefill,
+        gate_up_fused_bf16,
         wq_int8,
         wq_int8_scales,
         wk_int8,
@@ -268,19 +242,25 @@ impl Decoder {
             ms.get_bf16_direct("thinker.lm_head.weight")
         };
 
-        // Quantize lm_head to INT8 for fast argmax
-        let lm_weight = lm_head_bf16.unwrap_or(tok_embeddings_bf16);
-        let lm_out_dim = cfg.lm_head_dim();
-        let lm_in_dim = cfg.dec_hidden;
-        let (lm_int8, lm_scales) = quantize_to_superpage(lm_weight, lm_out_dim, lm_in_dim);
+        // Quantize lm_head to INT8 for fast argmax — skipped for aligner since
+        // aligner never does single-token decode (all logits read out of prefill).
+        let (lm_int8_opt, lm_scales_opt) = if cfg.is_aligner() {
+            (None, None)
+        } else {
+            let lm_weight = lm_head_bf16.unwrap_or(tok_embeddings_bf16);
+            let lm_out_dim = cfg.lm_head_dim();
+            let lm_in_dim = cfg.dec_hidden;
+            let (lm_int8, lm_scales) = quantize_to_superpage(lm_weight, lm_out_dim, lm_in_dim);
+            (Some(lm_int8), Some(lm_scales))
+        };
 
         Some(Decoder {
             tok_embeddings_bf16,
             layers,
             norm,
             lm_head_bf16,
-            lm_head_int8: Some(lm_int8),
-            lm_head_int8_scales: Some(lm_scales),
+            lm_head_int8: lm_int8_opt,
+            lm_head_int8_scales: lm_scales_opt,
         })
     }
 }
@@ -497,11 +477,14 @@ pub struct DecoderBuffers {
     pub pref_attn_out: Vec<f32>,
     pub pref_proj_out: Vec<f32>,
     pub pref_ffn_out: Vec<f32>,
-    pub pref_gate_up: Vec<f32>,
+    /// Separate gate and up projection outputs — replaces the old single fused
+    /// pref_gate_up buffer (which paired with the 700 MB owned bf16 fusion).
     pub pref_gate: Vec<f32>,
+    pub pref_up: Vec<f32>,
     pub pref_seq_cap: usize,
 
-    // Reusable scratch for BF16→F32 conversion in prefill path
+    /// Reusable scratch for BF16→F32 conversion in prefill path. Sized to the
+    /// largest weight matrix the decoder ever streams in (down_proj or gate/up).
     pub bf16_scratch: Vec<f32>,
 }
 
@@ -512,8 +495,10 @@ impl DecoderBuffers {
         let kv_dim = cfg.dec_kv_heads * cfg.dec_head_dim;
         let intermediate = cfg.dec_intermediate;
 
-        // Largest weight matrix is gate_up_fused: 2 * intermediate * hidden
-        let max_weight = (2 * intermediate * dim).max(q_dim * dim).max(kv_dim * dim);
+        // Largest weight matrix the prefill streams: down_proj (hidden*inter)
+        // or gate/up (inter*hidden). lm_head can be bigger for non-aligner —
+        // grown lazily by ensure_scratch.
+        let max_weight = (intermediate * dim).max(q_dim * dim).max(kv_dim * dim);
 
         DecoderBuffers {
             x: vec![0.0f32; dim],
@@ -533,8 +518,8 @@ impl DecoderBuffers {
             pref_attn_out: Vec::new(),
             pref_proj_out: Vec::new(),
             pref_ffn_out: Vec::new(),
-            pref_gate_up: Vec::new(),
             pref_gate: Vec::new(),
+            pref_up: Vec::new(),
             pref_seq_cap: 0,
             bf16_scratch: vec![0.0f32; max_weight],
         }
@@ -567,9 +552,15 @@ impl DecoderBuffers {
         self.pref_attn_out.resize(new_cap * q_dim, 0.0);
         self.pref_proj_out.resize(new_cap * dim, 0.0);
         self.pref_ffn_out.resize(new_cap * dim, 0.0);
-        self.pref_gate_up.resize(new_cap * 2 * intermediate, 0.0);
         self.pref_gate.resize(new_cap * intermediate, 0.0);
+        self.pref_up.resize(new_cap * intermediate, 0.0);
         self.pref_seq_cap = new_cap;
+    }
+
+    pub fn ensure_scratch(&mut self, n: usize) {
+        if self.bf16_scratch.len() < n {
+            self.bf16_scratch.resize(n, 0.0);
+        }
     }
 }
 
@@ -611,6 +602,13 @@ pub fn decoder_prefill(
 
     let scale = 1.0 / (head_dim as f32).sqrt();
 
+    // Make sure the BF16→F32 scratch is sized to the largest weight matrix the
+    // prefill will stream through: down_proj (hidden × intermediate). Some
+    // attention matrices are smaller; gate/up are (intermediate × hidden) which
+    // is the same size.
+    let max_weight = (intermediate * dim).max(q_dim * dim).max(kv_dim * dim);
+    bufs.ensure_scratch(max_weight);
+
     for (layer_idx, layer) in decoder.layers.iter().enumerate() {
         let x_norm = &mut bufs.pref_x_norm[..seq_len * dim];
         kernels::rms_norm(
@@ -626,23 +624,20 @@ pub fn decoder_prefill(
         let k = &mut bufs.pref_k[..seq_len * kv_dim];
         let v = &mut bufs.pref_v[..seq_len * kv_dim];
 
-        kernels::linear_nobias(q, x_norm, &layer.wq_weight_f32_prefill, seq_len, dim, q_dim);
-        kernels::linear_nobias(
-            k,
-            x_norm,
-            &layer.wk_weight_f32_prefill,
-            seq_len,
-            dim,
-            kv_dim,
-        );
-        kernels::linear_nobias(
-            v,
-            x_norm,
-            &layer.wv_weight_f32_prefill,
-            seq_len,
-            dim,
-            kv_dim,
-        );
+        unsafe {
+            kernels::linear_nobias_bf16_scratch(
+                q, x_norm, layer.wq_weight_bf16, seq_len, dim, q_dim,
+                &mut bufs.bf16_scratch,
+            );
+            kernels::linear_nobias_bf16_scratch(
+                k, x_norm, layer.wk_weight_bf16, seq_len, dim, kv_dim,
+                &mut bufs.bf16_scratch,
+            );
+            kernels::linear_nobias_bf16_scratch(
+                v, x_norm, layer.wv_weight_bf16, seq_len, dim, kv_dim,
+                &mut bufs.bf16_scratch,
+            );
+        }
 
         kernels::rms_norm_per_head(q, &layer.q_norm_weight, seq_len, n_heads, head_dim, eps);
         kernels::rms_norm_per_head(k, &layer.k_norm_weight, seq_len, n_kv_heads, head_dim, eps);
@@ -686,14 +681,12 @@ pub fn decoder_prefill(
         );
 
         let proj_out = &mut bufs.pref_proj_out[..seq_len * dim];
-        kernels::linear_nobias(
-            proj_out,
-            attn_out,
-            &layer.wo_weight_f32_prefill,
-            seq_len,
-            q_dim,
-            dim,
-        );
+        unsafe {
+            kernels::linear_nobias_bf16_scratch(
+                proj_out, attn_out, layer.wo_weight_bf16, seq_len, q_dim, dim,
+                &mut bufs.bf16_scratch,
+            );
+        }
         kernels::add_inplace(&mut bufs.pref_x[..seq_len * dim], proj_out, seq_len * dim);
 
         // Post-attention RMSNorm + SwiGLU MLP
@@ -707,28 +700,34 @@ pub fn decoder_prefill(
             eps,
         );
 
-        let gate_up = &mut bufs.pref_gate_up[..seq_len * 2 * intermediate];
-        kernels::linear_nobias(
-            gate_up,
-            x_norm2,
-            &layer.gate_up_fused_f32_prefill,
-            seq_len,
-            dim,
-            2 * intermediate,
-        );
-
+        // Two separate GEMMs into pref_gate/pref_up, then fused swiglu — replaces
+        // the prior interleaved-fusion path that needed an extra ~700 MB owned
+        // bf16 matrix across the decoder.
         let gate = &mut bufs.pref_gate[..seq_len * intermediate];
-        kernels::swiglu_multiply(gate, gate_up, seq_len, intermediate);
+        unsafe {
+            kernels::linear_nobias_bf16_scratch(
+                gate, x_norm2, layer.gate_weight_bf16, seq_len, dim, intermediate,
+                &mut bufs.bf16_scratch,
+            );
+        }
+        let up = &mut bufs.pref_up[..seq_len * intermediate];
+        unsafe {
+            kernels::linear_nobias_bf16_scratch(
+                up, x_norm2, layer.up_weight_bf16, seq_len, dim, intermediate,
+                &mut bufs.bf16_scratch,
+            );
+        }
+
+        // gate <- silu(gate) * up
+        kernels::swiglu_separate_inplace(gate, up, seq_len, intermediate);
 
         let ffn_out = &mut bufs.pref_ffn_out[..seq_len * dim];
-        kernels::linear_nobias(
-            ffn_out,
-            gate,
-            &layer.down_weight_f32_prefill,
-            seq_len,
-            intermediate,
-            dim,
-        );
+        unsafe {
+            kernels::linear_nobias_bf16_scratch(
+                ffn_out, gate, layer.down_weight_bf16, seq_len, intermediate, dim,
+                &mut bufs.bf16_scratch,
+            );
+        }
         kernels::add_inplace(&mut bufs.pref_x[..seq_len * dim], ffn_out, seq_len * dim);
     }
 
@@ -978,6 +977,10 @@ pub fn decoder_prefill_logits(
     kernels::rms_norm(&mut x_norm, x, &decoder.norm, seq_len, dim, eps);
 
     let lm_weight = decoder.lm_head_bf16.unwrap_or(decoder.tok_embeddings_bf16);
+
+    // lm_head can be larger than the per-layer matrices (out_dim × dim where
+    // out_dim is vocab_size or classify_num), so grow the scratch buffer first.
+    bufs.ensure_scratch(out_dim * dim);
 
     // Project each position through lm_head: [seq_len × dim] × [out_dim × dim]^T → [seq_len × out_dim]
     let mut logits = vec![0.0f32; seq_len * out_dim];
