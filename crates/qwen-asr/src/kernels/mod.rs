@@ -720,6 +720,7 @@ pub fn linear_bf16(y: &mut [f32], x: &[f32], w_bf16: *const u16, b: Option<&[f32
 /// matrix through a caller-provided f32 scratch buffer instead of allocating.
 /// # Safety
 /// Caller must ensure `w_bf16` points to at least `out_dim * in_dim` valid bf16 values.
+#[allow(clippy::too_many_arguments)]
 pub unsafe fn linear_bf16_scratch(y: &mut [f32], x: &[f32], w_bf16: *const u16, b: Option<&[f32]>, seq_len: usize, in_dim: usize, out_dim: usize, scratch: &mut [f32]) {
     let _pg = ProfileGuard::new(&PROF.bf16_matvec);
     if seq_len == 1 {
@@ -735,6 +736,7 @@ pub unsafe fn linear_bf16_scratch(y: &mut [f32], x: &[f32], w_bf16: *const u16, 
 /// y += bias + x @ w_bf16.T  — bias optional, BF16 weights streamed through scratch.
 /// # Safety
 /// Caller must ensure `w_bf16` points to at least `out_dim * in_dim` valid bf16 values.
+#[allow(clippy::too_many_arguments)]
 pub unsafe fn linear_accumulate_bf16_scratch(y: &mut [f32], x: &[f32], w_bf16: *const u16, b: Option<&[f32]>, seq_len: usize, in_dim: usize, out_dim: usize, scratch: &mut [f32]) {
     let _pg = ProfileGuard::new(&PROF.bf16_matvec);
     let n = out_dim * in_dim;
