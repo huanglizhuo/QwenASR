@@ -2,13 +2,7 @@
   "packages": {
     "crates/qwen-asr": {
       "release-type": "rust",
-      "component": "qwen-asr",
-      "extra-files": [
-        {
-          "type": "generic",
-          "path": "../../Cargo.toml"
-        }
-      ]
+      "component": "qwen-asr"
     },
     "crates/qwen-asr-cli": {
       "release-type": "rust",
@@ -18,5 +12,11 @@
       "release-type": "dart",
       "component": "qwen_asr"
     }
-  }
+  },
+  "extra-files": [
+    {
+      "type": "generic",
+      "path": "Cargo.toml"
+    }
+  ]
 }
