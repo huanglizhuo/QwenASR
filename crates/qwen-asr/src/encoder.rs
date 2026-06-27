@@ -316,16 +316,20 @@ impl Encoder {
                 &mut _owned_bufs
             }
         };
-        // Largest BF16 weight matrix the encoder GEMM sees:
-        //   conv_out: conv_proj_dim × d_model      = 7680 × 1024 = ~7.5M
-        //   fc1/fc2:  d_model × ffn_dim            = 1024 × 4096 = ~4.2M
-        //   attn:     d_model × d_model            = 1024 × 1024 = ~1.0M
-        //   proj1/2:  d_model × d_model            = ~1.0M
-        // Sized to the max so conversion only needs one allocation.
-        let conv_proj_dim = CONV_HIDDEN * 16; // h3=16 for chunk_size=100
+        // Largest BF16 weight matrix the encoder GEMM streams through scratch:
+        //   conv_out:  conv_proj_dim × d_model     = 7680 × 1024 = ~7.5M
+        //   fc1/fc2:   d_model × ffn_dim           = 1024 × 4096 = ~4.2M
+        //   attn:      d_model × d_model           = 1024 × 1024 = ~1.0M
+        //   proj1:     d_model × d_model
+        //   proj2:     output_dim × d_model        (output_dim = dec_hidden, can exceed d_model)
+        // Sized to the max so conversion only needs one allocation. h3 is the
+        // post-conv frequency dim (128 mel bins → 16 after the conv stem), fixed
+        // by the architecture and independent of chunk size.
+        let conv_proj_dim = CONV_HIDDEN * 16; // h3 = 16
         let scratch_n = (conv_proj_dim * d_model)
             .max(d_model * ffn_dim)
-            .max(d_model * d_model);
+            .max(d_model * d_model)
+            .max(output_dim * d_model);
         bufs.ensure_scratch(scratch_n);
 
         // Main sequence buffer: [total_tokens, d_model]
