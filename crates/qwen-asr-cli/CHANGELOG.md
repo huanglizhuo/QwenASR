@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.2](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-cli-v0.7.1...qwen-asr-cli-v0.7.2) (2026-06-27)
+
+
+### Bug Fixes
+
+* auto-sync qwen-asr version into qwen-asr-cli via cargo-workspace ([#36](https://github.com/huanglizhuo/QwenASR/issues/36)) ([e34ba23](https://github.com/huanglizhuo/QwenASR/commit/e34ba236b1ef5d9b1ba9d3998ebeb3ce8d50ebaa))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * qwen-asr bumped from 0.7.2 to 0.7.3
+
 ## [0.7.1](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-cli-v0.7.0...qwen-asr-cli-v0.7.1) (2026-06-13)
 
 
