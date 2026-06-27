@@ -13,10 +13,7 @@
       "component": "qwen_asr"
     }
   },
-  "extra-files": [
-    {
-      "type": "generic",
-      "path": "Cargo.toml"
-    }
+  "plugins": [
+    "cargo-workspace"
   ]
 }

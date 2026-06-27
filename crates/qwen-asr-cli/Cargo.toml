@@ -15,7 +15,7 @@ name = "qwen-asr"
 path = "src/main.rs"
 
 [dependencies]
-qwen-asr = { workspace = true }
+qwen-asr = { version = "0.7.2", path = "../qwen-asr" }
 ureq = "2"
 ctrlc = "3"
 

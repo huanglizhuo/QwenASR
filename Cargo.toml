@@ -8,11 +8,6 @@ version = "0.1.2"
 edition = "2021"
 license = "MIT"
 
-[workspace.dependencies]
-# x-release-please-start-version
-qwen-asr = { version = "0.7.2", path = "crates/qwen-asr" }
-# x-release-please-end
-
 [profile.release]
 opt-level = 3
 lto = "fat"
