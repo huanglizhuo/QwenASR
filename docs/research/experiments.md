@@ -2285,3 +2285,37 @@ Results:
 Decision: **Accepted.** The speed benchmark improved overall, with the largest
 gain in offline mode, and WER stayed under the `0.04` corpus gate. Keep the
 parallel prefault code.
+
+### F23: profile-guided optimization
+
+Change:
+- Built an instrumented release binary with
+  `RUSTFLAGS='-Cprofile-generate=/tmp/q-asr-pgo-data'`.
+- Trained it with one full `bench/run.sh` pass over offline, segmented, and
+  streaming modes.
+- Merged 22 `.profraw` files with Homebrew `llvm-profdata` 21.1.8 and built a
+  `profile-use` release binary from the merged profile.
+
+Results:
+- Speed (`bench/run.sh --runs 10`, compared against the accepted F22 build):
+
+| Mode | F22 | F23 PGO | Delta |
+|------|----:|--------:|------:|
+| offline | 462.5 ms | 469.0 ms | +1.4% |
+| segmented | 343.5 ms | 347.5 ms | +1.2% |
+| streaming | 362.0 ms | 377.0 ms | +4.1% |
+| overall average | 389.3 ms | 397.8 ms | +2.2% |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | F23 PGO |
+|--------|--------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Rejected/deferred.** WER stayed under the `0.04` corpus gate, but
+the trained PGO binary regressed speed versus the accepted F22 build. The
+`profile-use` build also emitted many missing-profile warnings, so a broader
+training corpus might be worth revisiting later, but this local PGO artifact is
+not kept and no build-flow change was committed.
