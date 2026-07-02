@@ -2927,3 +2927,82 @@ experiment, but the current synchronous scratch+SGEMM API gives no low-risk
 place to overlap useful CPU work with AMX work. Revisit after F16/F27 or after
 introducing an explicit asynchronous GEMM/scratch ownership abstraction. No
 code was kept.
+
+### F18: Winograd F(2x2, 3x3) for encoder convs
+
+Change:
+- Ran a profile pass to check F18's re-entry condition after the F14 BNNS probe.
+- The current offline profile still shows convolution as a real bucket:
+  `conv2d_op_ms = 70.1 ms` out of `total_ms = 480.0 ms` in the profile run
+  (`14.6%` of inference).
+- Audited the convolution implementation: all three stem convolutions share one
+  im2col+SGEMM implementation with stride 2 and padding 1; E6 previously showed
+  chunk-boundary/padding sensitivity.
+
+Results:
+- No code change was made. A correct Winograd implementation would need a new
+  transformed kernel for the stride-2 padded CHW stem, careful boundary
+  handling, and numeric parity validation across chunk sizes. A quick
+  direct-conv rewrite would risk changing ASR behavior and would not be a
+  faithful low-risk F(2x2, 3x3) experiment.
+- Speed (`bench/run.sh --runs 10`, current accepted code, no F18 integration):
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 614 ms |
+| segmented | 444 ms |
+| streaming | 474 ms |
+| overall average | 510.7 ms |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Deferred.** Conv remains large enough to care about, but F18 is a
+new convolution algorithm, not a local scheduling or layout tweak. Revisit only
+with a standalone Winograd parity harness for the exact stride/padding/chunk
+semantics, then integrate behind the usual WER gate. No code was kept.
+
+### F21: pipeline load with inference stages
+
+Change:
+- Audited the model load and transcription boundary.
+- `QwenCtx::load` is currently a pure model-construction API: it opens
+  safetensors, detects config, synchronously loads `Encoder`, synchronously
+  loads `Decoder`, then constructs KV/encoder/decoder scratch state.
+- Audio samples, mel computation, and `Encoder::forward` live on the
+  transcription side after a full `QwenCtx` has already been returned.
+- Starting encoder inference while decoder loading continues would require a
+  staged context or a one-shot load-and-transcribe API that can hold a
+  partially initialized context, run mel/encoder after `Encoder::load`, and
+  join decoder loading before decoder prefill.
+
+Results:
+- No code change was made. The current public surfaces (CLI, C API, JNI/Flutter
+  bridge, streaming push API) all assume a fully loaded `QwenCtx` before
+  transcription starts.
+- Speed (`bench/run.sh --runs 10`, current accepted code, no F21 integration):
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 636 ms |
+| segmented | 453 ms |
+| streaming | 476 ms |
+| overall average | 521.7 ms |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Deferred.** F21 is feasible, but it is a staged-load API change,
+not a local load-order tweak. Revisit when adding a one-shot cold-start
+benchmark/API or during the F27 shared-weight/session split, where partial
+model state can be represented cleanly. No code was kept.
