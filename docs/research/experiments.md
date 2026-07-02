@@ -2438,3 +2438,31 @@ gate, and the profile data confirms that dispatch overhead is measurable, but
 the accounting patch itself regressed normal benchmark speed and is not an
 optimization. Code was reverted. F9 remains worth a targeted barrier-fusion
 probe because the measured dispatch ceiling is tens of milliseconds.
+
+### F9: fuse per-token thread-pool dispatches
+
+Change:
+- Audited the call sites behind the F25 dispatch counts.
+- The largest contributors are not adjacent norm/QKV regions as originally
+  hypothesized: `rms_norm` is row-local and does not call `parallel_for` for
+  single-token decode. The `parallel_for` calls are inside INT8 matvec/QKV,
+  SwiGLU, down projection, attention, and argmax.
+- Those stages have real data dependencies (`x_norm` before QKV, attention
+  before O-proj, SwiGLU output before down projection, final norm before
+  argmax). A safe fusion would require writing new fused kernels or a persistent
+  staged worker loop, not just moving existing call boundaries.
+
+Results:
+- No code change was made for F9. The measured F25 data is the relevant
+  benchmark evidence:
+
+| Mode | Dispatch calls | Dispatch time | Avg dispatch |
+|------|---------------:|--------------:|-------------:|
+| offline | 1175 | 105.7 ms | 0.09 ms |
+| segmented | 1145 | 71.9 ms | 0.06 ms |
+| streaming | 1182 | 81.8 ms | 0.07 ms |
+
+Decision: **Deferred.** The measured ceiling is real, but there is no low-risk
+adjacent-region fusion in the current code shape. Revisit as a dedicated
+persistent per-token staged worker experiment; do not land a superficial
+barrier-fusion patch.
