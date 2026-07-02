@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.4](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.7.3...qwen-asr-v0.7.4) (2026-07-02)
+
+
+### Bug Fixes
+
+* remove LONG_AUDIO_FAST token cap and overlap argmax with next-token prep (fixes [#31](https://github.com/huanglizhuo/QwenASR/issues/31)) ([b142e3a](https://github.com/huanglizhuo/QwenASR/commit/b142e3a4de641e35454dbd0fe1cfc2ae6792d856))
+
+
+### Performance Improvements
+
+* prefault safetensors mmap pages ([76cfa2a](https://github.com/huanglizhuo/QwenASR/commit/76cfa2a5bbd73e5fac099b819599fcbcaa436732))
+
 ## [0.7.3](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.7.2...qwen-asr-v0.7.3) (2026-06-27)
 
 
