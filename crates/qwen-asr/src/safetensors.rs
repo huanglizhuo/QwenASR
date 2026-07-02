@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::os::unix::io::RawFd;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const MAX_TENSORS: usize = 1024;
 
@@ -117,6 +118,7 @@ impl SafetensorsFile {
         unsafe {
             libc::madvise(data as *mut _, file_size, libc::MADV_WILLNEED);
         }
+        parallel_prefault(data as *const u8, file_size);
 
         // Read header size (first 8 bytes, little-endian u64)
         let header_size = unsafe {
@@ -199,6 +201,47 @@ impl SafetensorsFile {
         }
         Some(self.data_ptr(tensor) as *const u16)
     }
+}
+
+fn parallel_prefault(data: *const u8, file_size: usize) {
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    let page_size = if page_size > 0 {
+        page_size as usize
+    } else {
+        16 * 1024
+    };
+    let n_pages = file_size.div_ceil(page_size);
+    if n_pages == 0 {
+        return;
+    }
+
+    let n_threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(n_pages);
+    let checksum = AtomicUsize::new(0);
+    let base = data as usize;
+
+    std::thread::scope(|scope| {
+        for tid in 0..n_threads {
+            let checksum = &checksum;
+            scope.spawn(move || {
+                let mut local = 0usize;
+                let mut page = tid;
+                while page < n_pages {
+                    let off = page * page_size;
+                    if off < file_size {
+                        let ptr = (base + off) as *const u8;
+                        local ^= unsafe { std::ptr::read_volatile(ptr) } as usize;
+                    }
+                    page += n_threads;
+                }
+                checksum.fetch_xor(local, Ordering::Relaxed);
+            });
+        }
+    });
+
+    std::hint::black_box(checksum.load(Ordering::Relaxed));
 }
 
 impl Drop for SafetensorsFile {

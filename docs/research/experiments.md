@@ -2208,3 +2208,80 @@ The 100-file LibriSpeech offline WER gate is unchanged:
 Decision: **Validated after merge.** The merged `main` is faster than the
 previous `main` on all three benchmark modes with no WER regression. The
 temporary `ggml-idea.md` queue file was removed after all ideas were checked.
+
+## Fable Ideas Experiments
+
+Goal: try unchecked ideas from `fable-ideas.md` one by one. Keep code only if
+the speed benchmark improves while the 100-file LibriSpeech WER gate remains
+acceptable.
+
+Baseline for F1 (`e34ba23`, detached worktree, `bench/run.sh --runs 10`):
+
+| Mode | Inference |
+|------|----------:|
+| offline | 479.0 ms |
+| segmented | 344.5 ms |
+| streaming | 366.5 ms |
+| overall average | 396.7 ms |
+
+### F1: prompt-prefix KV reuse
+
+Change:
+- Split decoder prefill so the fixed prompt prefix (`PREFIX_HEAD`, optional
+  prompt tokens, `PREFIX_TAIL`) is prefetched once.
+- Saved the prefix KV cache in a compact snapshot and restored it for later
+  segments before pre-filling audio-dependent rows.
+
+Results:
+- Speed (`bench/run.sh --runs 10`):
+
+| Mode | Baseline | F1 | Delta |
+|------|---------:|---:|------:|
+| offline | 479.0 ms | 541.0 ms | +12.9% |
+| segmented | 344.5 ms | 407.5 ms | +18.3% |
+| streaming | 366.5 ms | 364.5 ms | -0.5% |
+| overall average | 396.7 ms | 437.7 ms | +10.3% |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | F1 |
+|--------|---:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0430 |
+| Corpus CER | 0.0169 |
+
+Decision: **Rejected.** WER stayed under the `0.04` corpus gate, but the speed
+benchmark regressed overall and in the offline/segmented modes where this idea
+was expected to help. The likely overhead is the extra `decoder_prefill` call
+and snapshot/restore copies being larger than the small fixed-prefix GEMM saved
+on the current benchmark. Code was reverted; only this result is retained.
+
+### F22: parallel page-touch prefault probe
+
+Change:
+- Kept the existing `MADV_WILLNEED` hint for each safetensors mmap.
+- Added an explicit scoped-thread page-touch pass over the mapped file, reading
+  one byte per OS page with `read_volatile` so page faults happen before tensor
+  parsing and weight conversion loops.
+
+Results:
+- Speed (`bench/run.sh --runs 10`):
+
+| Mode | Baseline | F22 | Delta |
+|------|---------:|----:|------:|
+| offline | 479.0 ms | 462.5 ms | -3.4% |
+| segmented | 344.5 ms | 343.5 ms | -0.3% |
+| streaming | 366.5 ms | 362.0 ms | -1.2% |
+| overall average | 396.7 ms | 389.3 ms | -1.9% |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | F22 |
+|--------|----:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Accepted.** The speed benchmark improved overall, with the largest
+gain in offline mode, and WER stayed under the `0.04` corpus gate. Keep the
+parallel prefault code.
