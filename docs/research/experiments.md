@@ -2500,6 +2500,82 @@ Decision: **Rejected.** WER stayed under the gate, but the speed benchmark
 regressed in all modes. The chunk bounds were not tight enough to offset the
 extra norm/order metadata and non-linear chunk scan. Code was reverted.
 
+### F5: lockstep batched decode across segments
+
+Change:
+- Audited the segmented transcription and decoder APIs.
+- `transcribe_segmented` processes segments serially with one mutable
+  `QwenCtx`, and each segment calls the single-session `transcribe_segment`.
+- `decoder_forward` advances exactly one `KvCache` and one set of
+  `DecoderBuffers` for one token; there is no `[B, dim]` skinny-GEMM decode
+  path or per-segment batch of KV caches.
+- Implementing F5 correctly requires independent per-segment sessions sharing
+  immutable weights, which is the same F27 prerequisite identified for F16/F28.
+
+Results:
+- No code change was made. A local attempt without F27 would either duplicate
+  model weights per segment or introduce unsafe shared mutable state.
+- Speed (`bench/run.sh --runs 10`, current accepted code, no F5 integration):
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 603 ms |
+| segmented | 448 ms |
+| streaming | 467 ms |
+| overall average | 506.0 ms |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Deferred, blocked by F27.** Lockstep batched decode is still a
+high-ceiling long-audio idea, but it first needs shared immutable weights plus
+multiple session states and new batched INT8 decode kernels. No code was kept.
+
+### F6: self-speculative streaming decode
+
+Change:
+- Audited the streaming decode implementations.
+- `transcribe_stream` and `stream_push_audio` already reuse encoder windows and
+  decoder prefill rows via `prefill_lcp_len`, so repeated audio prefixes avoid
+  some prefill work.
+- The autoregressive tail is still verified one token at a time with
+  `decoder_forward`; there is no draft-token verification path that runs a
+  previous chunk's token suffix through a batched multi-token forward and
+  accepts the longest matching greedy prefix.
+- The only multi-token logits path remains `decoder_prefill_logits`, which
+  materializes full vocabulary logits and is not an efficient verifier.
+
+Results:
+- No code change was made. A correct F6 implementation needs a batched
+  verification kernel/API that can test proposed tokens without full-logit
+  materialization.
+- Speed (`bench/run.sh --runs 10`, current accepted code, no F6 integration):
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 468 ms |
+| segmented | 349 ms |
+| streaming | 366 ms |
+| overall average | 394.3 ms |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Deferred.** The existing streaming code covers prefix/prefill
+reuse, but not self-speculative decode verification. Revisit together with the
+F7 batched greedy-verifier work so both ideas can use the same efficient
+multi-token argmax path. No code was kept.
+
 ### F7: Jacobi / lookahead parallel decoding
 
 Change:
