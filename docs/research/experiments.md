@@ -2397,3 +2397,44 @@ work, but the minimal honest implementation is a cross-cutting weight-storage
 refactor plus sidecar metadata/versioning. No partial owned-Vec cache was kept,
 because it would not test the zero-copy mmap-backed idea. Revisit when doing
 the F27 shared-weights/session split or a dedicated artifact-format change.
+
+### F25: dispatch accounting for `parallel_for`
+
+Change:
+- Temporarily added profile-only counters around `parallel_for` to measure
+  dispatch wall time and call count.
+- Temporarily extended `bench/parse_stderr.sh` and `bench/run.sh` to preserve
+  profile call counts and average latency in JSON.
+
+Measurement:
+- Profile run (`bench/run.sh --runs 3 --profile`):
+
+| Mode | Dispatch calls | Dispatch time | Avg dispatch |
+|------|---------------:|--------------:|-------------:|
+| offline | 1175 | 105.7 ms | 0.09 ms |
+| segmented | 1145 | 71.9 ms | 0.06 ms |
+| streaming | 1182 | 81.8 ms | 0.07 ms |
+
+Results:
+- Speed (`bench/run.sh --runs 10`, with temporary accounting code, no profile):
+
+| Mode | F22 | F25 accounting | Delta |
+|------|----:|---------------:|------:|
+| offline | 462.5 ms | 470.0 ms | +1.6% |
+| segmented | 343.5 ms | 357.5 ms | +4.1% |
+| streaming | 362.0 ms | 374.0 ms | +3.3% |
+| overall average | 389.3 ms | 400.5 ms | +2.9% |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | F25 accounting |
+|--------|---------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Rejected as a code change, useful as data.** WER stayed under the
+gate, and the profile data confirms that dispatch overhead is measurable, but
+the accounting patch itself regressed normal benchmark speed and is not an
+optimization. Code was reverted. F9 remains worth a targeted barrier-fusion
+probe because the measured dispatch ceiling is tens of milliseconds.
