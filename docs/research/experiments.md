@@ -2466,3 +2466,36 @@ Decision: **Deferred.** The measured ceiling is real, but there is no low-risk
 adjacent-region fusion in the current code shape. Revisit as a dedicated
 persistent per-token staged worker experiment; do not land a superficial
 barrier-fusion patch.
+
+### F4: exact bound-pruned lm_head argmax
+
+Change:
+- Implemented a chunk-level exact Cauchy-Schwarz bound probe for the INT8
+  `lm_head` argmax.
+- At load time, computed each lm_head chunk's maximum effective row norm
+  (`||int8_row * row_scale||`) and sorted chunks by descending bound.
+- At decode time, computed the quantized input norm, scanned chunks in bound
+  order using the existing contiguous NEON `argmax_int8_range`, and skipped
+  remaining chunks only when `chunk_bound * ||x|| < best_score`.
+
+Results:
+- Speed (`bench/run.sh --runs 10`):
+
+| Mode | F22 | F4 | Delta |
+|------|----:|---:|------:|
+| offline | 462.5 ms | 476.0 ms | +2.9% |
+| segmented | 343.5 ms | 355.0 ms | +3.3% |
+| streaming | 362.0 ms | 369.5 ms | +2.1% |
+| overall average | 389.3 ms | 400.2 ms | +2.8% |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | F4 |
+|--------|---:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Rejected.** WER stayed under the gate, but the speed benchmark
+regressed in all modes. The chunk bounds were not tight enough to offset the
+extra norm/order metadata and non-linear chunk scan. Code was reverted.
