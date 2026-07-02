@@ -2536,3 +2536,73 @@ Decision: **Deferred.** The Jacobi idea remains plausible, but this codebase
 first needs a batched multi-position greedy-argmax path that avoids
 materializing full logits. Without that kernel, a Jacobi prototype is expected
 to regress and would not test the intended bandwidth-to-AMX trade.
+
+### F27: shared-weight / per-session state split
+
+Change:
+- Audited `QwenCtx` ownership and call sites.
+- `QwenCtx` currently owns both immutable model state (`Encoder`, `Decoder`,
+  safetensors mmap, tokenizer-related model path) and mutable runtime/session
+  state (`KvCache`, decoder buffers, encoder buffers, RoPE cache, streaming
+  callback/settings, prompt caches, perf counters).
+- Public and embedding surfaces directly store or mutate `QwenCtx`: CLI, C API,
+  Flutter bridge, streaming push API, forced aligner, and regression tests.
+
+Results:
+- No code change was made. A correct F27 implementation is a cross-cutting API
+  refactor, not a local optimization patch.
+- Current accepted-code benchmark evidence remains the F22 run:
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 462.5 ms |
+| segmented | 343.5 ms |
+| streaming | 362.0 ms |
+| overall average | 389.3 ms |
+
+- Current accepted-code 100-file LibriSpeech offline WER remains:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Deferred.** F27 is a real prerequisite for F5/F16/F28/F29, but it
+needs a planned API migration to `Arc<ModelWeights>` plus `Session` across CLI,
+C API, Flutter, aligner, and tests. No partial split was kept.
+
+### F16: segment-level pipelining
+
+Change:
+- Audited the segmented transcription loop and runtime state ownership.
+- `transcribe_segmented` calls `transcribe_segment(ctx, ...)` serially with one
+  mutable `QwenCtx`.
+- Encoder scratch (`ctx.enc_bufs`), decoder scratch (`ctx.dec_bufs`), KV cache,
+  RoPE cache, perf counters, and prompt state all live in the same context.
+
+Results:
+- No code change was made. A correct encode-N+1/decode-N pipeline needs at
+  least two independent session states sharing immutable weights. That is the
+  F27 split.
+- Current accepted-code benchmark evidence remains the F22 run:
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 462.5 ms |
+| segmented | 343.5 ms |
+| streaming | 362.0 ms |
+| overall average | 389.3 ms |
+
+- Current accepted-code 100-file LibriSpeech offline WER remains:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Deferred, blocked by F27.** Segment pipelining is still a good
+long-audio optimization, but implementing it before shared weights/session
+state would duplicate weights or introduce unsafe shared mutable buffers. No
+code change was made.
