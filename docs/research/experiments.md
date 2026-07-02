@@ -3118,3 +3118,40 @@ Decision: **Deferred, blocked by F27.** F28 remains a good long-audio
 throughput target, but the current code has no independent session object to
 run in parallel. Revisit after F27 and after adding a long-file benchmark to
 make the speed gate meaningful. No code was kept.
+
+### F29: daemon / server mode
+
+Change:
+- Audited CLI and embedding surfaces for an existing resident server mode.
+- There is no `--serve`, TCP listener, or daemon loop in the CLI.
+- The C/JNI embedding APIs already let a host process load a `QwenCtx` once and
+  call transcription repeatedly, but the benchmark gate launches a fresh CLI
+  process per run and therefore includes no repeated-request residency test.
+- A daemon/server implementation would need a request protocol, lifecycle and
+  shutdown behavior, concurrency policy, and a benchmark that separates first
+  request from warm resident requests.
+
+Results:
+- No code change was made. A daemon would not improve the current single-run
+  `bench/run.sh` inference gate, whose reported inference timer already
+  excludes process startup and model load.
+- Speed (`bench/run.sh --runs 10`, current accepted code, no F29 integration):
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 474 ms |
+| segmented | 344 ms |
+| streaming | 366 ms |
+| overall average | 394.7 ms |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Deferred / benchmark-not-covered.** F29 is useful for repeated
+requests and product embedding, but it needs a resident-server benchmark rather
+than the current one-shot CLI gate. No code was kept.
