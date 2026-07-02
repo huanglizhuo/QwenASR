@@ -2499,3 +2499,40 @@ Results:
 Decision: **Rejected.** WER stayed under the gate, but the speed benchmark
 regressed in all modes. The chunk bounds were not tight enough to offset the
 extra norm/order metadata and non-linear chunk scan. Code was reverted.
+
+### F7: Jacobi / lookahead parallel decoding
+
+Change:
+- Audited the decoder APIs needed for an exact Jacobi/lookahead probe.
+- Current single-token decode returns only one greedy token via
+  `decoder_forward`.
+- The only multi-token API that exposes logits is `decoder_prefill_logits`,
+  which materializes full `[seq_len x vocab]` logits through BF16
+  `linear_nobias_bf16_scratch`; it was written for forced aligner logits, not
+  efficient ASR decode verification.
+
+Results:
+- No code change was made. A direct prototype using `decoder_prefill_logits`
+  would perform K full-vocabulary projections for every Jacobi iteration and
+  would measure missing infrastructure rather than the intended algorithm.
+- Current accepted-code benchmark evidence remains the F22 run:
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 462.5 ms |
+| segmented | 343.5 ms |
+| streaming | 362.0 ms |
+| overall average | 389.3 ms |
+
+- Current accepted-code 100-file LibriSpeech offline WER remains:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Deferred.** The Jacobi idea remains plausible, but this codebase
+first needs a batched multi-position greedy-argmax path that avoids
+materializing full logits. Without that kernel, a Jacobi prototype is expected
+to regress and would not test the intended bandwidth-to-AMX trade.
