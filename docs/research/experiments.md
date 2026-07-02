@@ -3039,3 +3039,43 @@ Results:
 Decision: **Not applicable on this platform.** F24 still belongs to a future
 Linux/x86 benchmark track, ideally after a Linux gate exists and after PGO
 training has been revisited. No code was kept.
+
+### F26: `os_workgroup` / explicit workload hints
+
+Change:
+- Audited the current macOS scheduling hooks and SDK APIs.
+- The codebase has no existing QoS, `os_workgroup`, work-interval, or thread
+  policy calls; the hot `parallel_for` pool is a plain persistent worker pool.
+- macOS exposes `os_workgroup_interval_start/update/finish`, but the interval
+  API requires member threads to have joined an interval workgroup.
+- The available public creation entry point in this SDK is
+  `AudioWorkIntervalCreate`, documented for audio realtime threads. Using it
+  for ASR inference would require linking AudioToolbox, owning an interval
+  object, and teaching all relevant worker threads to join/leave that workgroup
+  around repeated decode/encode work.
+
+Results:
+- No code change was made. A small wrapper around the main thread would not
+  affect the existing worker pool and would mostly test unsupported/mis-scoped
+  API usage rather than F26's intended workload hint.
+- Speed (`bench/run.sh --runs 10`, current accepted code, no F26 integration):
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 617 ms |
+| segmented | 468 ms |
+| streaming | 470 ms |
+| overall average | 518.3 ms |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Deferred.** F26 needs a deliberate macOS scheduling experiment
+that includes worker membership and interval lifecycle. The current code shape
+has no safe low-cost hook that would exercise the intended mechanism. No code
+was kept.
