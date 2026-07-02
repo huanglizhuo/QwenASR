@@ -2319,3 +2319,43 @@ the trained PGO binary regressed speed versus the accepted F22 build. The
 `profile-use` build also emitted many missing-profile warnings, so a broader
 training corpus might be worth revisiting later, but this local PGO artifact is
 not kept and no build-flow change was committed.
+
+### F13: BNNS bf16 GEMM microbenchmark
+
+Change:
+- Wrote a temporary C probe outside the repo to compare the proposed BNNS bf16
+  matmul path against the current prefill path shape: bf16 weight conversion to
+  f32 followed by Accelerate `cblas_sgemm`.
+- Tested representative decoder-prefill matrix shapes:
+  `M=128,K=1024,N=1024`, `M=128,K=1024,N=2816`,
+  `M=256,K=1024,N=1024`, and `M=256,K=1024,N=2816`.
+
+Probe result:
+- `BNNSMatMulWorkspaceSize(false, true, ..., inputB=BNNSDataTypeBFloat16, ...)`
+  returned `-1` for all tested shapes.
+- `BNNSMatMul` warmup returned `rc=-1` for all tested shapes.
+- The direct `BNNSMatMul` API is therefore not a viable low-risk replacement
+  for the current bf16-to-f32 scratch plus SGEMM path on this system.
+
+Results:
+- Speed (`bench/run.sh --runs 10`, current F22 code, no BNNS integration):
+
+| Mode | F22 | F13 probe build | Delta |
+|------|----:|----------------:|------:|
+| offline | 462.5 ms | 473.0 ms | +2.3% |
+| segmented | 343.5 ms | 349.5 ms | +1.7% |
+| streaming | 362.0 ms | 366.5 ms | +1.2% |
+| overall average | 389.3 ms | 396.3 ms | +1.8% |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | F13 probe build |
+|--------|----------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Rejected/deferred.** The re-entry condition from G37 was not met:
+the direct BNNS bf16 matmul probe could not run for the real prefill shapes.
+No code change was made. A future revisit would need BNNSGraph or another
+Apple bf16 API, not the deprecated direct `BNNSMatMul` entry point.
