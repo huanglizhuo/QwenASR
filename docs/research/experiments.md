@@ -3006,3 +3006,36 @@ Decision: **Deferred.** F21 is feasible, but it is a staged-load API change,
 not a local load-order tweak. Revisit when adding a one-shot cold-start
 benchmark/API or during the F27 shared-weight/session split, where partial
 model state can be represented cleanly. No code was kept.
+
+### F24: LLVM BOLT post-link optimization
+
+Change:
+- Checked the current benchmark platform and binary format.
+- Current environment is Darwin arm64 (`RELEASE_ARM64_T6050`), and
+  `target/release/qwen-asr` is a Mach-O 64-bit arm64 executable.
+- No `llvm-bolt`/`bolt` tool is available in this environment.
+- The idea in `fable-ideas.md` is explicitly scoped to Linux/x86 OpenBLAS
+  targets because BOLT is not available for macOS ld64/Mach-O output.
+
+Results:
+- No code or build-flow change was made.
+- Speed (`bench/run.sh --runs 10`, current accepted macOS arm64 code, no BOLT):
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 610 ms |
+| segmented | 462 ms |
+| streaming | 469 ms |
+| overall average | 513.7 ms |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Not applicable on this platform.** F24 still belongs to a future
+Linux/x86 benchmark track, ideally after a Linux gate exists and after PGO
+training has been revisited. No code was kept.
