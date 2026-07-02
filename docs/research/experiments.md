@@ -2800,3 +2800,50 @@ the simple contiguous streaming layout. F12 should be revisited only as a
 coordinated kernel/layout change, likely together with F19's sidecar artifact
 format so the swizzled layout can be generated once and mmap'd directly. No
 code was kept.
+
+### F14: BNNS direct convolution for conv2/conv3
+
+Change:
+- Audited the encoder convolution stem. The current path runs 3x3 stride-2
+  padded convolutions as im2col plus `cblas_sgemm`.
+- Wrote a temporary C probe outside the repo using
+  `BNNSFilterCreateLayerConvolution` with `BNNSDataLayoutImageCHW` inputs and
+  `BNNSDataLayoutConvolutionWeightsOIHW` weights, matching the current CHW/OIHW
+  memory layout.
+- Probed representative real conv shapes with random f32 data:
+  conv2-like `480x64x100 -> 480x32x50` and
+  conv3-like `480x32x50 -> 480x16x25`.
+
+Probe result:
+
+| Shape | BNNS direct conv | im2col + SGEMM |
+|-------|-----------------:|---------------:|
+| conv2-like | 7.077 ms | 6.136 ms |
+| conv3-like | 1.280 ms | 1.556 ms |
+
+Results:
+- No code change was made. BNNS won on the smaller conv3-like shape but lost on
+  the larger conv2-like shape, which is the heavier layer.
+- Speed (`bench/run.sh --runs 10`, current accepted code, no BNNS integration):
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 604 ms |
+| segmented | 474 ms |
+| streaming | 470 ms |
+| overall average | 516.0 ms |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Rejected/deferred.** The probe did not justify replacing the
+current im2col+SGEMM path wholesale. A partial conv3-only integration would add
+deprecated BNNS filter setup, descriptor lifetime management, and numeric parity
+risk for at most a small fraction of encoder time. Revisit only with BNNSGraph
+or if profiling shows conv3 alone has become a clear bottleneck. No code was
+kept.
