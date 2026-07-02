@@ -3231,3 +3231,148 @@ Results:
 Decision: **Deferred / benchmark-not-covered.** F29 is useful for repeated
 requests and product embedding, but it needs a resident-server benchmark rather
 than the current one-shot CLI gate. No code was kept.
+
+### F30: activation-aware weight-role calibration matrix
+
+Change:
+- Audited the existing quantization and benchmark tooling.
+- The runtime has per-row INT8 decode quantization and historical WER runs, but
+  there is no offline harness that sweeps tensor roles, formats, group sizes,
+  zero-points, and activation-aware scale search across a calibration corpus.
+- F30 is the prerequisite that would make F2/F3 calibrated INT4 experiments
+  measurable instead of ad hoc.
+
+Results:
+- No code change was made. A useful F30 implementation is a separate offline
+  calibration/sweep program plus result matrix, not a direct runtime
+  optimization.
+- Speed (`bench/run.sh --runs 10`, current accepted code, no F30 integration):
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 649 ms |
+| segmented | 461 ms |
+| streaming | 512 ms |
+| overall average | 540.7 ms |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Deferred / tooling track.** F30 should be built as an offline
+calibration matrix before revisiting calibrated INT4, f16 role selection, or
+other WER-sensitive compression. No runtime code was kept.
+
+### F31: structured sparsity or magnitude pruning of decoder weights
+
+Change:
+- Audited the current decode kernels for sparse/pruned support.
+- All hot decode kernels are dense INT8 SDOT scans over contiguous row-major
+  weights (`matvec_int8`, fused QKV, fused SwiGLU, down projection, and
+  `argmax_int8_range`).
+- There is no 2:4 metadata format, sparse row iterator, sparse SDOT kernel, or
+  pruning/fine-tuning pipeline.
+
+Results:
+- No code change was made. Zeroing weights without a sparse kernel would not
+  reduce bandwidth, and pruning without fine-tuning/calibration would be a
+  WER-risk experiment rather than a safe speed patch.
+- Speed (`bench/run.sh --runs 10`, current accepted code, no F31 integration):
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 628 ms |
+| segmented | 460 ms |
+| streaming | 488 ms |
+| overall average | 525.3 ms |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Deferred / research track.** F31 needs both a model-compression
+pipeline and a sparse decode kernel. Revisit only after F30-style calibration
+and preferably after F2/F3 determines whether dense INT4 is enough. No code was
+kept.
+
+### F32: train/distill a tiny draft model for true speculative decoding
+
+Change:
+- Audited the repo for a draft-model training, distillation, or runtime
+  verifier path.
+- The current runtime loads one Qwen ASR decoder and the existing speculative
+  notes cover algorithm sketches only; there is no tiny draft model artifact,
+  training pipeline, or batched verifier API.
+- F32 is a model-building track rather than a local runtime-only patch.
+
+Results:
+- No code change was made. Implementing this safely requires a compatible draft
+  decoder trained on the same tokenizer/audio-conditioning contract, plus a
+  verifier path that can score multiple proposed tokens in one pass.
+- Speed (`bench/run.sh --runs 10`, current accepted code, no F32 integration):
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 608 ms |
+| segmented | 462 ms |
+| streaming | 474 ms |
+| overall average | 514.7 ms |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Deferred / model-training track.** F32 is promising, but this repo
+does not yet have the draft model, distillation data path, or multi-token
+verifier needed to make it a faithful speculative-decoding experiment. No code
+was kept.
+
+### F33: encoder token merging / output downsampling
+
+Change:
+- Audited the encoder-to-decoder boundary for token merging or output
+  downsampling hooks.
+- `Encoder::forward` returns a dense `enc_output` plus `total_tokens` after the
+  convolution stem, encoder transformer, and final projection.
+- `transcribe_segment` copies every encoder token into the decoder prompt and
+  `decoder_prefill` processes the full sequence. There is no existing
+  merge-policy hook, similarity metric, or WER guard for dropping/averaging
+  encoder tokens.
+
+Results:
+- No code change was made. A naive stride-2 or averaging pass after the encoder
+  would change the acoustic-token contract seen by the decoder and is expected
+  to be WER-sensitive without a tuned policy or retraining.
+- Speed (`bench/run.sh --runs 10`, current accepted code, no F33 integration):
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 471 ms |
+| segmented | 362 ms |
+| streaming | 362 ms |
+| overall average | 398.3 ms |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Deferred / WER-sensitive model-contract change.** F33 needs a
+separate token-merge policy experiment with a WER sweep, and possibly decoder
+adaptation, before it can be treated as a safe runtime optimization. No code
+was kept.
