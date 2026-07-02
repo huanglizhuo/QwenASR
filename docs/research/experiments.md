@@ -3079,3 +3079,42 @@ Decision: **Deferred.** F26 needs a deliberate macOS scheduling experiment
 that includes worker membership and interval lifecycle. The current code shape
 has no safe low-cost hook that would exercise the intended mechanism. No code
 was kept.
+
+### F28: parallel long-audio segmentation
+
+Change:
+- Audited the current segmented transcription loop and context ownership.
+- `transcribe_segmented` computes split points, then processes segments
+  serially with one mutable `QwenCtx`.
+- Every segment calls `transcribe_segment(ctx, ...)`, sharing mutable encoder
+  buffers, decoder buffers, KV cache, RoPE cache, prompt state, tokenizer/model
+  path state, and perf counters.
+- Running segments in parallel without F27 would require duplicating the full
+  model per worker or unsafely sharing mutable session state.
+
+Results:
+- No code change was made. A correct F28 implementation still depends on the
+  F27 split into shared immutable weights plus per-worker session state, and it
+  also needs a long-audio benchmark gate rather than the current single 28 s
+  sample.
+- Speed (`bench/run.sh --runs 10`, current accepted code, no F28 integration):
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 470 ms |
+| segmented | 358 ms |
+| streaming | 364 ms |
+| overall average | 397.3 ms |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Deferred, blocked by F27.** F28 remains a good long-audio
+throughput target, but the current code has no independent session object to
+run in parallel. Revisit after F27 and after adding a long-file benchmark to
+make the speed gate meaningful. No code was kept.
