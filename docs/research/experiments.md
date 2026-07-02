@@ -2760,3 +2760,43 @@ The most likely causes are `mlock` system-call cost, memory-pressure/lock-limit
 effects, or the background worker competing with model load/inference instead
 of improving hot decode locality on an idle benchmark. Code was reverted; only
 this result is retained.
+
+### F12: pre-swizzled SDOT weight layout
+
+Change:
+- Audited the current NEON INT8 matvec layout and callers.
+- `neon::matvec_int8` already streams each row contiguously in 16/32-byte
+  blocks with `vld1q_s8` and computes two output rows at a time.
+- `int8_matvec_threaded`, QKV, SwiGLU, and argmax all assume row-major
+  addressing (`start * in_dim`, `row * in_dim`) and slice the same packed data
+  differently depending on output partitioning.
+- A genuine pre-swizzled format would need a new weight layout contract plus
+  matching kernels for ordinary matvec, fused QKV, fused gate/up SwiGLU, down
+  projection, and lm-head argmax. Repacking only at load while feeding the
+  current kernels would break results; repacking then unswizzling before the
+  current kernels would not test F12.
+
+Results:
+- No code change was made.
+- Speed (`bench/run.sh --runs 10`, current accepted code, no F12 integration):
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 620 ms |
+| segmented | 460 ms |
+| streaming | 470 ms |
+| overall average | 516.7 ms |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Deferred.** The current row-major SDOT kernel is already close to
+the simple contiguous streaming layout. F12 should be revisited only as a
+coordinated kernel/layout change, likely together with F19's sidecar artifact
+format so the swizzled layout can be generated once and mmap'd directly. No
+code was kept.
