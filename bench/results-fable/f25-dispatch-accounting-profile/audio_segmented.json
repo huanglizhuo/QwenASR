@@ -1,0 +1,96 @@
+{
+  "version": "qwen-asr-bench-v1",
+  "label": "f25-dispatch-accounting-profile",
+  "binary": "/Users/lizhuo/owork/q-asr/target/release/qwen-asr",
+  "git_rev": "21a28a7",
+  "timestamp": "2026-07-02T03:57:41Z",
+  "file": "audio.wav",
+  "mode": "segmented",
+  "threads": 15,
+  "system": {
+    "os": "Darwin",
+    "os_release": "25.4.0",
+    "machine": "arm64",
+    "cpu_brand": "Apple M5 Pro",
+    "logical_cpus": 15,
+    "performance_cores": 5,
+    "efficiency_cores": 10,
+    "features": [
+      "NEON",
+      "DotProd",
+      "I8MM"
+    ]
+  },
+  "config": {
+    "segment_sec": 30,
+    "model_dir": "/Users/lizhuo/owork/q-asr/qwen3-asr-0.6b",
+    "run_isolation": "new_process_per_run",
+    "cache_state": "os_page_cache_uncontrolled"
+  },
+  "audio_duration_s": 28.2,
+  "transcript": "Shenyang, a city",
+  "reference": "Shenyang, a city with its own small secrets. Since you are going there, I expect you to keep your eyes open. Some things are worth bringing back, and you know disappointing me is rarely a wise decision.",
+  "timing": {
+    "wall_ms": 605.8,
+    "total_ms": 354.0,
+    "encode_ms": 150.0,
+    "decode_ms": 204.0,
+    "tokens": 6,
+    "tokens_per_sec": 16.97,
+    "realtime_factor": 79.661,
+    "statistic": "median",
+    "inference_mean_ms": 357.0,
+    "inference_best_ms": 353.0,
+    "wall_mean_ms": 606.5,
+    "wall_best_ms": 602.7,
+    "peak_rss_median_kb": 3577520,
+    "peak_rss_max_kb": 3593344,
+    "runs": [
+      {
+        "run": 3,
+        "total_ms": 353.0,
+        "wall_ms": 605.8,
+        "peak_rss_kb": 3577520
+      },
+      {
+        "run": 2,
+        "total_ms": 354.0,
+        "wall_ms": 602.7,
+        "peak_rss_kb": 3593344
+      },
+      {
+        "run": 1,
+        "total_ms": 364.0,
+        "wall_ms": 611.0,
+        "peak_rss_kb": 3567888
+      }
+    ]
+  },
+  "profile": {
+    "rms_norm_ms": 2.0,
+    "layer_norm_ms": 1.5,
+    "gelu_ms": 7.2,
+    "swiglu_ms": 3.7,
+    "bf16_matvec_ms": 243.6,
+    "attention_bidir_ms": 12.9,
+    "attention_causal_ms": 13.0,
+    "sgemm_ms": 182.2,
+    "conv2d_op_ms": 50.1,
+    "rope_ms": 1.3,
+    "add_inplace_op_ms": 0.9,
+    "model_load_ms": 127.3,
+    "encoder_load_ms": 1.3,
+    "decoder_load_ms": 61.5,
+    "tokenizer_load_ms": 38.0,
+    "audio_load_ms": 172.7,
+    "mel_compute_ms": 1.2,
+    "parallel_dispatch_ms": 80.3
+  },
+  "accuracy": {
+    "wer": 0.9189,
+    "cer": 0.9208,
+    "levenshtein_words": 34,
+    "levenshtein_chars": 186,
+    "exact_match": false
+  }
+}

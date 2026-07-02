@@ -939,17 +939,39 @@ pub fn decoder_forward(
     bufs.x[..dim].copy_from_slice(&bufs.x_norm[..dim]);
     let lm_out_dim = cfg.lm_head_dim();
 
-    // Use INT8 quantized argmax on aarch64 (2x less bandwidth), BF16 on x86_64
-    #[cfg(target_arch = "aarch64")]
-    if let (Some(ref int8_data), Some(ref scales)) =
-        (&decoder.lm_head_int8, &decoder.lm_head_int8_scales)
-    {
-        return kernels::argmax_matvec_int8(&bufs.x[..dim], int8_data, scales, dim, lm_out_dim)
-            as i32;
-    }
-
-    let lm_weight = decoder.lm_head_bf16.unwrap_or(decoder.tok_embeddings_bf16);
-    kernels::argmax_matvec_bf16(&bufs.x[..dim], lm_weight, dim, lm_out_dim) as i32
+    // Overlap the lm_head argmax with preparation for the next decode step.
+    // The next position is fixed regardless of which token wins, so we can
+    // grow the KV cache and extend the RoPE tables in parallel with scoring
+    // the vocabulary. The embedding lookup itself still waits for the argmax.
+    let next_pos = kv_cache.len;
+    let mut next_token: i32 = 0;
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            #[cfg(target_arch = "aarch64")]
+            if let (Some(ref int8_data), Some(ref scales)) =
+                (&decoder.lm_head_int8, &decoder.lm_head_int8_scales)
+            {
+                next_token =
+                    kernels::argmax_matvec_int8(&bufs.x[..dim], int8_data, scales, dim, lm_out_dim)
+                        as i32;
+            } else {
+                let lm_weight = decoder.lm_head_bf16.unwrap_or(decoder.tok_embeddings_bf16);
+                next_token =
+                    kernels::argmax_matvec_bf16(&bufs.x[..dim], lm_weight, dim, lm_out_dim) as i32;
+            }
+            #[cfg(not(target_arch = "aarch64"))]
+            {
+                let lm_weight = decoder.lm_head_bf16.unwrap_or(decoder.tok_embeddings_bf16);
+                next_token =
+                    kernels::argmax_matvec_bf16(&bufs.x[..dim], lm_weight, dim, lm_out_dim) as i32;
+            }
+        });
+        s.spawn(|| {
+            kv_cache.grow(next_pos + 1);
+            rope.ensure(next_pos + 1, head_dim, theta);
+        });
+    });
+    next_token
 }
 
 /// Decoder prefill that returns per-position logits (for forced aligner).

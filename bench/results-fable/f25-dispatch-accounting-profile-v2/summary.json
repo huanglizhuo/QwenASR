@@ -1,0 +1,41 @@
+{
+  "version": "qwen-asr-bench-v1",
+  "label": "f25-dispatch-accounting-profile-v2",
+  "git_rev": "21a28a7",
+  "timestamp": "2026-07-02T03:58:25Z",
+  "binary": "/Users/lizhuo/owork/q-asr/target/release/qwen-asr",
+  "threads": 15,
+  "total_files": 3,
+  "overall": {
+    "avg_total_ms": 395.7,
+    "avg_encode_ms": 162.3,
+    "avg_decode_ms": 230.3,
+    "avg_realtime_factor": 72.62,
+    "avg_wer": 0.9189
+  },
+  "by_mode": {
+    "offline": {
+      "count": 1,
+      "avg_total_ms": 473.0,
+      "avg_realtime_factor": 59.62,
+      "avg_wer": 0.9189
+    },
+    "segmented": {
+      "count": 1,
+      "avg_total_ms": 343.0,
+      "avg_realtime_factor": 82.22,
+      "avg_wer": 0.9189
+    },
+    "streaming": {
+      "count": 1,
+      "avg_total_ms": 371.0,
+      "avg_realtime_factor": 76.01,
+      "avg_wer": 0.9189
+    }
+  },
+  "results": [
+    "audio_offline.json",
+    "audio_segmented.json",
+    "audio_streaming.json"
+  ]
+}

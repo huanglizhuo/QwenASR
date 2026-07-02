@@ -8,6 +8,8 @@ This file collects the optimization experiment diaries.
 - [Speed Improvement Experiments — Round 2](#speed-improvement-experiments-round-2)
 - [WER Recovery Experiments](#wer-recovery-experiments)
 - [Perf-round2 vs. Previous Implementation](#perf-round2-vs-previous-implementation)
+- [Speed Improvement Experiments — Round 3](#speed-improvement-experiments--round-3)
+- [Fable Ideas Experiments](#fable-ideas-experiments)
 
 ## Speed Improvement Experiments — Round 1
 
@@ -3376,3 +3378,36 @@ Decision: **Deferred / WER-sensitive model-contract change.** F33 needs a
 separate token-merge policy experiment with a WER sweep, and possibly decoder
 adaptation, before it can be treated as a safe runtime optimization. No code
 was kept.
+
+### B9: overlap lm_head argmax with next-token start
+
+Change:
+- In `decoder_forward`, after the final RMS norm, run the `lm_head` argmax and
+  the next-position preparation (`kv_cache.grow(next_pos + 1)` and
+  `rope.ensure(next_pos + 1, ...)`) in parallel via `std::thread::scope`.
+- The next decode step's KV-cache capacity and RoPE tables are independent of
+  the argmax result, so they can be prepared while the vocabulary is still being
+  scored.
+
+Baseline for this experiment is the post-`LONG_AUDIO_FAST`-removal HEAD
+(`f28145c`, `bench/run.sh --runs 10`):
+
+| Mode | Baseline | B9 overlap | Delta |
+|------|---------:|-----------:|------:|
+| offline | 587.0 ms | 578.0 ms | −1.5% |
+| segmented | 456.0 ms | 446.5 ms | −2.1% |
+| streaming | 503.0 ms | 505.5 ms | +0.5% |
+| overall average | 515.2 ms | 510.0 ms | −1.0% |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | B9 overlap |
+|--------|-----------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Accepted.** WER is unchanged and all offline/segmented modes show a
+small speed improvement; streaming is within noise. The change is low-risk and
+removes a small serial dependency at the end of each decode step. The code was
+kept in `crates/qwen-asr/src/decoder.rs`.

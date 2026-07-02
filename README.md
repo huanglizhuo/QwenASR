@@ -8,22 +8,22 @@ Supports 0.6B and 1.7B models with offline, segmented, streaming, live capture, 
 
 ## Performance
 
-On an Apple M5 Pro, qwen-asr transcribes a 28-second audio clip in **437 ms** — about **64× faster than realtime** in the dedicated local benchmark. It's faster than the upstream C implementation and the measured MLX GPU baselines.
+On an Apple M5 Pro, qwen-asr transcribes a 28-second audio clip in **576 ms** — about **49× faster than realtime** in the dedicated local benchmark. It's faster than the upstream C implementation and the measured MLX GPU baselines.
 
 | Implementation | Median inference | Realtime factor |
 |---|---:|---:|
-| qwen-asr (latest, dedicated) | 437 ms | 64.53× |
-| mlx-audio Python MLX | 674 ms | 41.79× |
-| second-state/qwen3_asr_rs MLX GPU | 1,333 ms | 21.13× |
-| pure C upstream | 1,610 ms | 17.50× |
-| qwen-asr (first Rust port) | 1,612 ms | 17.49× |
+| qwen-asr (latest, dedicated) | 576 ms | 48.92× |
+| mlx-audio Python MLX | 688 ms | 40.92× |
+| second-state/qwen3_asr_rs MLX GPU | 1,401 ms | 20.10× |
+| pure C upstream | 1,650 ms | 17.06× |
+| qwen-asr (first Rust port) | 1,669 ms | 16.90× |
 
 <p float="left">
   <img src="docs/benchmarks/charts/benchmark-unified-latency.png" width="48%" alt="Latency comparison" />
   <img src="docs/benchmarks/charts/benchmark-unified-rtf.png" width="48%" alt="Realtime factor comparison" />
 </p>
 
-> Benchmarked on the same 28.2 s sample with 10 runs each. The qwen-asr latest row is the current dedicated benchmark at `7934c1b`; external baseline rows come from the latest full cross-implementation run. See [`docs/benchmarks/comparison.md`](docs/benchmarks/comparison.md) for full details and reproduction steps.
+> Benchmarked on the same 28.2 s sample with 10 runs each. The qwen-asr latest row is the current dedicated benchmark on the working tree (`f28145c` + retained fixes); external baseline rows come from the latest full cross-implementation run (`20260702T053724Z`). See [`docs/benchmarks/comparison.md`](docs/benchmarks/comparison.md) for full details and reproduction steps.
 
 ## Documentation
 

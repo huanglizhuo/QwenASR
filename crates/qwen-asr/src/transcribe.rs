@@ -21,8 +21,6 @@ const STREAM_STALE_CHUNKS: i32 = 4;
 const STREAM_RESET_INTERVAL_CHUNKS: i32 = 45;
 const STREAM_RESET_CARRY_TOKENS: usize = 24;
 const STREAM_MAX_ENC_WINDOWS: usize = 4;
-const LONG_AUDIO_FAST_CAP_SEC: usize = 15;
-const LONG_AUDIO_FAST_MAX_TOKENS: i32 = 6;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct PrefillRowKey {
@@ -304,11 +302,7 @@ fn transcribe_segment(
 
     // Autoregressive decode
     let t0 = get_time_ms();
-    let max_tokens = if ctx.perf_audio_ms > (LONG_AUDIO_FAST_CAP_SEC as f64 * 1000.0) {
-        LONG_AUDIO_FAST_MAX_TOKENS
-    } else {
-        2048
-    };
+    let max_tokens = 2048;
     let mut n_generated = 0;
     let mut past_asr_text = n_force_prompt_tokens > 0 || n_past > 0;
 
@@ -503,8 +497,8 @@ pub fn transcribe_segmented(ctx: &mut QwenCtx, samples: &[f32]) -> Option<Vec<Tr
         let start_ms = (seg_start as u64 * 1000) / SAMPLE_RATE as u64;
         let end_ms = (seg_end as u64 * 1000) / SAMPLE_RATE as u64;
 
-        // Set perf_audio_ms to this segment's duration so the token budget
-        // is per-segment, not the full file (avoids the 6-token fast-cap).
+        // Set perf_audio_ms to this segment's duration so any per-segment
+        // token budgets are relative to the segment, not the full file.
         ctx.perf_audio_ms = 1000.0 * seg_len as f64 / SAMPLE_RATE as f64;
 
         let seg_buf: Vec<f32>;
@@ -711,14 +705,11 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
     let chunk_samples = (ctx.stream_chunk_sec * SAMPLE_RATE as f32) as usize;
     let rollback = ctx.stream_rollback;
     let unfixed_chunks = ctx.stream_unfixed_chunks;
-    let mut max_new_tokens = if ctx.stream_max_new_tokens > 0 {
+    let max_new_tokens = if ctx.stream_max_new_tokens > 0 {
         ctx.stream_max_new_tokens
     } else {
         32
     };
-    if samples.len() > LONG_AUDIO_FAST_CAP_SEC * SAMPLE_RATE as usize {
-        max_new_tokens = max_new_tokens.min(LONG_AUDIO_FAST_MAX_TOKENS);
-    }
 
     ctx.reset_perf();
     ctx.perf_audio_ms = 1000.0 * samples.len() as f64 / SAMPLE_RATE as f64;

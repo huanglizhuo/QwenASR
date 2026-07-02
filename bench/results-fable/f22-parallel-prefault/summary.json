@@ -1,0 +1,41 @@
+{
+  "version": "qwen-asr-bench-v1",
+  "label": "f22-parallel-prefault",
+  "git_rev": "e34ba23",
+  "timestamp": "2026-07-02T03:42:59Z",
+  "binary": "/Users/lizhuo/owork/q-asr/target/release/qwen-asr",
+  "threads": 15,
+  "total_files": 3,
+  "overall": {
+    "avg_total_ms": 389.3,
+    "avg_encode_ms": 161.0,
+    "avg_decode_ms": 225.0,
+    "avg_realtime_factor": 73.66,
+    "avg_wer": 0.9189
+  },
+  "by_mode": {
+    "offline": {
+      "count": 1,
+      "avg_total_ms": 462.5,
+      "avg_realtime_factor": 60.97,
+      "avg_wer": 0.9189
+    },
+    "segmented": {
+      "count": 1,
+      "avg_total_ms": 343.5,
+      "avg_realtime_factor": 82.1,
+      "avg_wer": 0.9189
+    },
+    "streaming": {
+      "count": 1,
+      "avg_total_ms": 362.0,
+      "avg_realtime_factor": 77.9,
+      "avg_wer": 0.9189
+    }
+  },
+  "results": [
+    "audio_offline.json",
+    "audio_segmented.json",
+    "audio_streaming.json"
+  ]
+}

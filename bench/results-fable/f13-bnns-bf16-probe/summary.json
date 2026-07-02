@@ -1,0 +1,41 @@
+{
+  "version": "qwen-asr-bench-v1",
+  "label": "f13-bnns-bf16-probe",
+  "git_rev": "b1adab0",
+  "timestamp": "2026-07-02T03:54:27Z",
+  "binary": "/Users/lizhuo/owork/q-asr/target/release/qwen-asr",
+  "threads": 15,
+  "total_files": 3,
+  "overall": {
+    "avg_total_ms": 396.3,
+    "avg_encode_ms": 164.7,
+    "avg_decode_ms": 226.7,
+    "avg_realtime_factor": 72.42,
+    "avg_wer": 0.9189
+  },
+  "by_mode": {
+    "offline": {
+      "count": 1,
+      "avg_total_ms": 473.0,
+      "avg_realtime_factor": 59.62,
+      "avg_wer": 0.9189
+    },
+    "segmented": {
+      "count": 1,
+      "avg_total_ms": 349.5,
+      "avg_realtime_factor": 80.69,
+      "avg_wer": 0.9189
+    },
+    "streaming": {
+      "count": 1,
+      "avg_total_ms": 366.5,
+      "avg_realtime_factor": 76.94,
+      "avg_wer": 0.9189
+    }
+  },
+  "results": [
+    "audio_offline.json",
+    "audio_segmented.json",
+    "audio_streaming.json"
+  ]
+}

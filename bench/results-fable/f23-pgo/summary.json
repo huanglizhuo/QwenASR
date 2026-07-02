@@ -1,0 +1,41 @@
+{
+  "version": "qwen-asr-bench-v1",
+  "label": "f23-pgo",
+  "git_rev": "bc328e6",
+  "timestamp": "2026-07-02T03:46:39Z",
+  "binary": "/tmp/q-asr-pgo-use/release/qwen-asr",
+  "threads": 15,
+  "total_files": 3,
+  "overall": {
+    "avg_total_ms": 397.8,
+    "avg_encode_ms": 161.7,
+    "avg_decode_ms": 231.7,
+    "avg_realtime_factor": 72.03,
+    "avg_wer": 0.9189
+  },
+  "by_mode": {
+    "offline": {
+      "count": 1,
+      "avg_total_ms": 469.0,
+      "avg_realtime_factor": 60.13,
+      "avg_wer": 0.9189
+    },
+    "segmented": {
+      "count": 1,
+      "avg_total_ms": 347.5,
+      "avg_realtime_factor": 81.15,
+      "avg_wer": 0.9189
+    },
+    "streaming": {
+      "count": 1,
+      "avg_total_ms": 377.0,
+      "avg_realtime_factor": 74.8,
+      "avg_wer": 0.9189
+    }
+  },
+  "results": [
+    "audio_offline.json",
+    "audio_segmented.json",
+    "audio_streaming.json"
+  ]
+}
