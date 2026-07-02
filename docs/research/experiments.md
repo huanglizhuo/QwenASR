@@ -2359,3 +2359,41 @@ Decision: **Rejected/deferred.** The re-entry condition from G37 was not met:
 the direct BNNS bf16 matmul probe could not run for the real prefill shapes.
 No code change was made. A future revisit would need BNNSGraph or another
 Apple bf16 API, not the deprecated direct `BNNSMatMul` entry point.
+
+### F19/F20: mmap-backed prequantized weight cache / shipped artifacts
+
+Change:
+- Audited the current decoder INT8 ownership model before implementing a
+  sidecar cache.
+- The hot decode weights are stored directly as owned `Vec<i8>` plus owned
+  `Vec<f32>` scales on every `DecLayer`, with separate fields for Q/K/V/O,
+  fused gate-up, down, and `lm_head`.
+- Current decode kernels consume ordinary slices from those `Vec`s. A true F19
+  implementation needs a `WeightSlice`/owner abstraction that can represent
+  either owned superpage `Vec` data or a range inside a kept-alive mmap sidecar.
+
+Results:
+- No code change was made. A smaller cache that reads the sidecar back into
+  owned `Vec`s would repeat the A1 failure mode instead of testing F19.
+- Current accepted-code benchmark evidence remains the F22 run:
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 462.5 ms |
+| segmented | 343.5 ms |
+| streaming | 362.0 ms |
+| overall average | 389.3 ms |
+
+- Current accepted-code 100-file LibriSpeech offline WER remains:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Rejected/deferred for this pass.** F19/F20 are valid architecture
+work, but the minimal honest implementation is a cross-cutting weight-storage
+refactor plus sidecar metadata/versioning. No partial owned-Vec cache was kept,
+because it would not test the zero-copy mmap-backed idea. Revisit when doing
+the F27 shared-weights/session split or a dedicated artifact-format change.
