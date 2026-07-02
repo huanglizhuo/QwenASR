@@ -2606,3 +2606,157 @@ Decision: **Deferred, blocked by F27.** Segment pipelining is still a good
 long-audio optimization, but implementing it before shared weights/session
 state would duplicate weights or introduce unsafe shared mutable buffers. No
 code change was made.
+
+### F3/F2: mixed-precision FFN INT4 and full group-wise INT4 decoder weights
+
+Change:
+- Audited the current decode weight and kernel path before attempting an INT4
+  patch.
+- Decode weights are loaded from BF16 and quantized once into owned per-row
+  INT8 buffers (`wq/wk/wv/wo`, fused `gate_up`, `down`, and `lm_head`).
+- The hot FFN path calls `linear_nobias_int8_swiglu` and
+  `linear_nobias_int8_addto`, which both expect contiguous INT8 rows plus
+  per-row f32 scales and delegate to the NEON INT8 SDOT matvec kernel.
+- A real F3/F2 experiment needs a new group-wise INT4 packed format,
+  zero-points/scales, activation-aware calibration, and a fused
+  dequantize-inside-matvec NEON kernel. Packing to INT4 and expanding back to
+  INT8 at load or before matvec would not reduce decode bandwidth and would not
+  test the intended optimization.
+
+Results:
+- No code change was made. Current accepted-code benchmark evidence for this
+  audit run:
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 478 ms |
+| segmented | 352 ms |
+| streaming | 372 ms |
+| overall average | 400.7 ms |
+
+- Current accepted-code 100-file LibriSpeech offline WER:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Deferred.** F3 is still the right stepping stone for F2, but it is
+not a local field-layout change in the current codebase. Revisit after adding
+the F30 calibration matrix and an INT4 NEON kernel for `gate_up`/`down`;
+otherwise the experiment would either be the previously rejected naive INT4
+variant or a no-bandwidth-savings fake INT4 path. No code was kept.
+
+### F8: f16 KV cache with a native f16 attention kernel
+
+Change:
+- Audited the KV cache and attention call boundary.
+- `KvCache` stores both K and V as `Vec<f32>`.
+- `k_write_pos`/`v_write_pos`, `decoder_prefill`, and `decoder_forward` all
+  write f32 K/V values into that cache.
+- `causal_attention` and `causal_attention_heads` accept `*const f32` K/V bases
+  and scan f32 cache rows directly. There is no existing f16/half attention
+  entry point to reuse.
+
+Results:
+- No code change was made. Replacing only the cache storage with f16 would need
+  to expand K/V back to f32 before the current attention kernel, repeating the
+  previously rejected storage-only f16 approach rather than testing F8.
+- Speed (`bench/run.sh --runs 10`, current accepted code, no F8 integration):
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 600 ms |
+| segmented | 446 ms |
+| streaming | 490 ms |
+| overall average | 512.0 ms |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Deferred.** F8 needs a new native f16 attention kernel that
+consumes packed f16 K/V directly. A storage-only patch would add conversion
+overhead without reducing the actual attention scan bandwidth. No code was
+kept. The speed run above was noticeably slower than adjacent no-change runs,
+so treat it as the benchmark artifact for this audit label, not as an F8-caused
+regression.
+
+### F10: E-core weight prestreaming for the next decoder layer
+
+Change:
+- Audited the thread-pool and scheduling support needed for a truthful
+  prestreaming A/B.
+- The project already detects the number of Apple Silicon performance cores and
+  intentionally sizes the hot decode pool to P-cores only; comments note that
+  adding efficiency cores made decode slower.
+- `parallel_for` dispatches work to the existing hot pool and has no E-core
+  affinity, QoS, or `os_workgroup`/work-interval binding.
+- Spawning ordinary Rust helper threads to read layer `L+1` weights while layer
+  `L` computes would not guarantee E-core placement and would likely contend
+  with the P-core decode pool. Spawning per layer would also benchmark thread
+  creation overhead, not prestreaming.
+
+Results:
+- No code change was made. A valid F10 implementation needs a persistent helper
+  with explicit low-priority/E-core scheduling or a macOS workgroup strategy.
+- Speed (`bench/run.sh --runs 10`, current accepted code, no F10 integration):
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 608 ms |
+| segmented | 436 ms |
+| streaming | 495 ms |
+| overall average | 513.0 ms |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Deferred.** The idea is still plausible, but without E-core
+placement controls the local patch would measure uncontrolled CPU contention.
+No code was kept. Like F8, this no-change speed label ran slower than the
+accepted F22 reference, so it is recorded as the artifact for this audit rather
+than a performance claim about F10.
+
+### F11: selective deferred `mlock` of hot decode weights
+
+Change:
+- Implemented a temporary `Decoder`-owned background worker that collected the
+  INT8 decode weight buffers (`wq/wk/wv/wo`, fused `gate_up`, `down`, and
+  `lm_head`) and called best-effort `mlock` on their page-aligned ranges.
+- Kept a `JoinHandle` inside `Decoder` and joined it in `Drop`, so the worker
+  could not outlive the underlying `Vec<i8>` allocations.
+
+Results:
+- Speed (`bench/run.sh --runs 10`):
+
+| Mode | F22 | F11 mlock | Delta |
+|------|----:|----------:|------:|
+| offline | 462.5 ms | 618 ms | +33.6% |
+| segmented | 343.5 ms | 468 ms | +36.2% |
+| streaming | 362.0 ms | 482 ms | +33.1% |
+| overall average | 389.3 ms | 522.7 ms | +34.3% |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | F11 mlock |
+|--------|----------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Rejected.** WER stayed under the gate, but speed regressed badly.
+The most likely causes are `mlock` system-call cost, memory-pressure/lock-limit
+effects, or the background worker competing with model load/inference instead
+of improving hot decode locality on an idle benchmark. Code was reverted; only
+this result is retained.
