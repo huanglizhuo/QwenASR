@@ -13,17 +13,17 @@ On an Apple M5 Pro, qwen-asr transcribes a 28-second audio clip in **576 ms** �
 | Implementation | Median inference | Realtime factor |
 |---|---:|---:|
 | qwen-asr (latest, dedicated) | 576 ms | 48.92× |
-| mlx-audio Python MLX | 688 ms | 40.92× |
-| second-state/qwen3_asr_rs MLX GPU | 1,401 ms | 20.10× |
-| pure C upstream | 1,650 ms | 17.06× |
-| qwen-asr (first Rust port) | 1,669 ms | 16.90× |
+| mlx-audio Python MLX | 683 ms | 41.23× |
+| second-state/qwen3_asr_rs MLX GPU | 1,367 ms | 20.59× |
+| pure C upstream | 1,648 ms | 17.09× |
+| qwen-asr (first Rust port) | 1,687 ms | 16.72× |
 
 <p float="left">
   <img src="docs/benchmarks/charts/benchmark-unified-latency.png" width="48%" alt="Latency comparison" />
   <img src="docs/benchmarks/charts/benchmark-unified-rtf.png" width="48%" alt="Realtime factor comparison" />
 </p>
 
-> Benchmarked on the same 28.2 s sample with 10 runs each. The qwen-asr latest row is the current dedicated benchmark on the working tree (`f28145c` + retained fixes); external baseline rows come from the latest full cross-implementation run (`20260702T053724Z`). See [`docs/benchmarks/comparison.md`](docs/benchmarks/comparison.md) for full details and reproduction steps.
+> Benchmarked on the same 28.2 s sample with 10 runs each. The qwen-asr latest row is the current dedicated benchmark at `a7470a2`; external baseline rows come from the latest full cross-implementation run (`20260702T054646Z`). See [`docs/benchmarks/comparison.md`](docs/benchmarks/comparison.md) for full details and reproduction steps.
 
 ## Documentation
 
