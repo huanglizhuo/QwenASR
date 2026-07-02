@@ -2847,3 +2847,83 @@ deprecated BNNS filter setup, descriptor lifetime management, and numeric parity
 risk for at most a small fraction of encoder time. Revisit only with BNNSGraph
 or if profiling shows conv3 alone has become a clear bottleneck. No code was
 kept.
+
+### F15: encoder window batching probe
+
+Change:
+- Audited the encoder forward path to test the premise that attention/FFN GEMMs
+  are issued per `enc_n_window_infer` window.
+- The convolution stem is processed per encoder chunk, but after stem projection
+  all encoder transformer buffers are sized for `total_tokens`.
+- Q/K/V, attention output projection, FFN `fc1/fc2`, `proj1`, and `proj2` call
+  `linear_bf16_scratch`/`linear_accumulate_bf16_scratch` with `M =
+  total_tokens`, not one window at a time.
+- `window_starts` is only passed into `bidirectional_attention` to constrain
+  attention ranges; it does not split the encoder GEMMs.
+
+Results:
+- No code change was made. There is no local window-batching opportunity in the
+  current encoder transformer GEMM path because it is already batched across the
+  full encoded token sequence.
+- Speed (`bench/run.sh --runs 10`, current accepted code, no F15 integration):
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 607 ms |
+| segmented | 462 ms |
+| streaming | 466 ms |
+| overall average | 511.7 ms |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Rejected/deferred.** The original C6 concern does not apply to the
+current encoder transformer implementation. Future batching work should target
+the per-chunk convolution stem or multi-request/session batching, not
+per-window encoder GEMM batching. No code was kept.
+
+### F17: CPU/AMX overlap inside the encoder
+
+Change:
+- Audited the encoder GEMM wrappers and synchronization points.
+- `linear_bf16_scratch` and `linear_accumulate_bf16_scratch` synchronously
+  convert BF16 weights into a shared f32 scratch buffer and then synchronously
+  call the current `linear`/`linear_accumulate` SGEMM path.
+- The current API returns only after both conversion and SGEMM are complete; it
+  has no in-flight GEMM handle that would let CPU work such as next im2col,
+  norms, activations, or softmax run concurrently.
+- Reordering this safely would require dedicated GEMM worker ownership, scratch
+  double-buffering, and a dependency schedule through the encoder layer graph.
+  It is finer-grained and riskier than the already deferred F16 pipeline.
+
+Results:
+- No code change was made. A superficial thread spawn around `cblas_sgemm`
+  would add synchronization overhead without exposing independent CPU work in
+  the current call structure.
+- Speed (`bench/run.sh --runs 10`, current accepted code, no F17 integration):
+
+| Mode | Current accepted code |
+|------|----------------------:|
+| offline | 636 ms |
+| segmented | 462 ms |
+| streaming | 482 ms |
+| overall average | 526.7 ms |
+
+- 100-file LibriSpeech offline WER:
+
+| Metric | Current accepted code |
+|--------|----------------------:|
+| Corpus WER | 0.0387 |
+| Macro WER | 0.0428 |
+| Corpus CER | 0.0154 |
+
+Decision: **Deferred.** F17 remains an architecture-level scheduling
+experiment, but the current synchronous scratch+SGEMM API gives no low-risk
+place to overlap useful CPU work with AMX work. Revisit after F16/F27 or after
+introducing an explicit asynchronous GEMM/scratch ownership abstraction. No
+code was kept.
