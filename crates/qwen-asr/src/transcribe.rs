@@ -327,10 +327,6 @@ fn transcribe_segment(
                 // For the callback, provide lossy UTF-8 for display purposes
                 cb(&String::from_utf8_lossy(piece_bytes));
             }
-
-            if n_text_tokens >= 24 && matches!(piece_bytes, b"." | b"!" | b"?") {
-                break;
-            }
         }
 
         unsafe { tok_embed_bf16_to_f32(&mut tmp_embed, tok_emb, token, dim) };

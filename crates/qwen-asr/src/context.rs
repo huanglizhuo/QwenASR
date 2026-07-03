@@ -156,7 +156,7 @@ impl QwenCtx {
             stream_unfixed_chunks: 99,
             stream_max_new_tokens: 32,
             past_text_conditioning: false,
-            skip_silence: true,
+            skip_silence: false,
             prompt: None,
             force_language: None,
             prompt_tokens: None,
