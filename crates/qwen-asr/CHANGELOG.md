@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.5](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.7.4...qwen-asr-v0.7.5) (2026-07-03)
+
+
+### Bug Fixes
+
+* remove remaining transcript truncation causes (fixes [#31](https://github.com/huanglizhuo/QwenASR/issues/31)) ([1d677db](https://github.com/huanglizhuo/QwenASR/commit/1d677dbd97d0f1b7d381cf069531198cd8c7df56))
+
 ## [0.7.4](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.7.3...qwen-asr-v0.7.4) (2026-07-02)
 
 
