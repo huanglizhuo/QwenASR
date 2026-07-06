@@ -61,6 +61,10 @@ pub struct QwenCtx {
     pub prompt: Option<String>,
     pub force_language: Option<String>,
     pub detected_language: Option<String>,
+    /// When `true` and no language is forced, skip the fixed prompt preamble so
+    /// the model generates its own `language X` header for auto-detection. The
+    /// default (`false`) keeps the byte-identical plain-text decode path.
+    pub want_language_detection: bool,
     pub prompt_tokens: Option<Vec<i32>>,
     pub force_prompt_tokens: Option<Vec<i32>>,
     pub prompt_tokens_ready: bool,
@@ -183,6 +187,7 @@ impl QwenCtx {
             prompt: None,
             force_language: None,
             detected_language: None,
+            want_language_detection: false,
             prompt_tokens: None,
             force_prompt_tokens: None,
             prompt_tokens_ready: false,
@@ -256,6 +261,11 @@ impl QwenCtx {
                     return false;
                 }
             }
+        } else if !self.want_language_detection {
+            // Default path: prefill the fixed `[<language>, <English>, <asr_text>]`
+            // preamble. Removing this regresses WER (0.0708 -> 0.0729), so it is
+            // only skipped when language auto-detection is explicitly requested.
+            self.force_prompt_tokens = Some(vec![11528, 6364, TOKEN_ASR_TEXT]);
         }
 
         self.prompt_tokens_ready = true;

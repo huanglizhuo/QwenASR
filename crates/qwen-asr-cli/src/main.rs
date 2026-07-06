@@ -543,6 +543,12 @@ fn main() {
             std::process::exit(1);
         }
     }
+    // Structured output without a forced language needs the model to emit its own
+    // `language X` header for detection; this skips the default prompt preamble.
+    // Plain-text runs keep the byte-identical default decode path.
+    if output_requested && force_language.is_none() {
+        ctx.want_language_detection = true;
+    }
 
     // Alignment mode
     if let Some(ref atext) = align_text {
@@ -772,8 +778,10 @@ fn main() {
                 ctx.perf_total_ms, ctx.perf_text_tokens, tokens_per_sec,
                 ctx.perf_encode_ms, ctx.perf_decode_ms
             );
-            if ctx.perf_audio_ms > 0.0 && ctx.perf_total_ms > 0.0 {
-                let audio_s = ctx.perf_audio_ms / 1000.0;
+            // Total audio duration from the full sample count: transcribe_full
+            // overwrites ctx.perf_audio_ms per segment, so it can't be used here.
+            let audio_s = samples.len() as f64 / SAMPLE_RATE as f64;
+            if audio_s > 0.0 && ctx.perf_total_ms > 0.0 {
                 let infer_s = ctx.perf_total_ms / 1000.0;
                 eprintln!(
                     "Audio: {:.1} s processed in {:.1} s ({:.2}x realtime)",

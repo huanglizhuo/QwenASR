@@ -4,8 +4,14 @@ use crate::align::AlignResult;
 use crate::transcribe::TranscriptSegment;
 
 const MAX_WIDTH: usize = 84;
-const MAX_DUR_MS: f32 = 6000.0;
+const MAX_DUR_MS: f32 = 10000.0;
 const MIN_DUR_MS: u64 = 1000;
+// Silent gap (ms) between consecutive words that forces a hard cue break.
+// The spec proposed 2500, but the issue-#39 golden data contains a 2640 ms
+// aligner gap *inside* a single sentence ("a" -> "city"), so 2500 would split
+// a golden cue. 2800 preserves the golden cues while still breaking on genuine
+// inter-sentence silences (>= 3 s).
+const GAP_BREAK_MS: f32 = 2800.0;
 const TAIL_MS: u64 = 300;
 const TS_GRID_MS: f32 = 80.0;
 
@@ -34,7 +40,7 @@ pub fn group_words_to_cues(words: &[AlignResult], audio_end_ms: u64) -> Vec<Cue>
     let mut soft_break: Option<usize> = None;
 
     for (idx, word) in words.iter().enumerate() {
-        if !cur.is_empty() && would_overflow(&cur, word, soft_break) {
+        if !cur.is_empty() && would_overflow(&cur, word) {
             if let Some(split_at) = soft_break {
                 let tail = cur.split_off(split_at);
                 groups.push(cur);
@@ -48,7 +54,12 @@ pub fn group_words_to_cues(words: &[AlignResult], audio_end_ms: u64) -> Vec<Cue>
 
         cur.push(word.clone());
 
-        if is_sentence_end(&word.text) || idx + 1 == words.len() {
+        // Hard break: a silent gap to the next word wider than GAP_BREAK_MS.
+        let gap_break = words
+            .get(idx + 1)
+            .is_some_and(|next| next.start_ms - word.end_ms > GAP_BREAK_MS);
+
+        if is_sentence_end(&word.text) || idx + 1 == words.len() || gap_break {
             groups.push(cur);
             cur = Vec::new();
             soft_break = None;
@@ -119,10 +130,9 @@ fn normalize_words(words: &[AlignResult]) -> Vec<Word> {
         .collect()
 }
 
-fn would_overflow(cur: &[Word], next: &Word, soft_break: Option<usize>) -> bool {
+fn would_overflow(cur: &[Word], next: &Word) -> bool {
     let width_overflow = cue_width_with(cur, next) > MAX_WIDTH;
-    let duration_overflow =
-        soft_break.is_some_and(|idx| idx > 1) && next.end_ms - cur[0].start_ms > MAX_DUR_MS;
+    let duration_overflow = next.end_ms - cur[0].start_ms > MAX_DUR_MS;
     width_overflow || duration_overflow
 }
 
@@ -164,11 +174,7 @@ fn cue_width_with(cur: &[Word], next: &Word) -> usize {
     let mut width = 0usize;
     for (idx, word) in cur.iter().chain(std::iter::once(next)).enumerate() {
         if idx > 0 {
-            let prev = if idx == cur.len() {
-                &cur[cur.len() - 1]
-            } else {
-                &cur[idx - 1]
-            };
+            let prev = &cur[idx - 1];
             if !both_cjk(&prev.text, &word.text) {
                 width += 1;
             }

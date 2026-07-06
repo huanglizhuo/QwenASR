@@ -124,18 +124,56 @@ fn falls_back_to_soft_break_on_width_overflow() {
 
 #[test]
 fn splits_on_duration_overflow() {
+    // Spans > 10 s, so the duration cap (10 s) forces a rollback to the soft
+    // break at "two,". Words are contiguous to avoid any gap break.
     let cues = group_words_to_cues(
         &[
-            word("one", 0.0, 1000.0),
-            word("two,", 1000.0, 1100.0),
-            word("two", 3000.0, 4000.0),
-            word("three", 6200.0, 6300.0),
-            word("done.", 6300.0, 6400.0),
+            word("one", 0.0, 2000.0),
+            word("two,", 2000.0, 4000.0),
+            word("three", 4000.0, 6000.0),
+            word("four", 6000.0, 8000.0),
+            word("five", 8000.0, 10500.0),
+            word("done.", 10500.0, 11000.0),
         ],
-        8000,
+        12000,
     );
     assert_eq!(cues[0].text, "one two,");
-    assert_eq!(cues[1].text, "two three done.");
+    assert_eq!(cues[1].text, "three four five done.");
+}
+
+#[test]
+fn splits_long_unpunctuated_run_under_duration_cap() {
+    // 20 words, ~1.5 s each => 30 s span, no punctuation and no large gaps.
+    // Must split purely on the 10 s duration cap into cues each <= 10 s.
+    let words: Vec<_> = (0..20)
+        .map(|i| word("word", (i * 1500) as f32, (i * 1500 + 1500) as f32))
+        .collect();
+    let cues = group_words_to_cues(&words, 30_000);
+    assert!(cues.len() > 1, "expected multiple cues, got {}", cues.len());
+    for cue in &cues {
+        assert!(
+            cue.end_ms - cue.start_ms <= 10_000,
+            "cue exceeds 10 s cap: {:?}",
+            cue
+        );
+    }
+}
+
+#[test]
+fn splits_on_silent_gap_without_punctuation() {
+    // No punctuation anywhere; a 3 s silent gap mid-sequence must break the cue.
+    let cues = group_words_to_cues(
+        &[
+            word("alpha", 0.0, 500.0),
+            word("bravo", 500.0, 1000.0),
+            word("charlie", 4000.0, 4500.0),
+            word("delta", 4500.0, 5000.0),
+        ],
+        6000,
+    );
+    assert_eq!(cues.len(), 2);
+    assert_eq!(cues[0].text, "alpha bravo");
+    assert_eq!(cues[1].text, "charlie delta");
 }
 
 #[test]
