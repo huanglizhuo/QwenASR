@@ -2,12 +2,13 @@ mod download;
 #[cfg(target_os = "macos")]
 mod live_capture;
 
-use qwen_asr::{audio, config, context, kernels, transcribe, align};
 use config::*;
 use context::QwenCtx;
+use qwen_asr::{align, audio, config, context, kernels, subtitle, transcribe};
 
-use std::sync::Arc;
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 const VIDEO_EXTENSIONS: &[&str] = &[
     "mp4", "mkv", "mov", "avi", "webm", "m4v", "flv", "ts", "mpg", "mpeg", "wmv",
@@ -24,7 +25,19 @@ fn is_video_file(path: &str) -> bool {
 /// Extract audio from a video file using ffmpeg, returning 16 kHz mono f32 samples.
 fn extract_audio_from_video(path: &str) -> Option<Vec<f32>> {
     let output = std::process::Command::new("ffmpeg")
-        .args(["-loglevel", "error", "-i", path, "-ar", "16000", "-ac", "1", "-f", "s16le", "pipe:1"])
+        .args([
+            "-loglevel",
+            "error",
+            "-i",
+            path,
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            "-f",
+            "s16le",
+            "pipe:1",
+        ])
         .output()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
@@ -65,32 +78,40 @@ fn load_audio(path: &str) -> Option<Vec<f32>> {
     }
 }
 
-fn ms_to_srt_time(ms: u64) -> String {
-    let h = ms / 3_600_000;
-    let m = (ms % 3_600_000) / 60_000;
-    let s = (ms % 60_000) / 1_000;
-    let millis = ms % 1_000;
-    format!("{:02}:{:02}:{:02},{:03}", h, m, s, millis)
+fn default_output_path(input: &str, extension: &str) -> String {
+    let stem = std::path::Path::new(input)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(input);
+    let dir = std::path::Path::new(input)
+        .parent()
+        .and_then(|p| p.to_str())
+        .unwrap_or(".");
+    format!("{}/{}.{}", dir, stem, extension)
 }
 
-fn format_srt(segments: &[transcribe::TranscriptSegment]) -> String {
-    let mut out = String::new();
-    let mut idx = 1u32;
-    for seg in segments {
-        if seg.text.trim().is_empty() {
-            continue;
-        }
-        out.push_str(&idx.to_string());
-        out.push('\n');
-        out.push_str(&ms_to_srt_time(seg.start_ms));
-        out.push_str(" --> ");
-        out.push_str(&ms_to_srt_time(seg.end_ms));
-        out.push('\n');
-        out.push_str(seg.text.trim());
-        out.push_str("\n\n");
-        idx += 1;
+fn segment_result_to_cues(
+    segment: &qwen_asr::output::SegmentResult,
+    audio_end_ms: u64,
+) -> Vec<subtitle::Cue> {
+    if segment.words.is_empty() {
+        return vec![subtitle::Cue {
+            start_ms: segment.start_ms,
+            end_ms: segment.end_ms,
+            text: segment.text.trim().to_string(),
+        }];
     }
-    out
+
+    let words: Vec<_> = segment
+        .words
+        .iter()
+        .map(|word| align::AlignResult {
+            text: word.word.clone(),
+            start_ms: word.start_ms as f32,
+            end_ms: word.end_ms as f32,
+        })
+        .collect();
+    subtitle::group_words_to_cues(&words, audio_end_ms)
 }
 
 fn stream_token(piece: &str) {
@@ -101,16 +122,23 @@ fn stream_token(piece: &str) {
 
 fn usage(prog: &str) {
     eprintln!("qwen-asr — Qwen3-ASR speech-to-text (pure Rust)\n");
-    eprintln!("Usage: {} -d <model_dir> (-i <input> | --stdin | --live) [options]\n", prog);
+    eprintln!(
+        "Usage: {} -d <model_dir> (-i <input> | --stdin | --live) [options]\n",
+        prog
+    );
     eprintln!("Required:");
     eprintln!("  -d <dir>      Model directory (with *.safetensors, vocab.json)");
-    eprintln!("  -i <file>     Input file: WAV (16-bit PCM) or video (mp4/mkv/mov/…, requires ffmpeg)");
+    eprintln!(
+        "  -i <file>     Input file: WAV (16-bit PCM) or video (mp4/mkv/mov/…, requires ffmpeg)"
+    );
     eprintln!("  --stdin       Read audio from stdin (auto-detect WAV or raw s16le 16kHz mono)");
     eprintln!("\nLive capture (macOS only):");
     eprintln!("  --live                      Capture from audio input device in real time");
     eprintln!("  --device <name>             Input device name (default: system default)");
     eprintln!("  --list-devices              List available audio input devices and exit");
-    eprintln!("  --vad                       Live VAD mode: detect speech segments, transcribe each");
+    eprintln!(
+        "  --vad                       Live VAD mode: detect speech segments, transcribe each"
+    );
     eprintln!("\nOptions:");
     eprintln!("  -t <n>        Number of threads (default: performance cores)");
     eprintln!("  -S <secs>     Segment target seconds (default: 0 = full-audio decode)");
@@ -127,7 +155,14 @@ fn usage(prog: &str) {
     eprintln!("  --align <text>             Align transcript to audio (word-level timestamps)");
     eprintln!("  --align-language <lang>    Language for word splitting (default: English)");
     eprintln!("\nSubtitle output:");
-    eprintln!("  --srt [path]  Write SRT subtitle file (default: <input>.srt); requires -i");
+    eprintln!(
+        "  --srt [path]              Write SRT subtitle file (default: <input>.srt); requires -i"
+    );
+    eprintln!("  --vtt [path]              Write WebVTT subtitle file (default: <input>.vtt); requires -i");
+    eprintln!(
+        "  --json [path]             Write structured JSON (stdout when path omitted); requires -i"
+    );
+    eprintln!("  --aligner-dir <dir>       ForcedAligner model for sentence-level subtitles and word timestamps");
     eprintln!("  --profile     Print per-operation timing breakdown");
     eprintln!("  --debug       Debug output (per-layer details)");
     eprintln!("  --silent      No status output (only transcription on stdout)");
@@ -192,6 +227,11 @@ fn main() {
     // None = no SRT, Some(path) = write SRT to path
     let mut srt_path: Option<String> = None;
     let mut srt_requested = false;
+    let mut vtt_path: Option<String> = None;
+    let mut vtt_requested = false;
+    let mut json_path: Option<String> = None;
+    let mut json_requested = false;
+    let mut aligner_dir: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -275,6 +315,34 @@ fn main() {
                     }
                 }
             }
+            "--vtt" => {
+                vtt_requested = true;
+                if let Some(next) = args.get(i + 1) {
+                    if !next.starts_with('-') {
+                        vtt_path = Some(next.clone());
+                        i += 1;
+                    }
+                }
+            }
+            "--json" => {
+                json_requested = true;
+                if let Some(next) = args.get(i + 1) {
+                    if !next.starts_with('-') {
+                        json_path = Some(next.clone());
+                        i += 1;
+                    }
+                }
+            }
+            "--aligner-dir" => {
+                i += 1;
+                aligner_dir = match args.get(i) {
+                    Some(path) => Some(path.clone()),
+                    None => {
+                        eprintln!("Error: --aligner-dir requires <dir>");
+                        std::process::exit(1);
+                    }
+                };
+            }
             "--stdin" => {
                 use_stdin = true;
             }
@@ -345,30 +413,34 @@ fn main() {
     }
 
     // Check mutual exclusivity of input modes
-    let input_count = [input_wav.is_some(), use_stdin, live_mode].iter().filter(|&&x| x).count();
+    let input_count = [input_wav.is_some(), use_stdin, live_mode]
+        .iter()
+        .filter(|&&x| x)
+        .count();
     if input_count > 1 {
         eprintln!("Error: -i, --stdin, and --live are mutually exclusive");
         std::process::exit(1);
     }
 
-    // Resolve SRT output path (--srt requires -i)
-    if srt_requested {
+    let output_requested = srt_requested || vtt_requested || json_requested;
+
+    // Resolve file output paths (structured outputs require -i)
+    if output_requested {
         if input_wav.is_none() {
-            eprintln!("Error: --srt requires -i <file>");
+            eprintln!("Error: --srt/--vtt/--json requires -i <file>");
             std::process::exit(1);
         }
+    }
+    if srt_requested {
         if srt_path.is_none() {
-            // Default: same stem as input, .srt extension
             let input = input_wav.as_ref().unwrap();
-            let stem = std::path::Path::new(input)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or(input.as_str());
-            let dir = std::path::Path::new(input)
-                .parent()
-                .and_then(|p| p.to_str())
-                .unwrap_or(".");
-            srt_path = Some(format!("{}/{}.srt", dir, stem));
+            srt_path = Some(default_output_path(input, "srt"));
+        }
+    }
+    if vtt_requested {
+        if vtt_path.is_none() {
+            let input = input_wav.as_ref().unwrap();
+            vtt_path = Some(default_output_path(input, "vtt"));
         }
     }
 
@@ -377,7 +449,7 @@ fn main() {
         kernels::set_profile(true);
         kernels::profile_reset();
     }
-    let emit_tokens = verbosity > 0;
+    let emit_tokens = verbosity > 0 && !(json_requested && json_path.is_none());
 
     // Initialize thread pool
     if n_threads <= 0 {
@@ -467,10 +539,7 @@ fn main() {
     if let Some(ref lang) = force_language {
         if ctx.set_force_language(lang).is_err() {
             eprintln!("Unsupported language for --language: {}", lang);
-            eprintln!(
-                "Supported languages: {}",
-                SUPPORTED_LANGUAGES.join(",")
-            );
+            eprintln!("Supported languages: {}", SUPPORTED_LANGUAGES.join(","));
             std::process::exit(1);
         }
     }
@@ -550,13 +619,20 @@ fn main() {
 
         #[cfg(target_os = "macos")]
         {
-            run_live_capture(&mut ctx, device_name.as_deref(), stream_mode, vad_mode, verbosity, profile);
+            run_live_capture(
+                &mut ctx,
+                device_name.as_deref(),
+                stream_mode,
+                vad_mode,
+                verbosity,
+                profile,
+            );
             return;
         }
     }
 
-    // SRT subtitle mode: load audio (video or WAV), transcribe with timestamps
-    if let Some(ref out_path) = srt_path {
+    // Structured output mode: load audio once, transcribe once, optionally align once.
+    if output_requested {
         let input = input_wav.as_ref().unwrap();
         if verbosity >= 1 {
             if is_video_file(input) {
@@ -571,32 +647,121 @@ fn main() {
                     eprintln!("Failed to load audio from {}", input);
                     std::process::exit(1);
                 }
+            },
+        };
+
+        if aligner_dir.is_none() && (srt_requested || vtt_requested) {
+            eprintln!("hint: provide --aligner-dir for sentence-level subtitles");
+        }
+
+        let mut aligner_ctx = match aligner_dir.as_deref() {
+            Some(dir) => match QwenCtx::load(dir) {
+                Some(c) => Some(c),
+                None => {
+                    eprintln!("Failed to load aligner model from {}", dir);
+                    std::process::exit(1);
+                }
+            },
+            None => None,
+        };
+
+        let mut srt_file = match srt_path.as_deref() {
+            Some(path) => match std::fs::File::create(path) {
+                Ok(file) => Some(file),
+                Err(e) => {
+                    eprintln!("Error: failed to create {}: {}", path, e);
+                    std::process::exit(1);
+                }
+            },
+            None => None,
+        };
+        let mut vtt_file = match vtt_path.as_deref() {
+            Some(path) => match std::fs::File::create(path) {
+                Ok(mut file) => {
+                    if let Err(e) = file.write_all(b"WEBVTT\n\n") {
+                        eprintln!("Error: failed to write {}: {}", path, e);
+                        std::process::exit(1);
+                    }
+                    Some(file)
+                }
+                Err(e) => {
+                    eprintln!("Error: failed to create {}: {}", path, e);
+                    std::process::exit(1);
+                }
+            },
+            None => None,
+        };
+
+        let audio_end_ms = (samples.len() as u64 * 1000) / SAMPLE_RATE as u64;
+        let mut srt_index = 1u32;
+        let mut vtt_index = 1u32;
+        let mut write_error: Option<String> = None;
+
+        let mut on_segment = |segment: &qwen_asr::output::SegmentResult| {
+            let cues = segment_result_to_cues(segment, audio_end_ms);
+            if let Some(file) = srt_file.as_mut() {
+                let chunk = subtitle::format_srt_from_index(&cues, srt_index);
+                srt_index += subtitle::cue_count(&cues);
+                if write_error.is_none() {
+                    if let Err(e) = file.write_all(chunk.as_bytes()).and_then(|_| file.flush()) {
+                        write_error = Some(format!("failed to write SRT: {}", e));
+                    }
+                }
+            }
+            if let Some(file) = vtt_file.as_mut() {
+                let chunk = subtitle::format_vtt_from_index(&cues, vtt_index, false);
+                vtt_index += subtitle::cue_count(&cues);
+                if write_error.is_none() {
+                    if let Err(e) = file.write_all(chunk.as_bytes()).and_then(|_| file.flush()) {
+                        write_error = Some(format!("failed to write VTT: {}", e));
+                    }
+                }
             }
         };
-        let segments = match transcribe::transcribe_segmented(&mut ctx, &samples) {
-            Some(s) => s,
+
+        let result = match transcribe::transcribe_full(
+            &mut ctx,
+            aligner_ctx.as_mut(),
+            &samples,
+            Some(&mut on_segment),
+        ) {
+            Some(result) => result,
             None => {
                 eprintln!("Transcription failed");
                 std::process::exit(1);
             }
         };
+
+        drop(on_segment);
+
+        if let Some(error) = write_error {
+            eprintln!("Error: {}", error);
+            std::process::exit(1);
+        }
+
         if emit_tokens {
             println!();
         }
-        let srt = format_srt(&segments);
-        match std::fs::write(out_path, &srt) {
-            Ok(()) => {
-                if verbosity >= 1 {
-                    eprintln!("SRT written to {}", out_path);
-                }
-            }
-            Err(e) => {
-                eprintln!("Error: failed to write {}: {}", out_path, e);
+
+        if let Some(path) = json_path.as_deref() {
+            if let Err(e) = std::fs::write(path, result.to_json()) {
+                eprintln!("Error: failed to write {}: {}", path, e);
                 std::process::exit(1);
             }
+            if verbosity >= 1 {
+                eprintln!("JSON written to {}", path);
+            }
+        } else if json_requested {
+            print!("{}", result.to_json());
         }
 
         if verbosity >= 1 {
+            if let Some(path) = srt_path.as_deref() {
+                eprintln!("SRT written to {}", path);
+            }
+            if let Some(path) = vtt_path.as_deref() {
+                eprintln!("VTT written to {}", path);
+            }
             let tokens_per_sec = if ctx.perf_total_ms > 0.0 {
                 1000.0 * ctx.perf_text_tokens as f64 / ctx.perf_total_ms
             } else {
@@ -607,7 +772,24 @@ fn main() {
                 ctx.perf_total_ms, ctx.perf_text_tokens, tokens_per_sec,
                 ctx.perf_encode_ms, ctx.perf_decode_ms
             );
+            if ctx.perf_audio_ms > 0.0 && ctx.perf_total_ms > 0.0 {
+                let audio_s = ctx.perf_audio_ms / 1000.0;
+                let infer_s = ctx.perf_total_ms / 1000.0;
+                eprintln!(
+                    "Audio: {:.1} s processed in {:.1} s ({:.2}x realtime)",
+                    audio_s,
+                    infer_s,
+                    audio_s / infer_s
+                );
+            }
+            if let Some(ref aligner) = aligner_ctx {
+                eprintln!(
+                    "Alignment: {:.0} ms (encoding: {:.0}ms, decoding: {:.0}ms)",
+                    aligner.perf_total_ms, aligner.perf_encode_ms, aligner.perf_decode_ms
+                );
+            }
         }
+
         if profile {
             kernels::profile_report();
         }
@@ -619,8 +801,7 @@ fn main() {
         let samples = if use_stdin {
             audio::read_pcm_stdin()
         } else {
-            preloaded_samples
-                .or_else(|| load_audio(input_wav.as_ref().unwrap()))
+            preloaded_samples.or_else(|| load_audio(input_wav.as_ref().unwrap()))
         };
         match samples {
             Some(s) => transcribe::transcribe_stream(&mut ctx, &s),
@@ -629,8 +810,7 @@ fn main() {
     } else if use_stdin {
         transcribe::transcribe_stdin(&mut ctx)
     } else {
-        let samples = preloaded_samples
-            .or_else(|| load_audio(input_wav.as_ref().unwrap()));
+        let samples = preloaded_samples.or_else(|| load_audio(input_wav.as_ref().unwrap()));
         match samples {
             Some(s) => transcribe::transcribe_audio(&mut ctx, &s),
             None => None,
@@ -667,7 +847,9 @@ fn main() {
             let infer_s = ctx.perf_total_ms / 1000.0;
             eprintln!(
                 "Audio: {:.1} s processed in {:.1} s ({:.2}x realtime)",
-                audio_s, infer_s, audio_s / infer_s
+                audio_s,
+                infer_s,
+                audio_s / infer_s
             );
         }
     }
@@ -697,7 +879,10 @@ fn run_live_capture(
         match live_capture::find_device_by_name(name) {
             Some(dev) => {
                 if verbosity >= 1 {
-                    eprintln!("Using input device: {} ({} ch)", dev.name, dev.input_channels);
+                    eprintln!(
+                        "Using input device: {} ({} ch)",
+                        dev.name, dev.input_channels
+                    );
                 }
                 dev.id
             }
@@ -742,7 +927,13 @@ fn run_live_capture(
         }
     };
 
-    let mode_label = if stream_mode { "streaming" } else if vad_mode { "VAD" } else { "segmented" };
+    let mode_label = if stream_mode {
+        "streaming"
+    } else if vad_mode {
+        "VAD"
+    } else {
+        "segmented"
+    };
     if verbosity >= 1 {
         if vad_mode {
             eprintln!("Listening (VAD segmented)... press Ctrl+C to stop\n");
@@ -750,7 +941,11 @@ fn run_live_capture(
             eprintln!(
                 "Listening ({}, {:.1}s chunks)... press Ctrl+C to stop\n",
                 mode_label,
-                if stream_mode { ctx.stream_chunk_sec } else { ctx.segment_sec }
+                if stream_mode {
+                    ctx.stream_chunk_sec
+                } else {
+                    ctx.segment_sec
+                }
             );
         }
     }
@@ -807,9 +1002,8 @@ fn run_live_capture(
             // Resample
             if needs_resample {
                 if !raw_buf.is_empty() {
-                    let resampled = qwen_asr::audio::resample(
-                        &raw_buf, device_rate as i32, target_rate,
-                    );
+                    let resampled =
+                        qwen_asr::audio::resample(&raw_buf, device_rate as i32, target_rate);
                     resampled_buf.extend_from_slice(&resampled);
                     raw_buf.clear();
                 }
@@ -820,9 +1014,9 @@ fn run_live_capture(
             // Reset window if buffer exceeds max
             if resampled_buf.len() > max_window_samples {
                 // Flush rollback tokens before reset
-                if let Some(delta) = transcribe::stream_push_audio(
-                    ctx, &resampled_buf, &mut stream_state, true
-                ) {
+                if let Some(delta) =
+                    transcribe::stream_push_audio(ctx, &resampled_buf, &mut stream_state, true)
+                {
                     if !delta.is_empty() {
                         print!("{}", delta);
                     }
@@ -842,9 +1036,9 @@ fn run_live_capture(
 
             // Process all available full chunks
             if resampled_buf.len() > stream_state.audio_cursor() {
-                if let Some(delta) = transcribe::stream_push_audio(
-                    ctx, &resampled_buf, &mut stream_state, finalize
-                ) {
+                if let Some(delta) =
+                    transcribe::stream_push_audio(ctx, &resampled_buf, &mut stream_state, finalize)
+                {
                     if !delta.is_empty() {
                         print!("{}", delta);
                         std::io::Write::flush(&mut std::io::stdout()).ok();
@@ -859,9 +1053,7 @@ fn run_live_capture(
 
         // Final flush
         if !raw_buf.is_empty() && needs_resample {
-            let resampled = qwen_asr::audio::resample(
-                &raw_buf, device_rate as i32, target_rate,
-            );
+            let resampled = qwen_asr::audio::resample(&raw_buf, device_rate as i32, target_rate);
             resampled_buf.extend_from_slice(&resampled);
         } else {
             resampled_buf.append(&mut raw_buf);
@@ -869,7 +1061,10 @@ fn run_live_capture(
 
         if resampled_buf.len() > stream_state.audio_cursor() {
             if let Some(delta) = transcribe::stream_push_audio(
-                ctx, &resampled_buf, &mut stream_state, true // finalize: flush rollback
+                ctx,
+                &resampled_buf,
+                &mut stream_state,
+                true, // finalize: flush rollback
             ) {
                 if !delta.is_empty() {
                     print!("{}", delta);
@@ -920,9 +1115,8 @@ fn run_live_capture(
             // Resample
             if needs_resample {
                 if !raw_buf.is_empty() {
-                    let resampled = qwen_asr::audio::resample(
-                        &raw_buf, device_rate as i32, target_rate,
-                    );
+                    let resampled =
+                        qwen_asr::audio::resample(&raw_buf, device_rate as i32, target_rate);
                     resampled_buf.extend_from_slice(&resampled);
                     raw_buf.clear();
                 }
@@ -943,8 +1137,12 @@ fn run_live_capture(
 
             // Periodic RMS debug output
             if verbosity >= 2 && buf_len % (target_rate as usize * 2) < check_samples {
-                eprintln!("  [VAD] rms={:.6} threshold={:.4} speech={}",
-                    rms, speech_threshold, if speech_active { "active" } else { "inactive" });
+                eprintln!(
+                    "  [VAD] rms={:.6} threshold={:.4} speech={}",
+                    rms,
+                    speech_threshold,
+                    if speech_active { "active" } else { "inactive" }
+                );
             }
 
             if !speech_active {
@@ -954,8 +1152,10 @@ fn run_live_capture(
                     silence_start = None;
                     speech_start_idx = buf_len.saturating_sub(pre_speech_samples);
                     if verbosity >= 2 {
-                        eprintln!("  [VAD] speech start at {:.1}s",
-                            buf_len as f32 / target_rate as f32);
+                        eprintln!(
+                            "  [VAD] speech start at {:.1}s",
+                            buf_len as f32 / target_rate as f32
+                        );
                     }
                 } else {
                     // No speech — bound buffer to avoid unlimited growth
@@ -977,8 +1177,10 @@ fn run_live_capture(
                     // Force-flush if segment exceeds max duration
                     if segment_len >= max_segment_samples {
                         if verbosity >= 2 {
-                            eprintln!("  [VAD] max segment reached ({:.1}s), flushing",
-                                segment_len as f32 / target_rate as f32);
+                            eprintln!(
+                                "  [VAD] max segment reached ({:.1}s), flushing",
+                                segment_len as f32 / target_rate as f32
+                            );
                         }
                         let segment = &resampled_buf[speech_start_idx..];
                         // Set previous text as context
@@ -1012,8 +1214,10 @@ fn run_live_capture(
                                 let segment = &resampled_buf[speech_start_idx..seg_end];
 
                                 if verbosity >= 2 {
-                                    eprintln!("  [VAD] speech end, segment {:.1}s",
-                                        segment.len() as f32 / target_rate as f32);
+                                    eprintln!(
+                                        "  [VAD] speech end, segment {:.1}s",
+                                        segment.len() as f32 / target_rate as f32
+                                    );
                                 }
 
                                 ctx.reset_perf();
@@ -1028,19 +1232,23 @@ fn run_live_capture(
                                         println!("{}", text);
                                         accumulated_text.push_str(&text);
                                         if verbosity >= 1 {
-                                            let audio_secs = segment.len() as f32 / target_rate as f32;
+                                            let audio_secs =
+                                                segment.len() as f32 / target_rate as f32;
                                             let compute_secs = t0.elapsed().as_secs_f32();
                                             eprintln!(
                                                 "  ({:.1}s audio in {:.1}s, {:.1}x realtime)",
-                                                audio_secs, compute_secs,
+                                                audio_secs,
+                                                compute_secs,
                                                 audio_secs / compute_secs.max(0.001)
                                             );
                                         }
                                     }
                                 }
                             } else if verbosity >= 2 {
-                                eprintln!("  [VAD] segment too short ({:.2}s), discarding",
-                                    segment_len as f32 / target_rate as f32);
+                                eprintln!(
+                                    "  [VAD] segment too short ({:.2}s), discarding",
+                                    segment_len as f32 / target_rate as f32
+                                );
                             }
 
                             resampled_buf.clear();
@@ -1081,9 +1289,8 @@ fn run_live_capture(
 
             if needs_resample {
                 if !raw_buf.is_empty() {
-                    let resampled = qwen_asr::audio::resample(
-                        &raw_buf, device_rate as i32, target_rate,
-                    );
+                    let resampled =
+                        qwen_asr::audio::resample(&raw_buf, device_rate as i32, target_rate);
                     resampled_buf.extend_from_slice(&resampled);
                     raw_buf.clear();
                 }
@@ -1103,9 +1310,7 @@ fn run_live_capture(
 
         // Flush remaining
         if !raw_buf.is_empty() && needs_resample {
-            let resampled = qwen_asr::audio::resample(
-                &raw_buf, device_rate as i32, target_rate,
-            );
+            let resampled = qwen_asr::audio::resample(&raw_buf, device_rate as i32, target_rate);
             resampled_buf.extend_from_slice(&resampled);
         } else {
             resampled_buf.append(&mut raw_buf);
@@ -1139,7 +1344,10 @@ fn run_live_capture(
             let infer_s = ctx.perf_total_ms / 1000.0;
             eprintln!(
                 "Audio: {:.1} s processed in {:.1} s compute ({:.2}x realtime), {:.1} s wall clock",
-                audio_s, infer_s, audio_s / infer_s, wall_ms / 1000.0
+                audio_s,
+                infer_s,
+                audio_s / infer_s,
+                wall_ms / 1000.0
             );
         }
     }

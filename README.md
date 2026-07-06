@@ -54,6 +54,9 @@ qwen-asr -d qwen3-asr-0.6b -i audio.wav --silent      # transcript only
 cat audio.wav | qwen-asr -d qwen3-asr-0.6b --stdin     # pipe from stdin
 qwen-asr -d qwen3-asr-0.6b -i long.wav -S 30           # segmented
 qwen-asr -d qwen3-asr-0.6b -i audio.wav --stream       # streaming
+qwen-asr -d qwen3-asr-0.6b -i audio.wav --srt           # SRT subtitles
+qwen-asr -d qwen3-asr-0.6b -i audio.wav --json out.json # structured JSON
+qwen-asr -d qwen3-asr-0.6b -i audio.wav --aligner-dir qwen3-aligner-0.6b --srt out.srt --vtt out.vtt
 qwen-asr -d qwen3-asr-0.6b --live --device "BlackHole 2ch"         # live capture (macOS)
 qwen-asr -d qwen3-asr-0.6b --live --vad --device "BlackHole 2ch"   # VAD live
 qwen-asr -d qwen3-aligner-0.6b -i audio.wav --align "Hello world" --align-language English  # alignment
@@ -76,10 +79,58 @@ qwen-asr -d qwen3-aligner-0.6b -i audio.wav --align "Hello world" --align-langua
 | `--stream` | Streaming mode | off |
 | `--stream-chunk-sec <s>` | Chunk size for streaming | 2.0 |
 | `--language <lang>` | Force output language (`en`, `zh`, `ja`, ...) | auto |
+| `--srt [path]` | Write SRT subtitles | `<input>.srt` |
+| `--vtt [path]` | Write WebVTT subtitles | `<input>.vtt` |
+| `--json [path]` | Write structured JSON; stdout when path is omitted | off |
+| `--aligner-dir <dir>` | ForcedAligner model for word timestamps and sentence-level subtitles | off |
 | `--silent` | Transcript only, no status output | off |
 | `--profile` | Print timing breakdown | off |
 
 </details>
+
+## Output Formats
+
+By default, `qwen-asr` prints plain text to stdout. Output flags are opt-in and can be combined; the audio is transcribed once and shared across requested outputs.
+
+```bash
+qwen-asr -d qwen3-asr-0.6b -i audio.wav --srt
+qwen-asr -d qwen3-asr-0.6b -i audio.wav --vtt captions.vtt
+qwen-asr -d qwen3-asr-0.6b -i audio.wav --json transcript.json
+qwen-asr -d qwen3-asr-0.6b -i audio.wav --json
+```
+
+SRT and VTT use segment-level timestamps unless an aligner model is supplied. For sentence-level subtitle cues and JSON word timestamps, pass a Qwen3-ForcedAligner model:
+
+```bash
+qwen-asr -d qwen3-asr-0.6b -i audio.wav \
+  --aligner-dir qwen3-aligner-0.6b \
+  --srt captions.srt --vtt captions.vtt --json transcript.json
+```
+
+The JSON output has this shape:
+
+```json
+{
+  "transcription_info": {
+    "language": "en",
+    "duration": 123.456
+  },
+  "text": "Full transcript text",
+  "word_count": 42,
+  "segments": [
+    {
+      "start": 0.000,
+      "end": 8.750,
+      "text": "Segment transcript text",
+      "words": [
+        { "word": "Shenyang,", "start": 1.120, "end": 1.440 }
+      ],
+      "word_count": 3
+    }
+  ],
+  "vtt": "WEBVTT\n\n1\n00:00:01.120 --> 00:00:08.750\nSegment transcript text\n\n"
+}
+```
 
 ## Build
 

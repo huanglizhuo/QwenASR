@@ -1,7 +1,7 @@
-use qwen_asr::context::QwenCtx;
-use qwen_asr::transcribe;
 use qwen_asr::align;
+use qwen_asr::context::QwenCtx;
 use qwen_asr::kernels;
+use qwen_asr::transcribe;
 
 use std::sync::Mutex;
 
@@ -11,8 +11,14 @@ static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
 fn setup_model() -> Option<QwenCtx> {
     let model_dir = "qwen3-asr-0.6b";
-    if !std::path::Path::new(model_dir).join("model.safetensors").exists() {
-        eprintln!("Skipping regression test: model not downloaded at {}", model_dir);
+    if !std::path::Path::new(model_dir)
+        .join("model.safetensors")
+        .exists()
+    {
+        eprintln!(
+            "Skipping regression test: model not downloaded at {}",
+            model_dir
+        );
         return None;
     }
     kernels::set_verbose(0);
@@ -24,8 +30,12 @@ fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
     let mut dp = vec![vec![0usize; b.len() + 1]; a.len() + 1];
-    for i in 0..=a.len() { dp[i][0] = i; }
-    for j in 0..=b.len() { dp[0][j] = j; }
+    for i in 0..=a.len() {
+        dp[i][0] = i;
+    }
+    for j in 0..=b.len() {
+        dp[0][j] = j;
+    }
     for i in 1..=a.len() {
         for j in 1..=b.len() {
             let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
@@ -56,8 +66,13 @@ fn test_offline_jfk() {
 
     let expected = "And so, my fellow Americans, ask not what your country can do for you; ask what you can do for your country.";
     let dist = levenshtein(&text.to_lowercase(), &expected.to_lowercase());
-    assert!(dist <= 5,
-        "JFK offline: Levenshtein distance {} > 5\nExpected: {}\nGot: {}", dist, expected, text);
+    assert!(
+        dist <= 5,
+        "JFK offline: Levenshtein distance {} > 5\nExpected: {}\nGot: {}",
+        dist,
+        expected,
+        text
+    );
 }
 
 #[test]
@@ -78,10 +93,16 @@ fn test_offline_test_speech() {
     let text = result.unwrap();
 
     // Allow some tolerance for ASR output
-    assert!(text.to_lowercase().contains("hello"),
-        "Should contain 'hello', got: {}", text);
-    assert!(text.to_lowercase().contains("speech"),
-        "Should contain 'speech', got: {}", text);
+    assert!(
+        text.to_lowercase().contains("hello"),
+        "Should contain 'hello', got: {}",
+        text
+    );
+    assert!(
+        text.to_lowercase().contains("speech"),
+        "Should contain 'speech', got: {}",
+        text
+    );
 }
 
 #[test]
@@ -91,7 +112,8 @@ fn test_segmented_mode() {
         Some(c) => c,
         None => return,
     };
-    let wav = "/tmp/qwen-asr-ref/samples/night_of_the_living_dead_1968/45s_dont_be_afraid_of_me.wav";
+    let wav =
+        "/tmp/qwen-asr-ref/samples/night_of_the_living_dead_1968/45s_dont_be_afraid_of_me.wav";
     if !std::path::Path::new(wav).exists() {
         eprintln!("Skipping: {} not found", wav);
         return;
@@ -104,8 +126,16 @@ fn test_segmented_mode() {
 
     // Check key phrases are present
     let lower = text.to_lowercase();
-    assert!(lower.contains("afraid"), "Should contain 'afraid', got: {}", text);
-    assert!(lower.contains("helen"), "Should contain 'helen', got: {}", text);
+    assert!(
+        lower.contains("afraid"),
+        "Should contain 'afraid', got: {}",
+        text
+    );
+    assert!(
+        lower.contains("helen"),
+        "Should contain 'helen', got: {}",
+        text
+    );
 }
 
 #[test]
@@ -132,8 +162,13 @@ fn test_streaming_mode() {
 
     let expected = "And so, my fellow Americans, ask not what your country can do for you; ask what you can do for your country.";
     let dist = levenshtein(&text.to_lowercase(), &expected.to_lowercase());
-    assert!(dist <= 10,
-        "JFK streaming: Levenshtein distance {} > 10\nExpected: {}\nGot: {}", dist, expected, text);
+    assert!(
+        dist <= 10,
+        "JFK streaming: Levenshtein distance {} > 10\nExpected: {}\nGot: {}",
+        dist,
+        expected,
+        text
+    );
 }
 
 fn load_audio_reference() -> String {
@@ -167,8 +202,13 @@ fn test_offline_audio_wav() {
     let text = result.unwrap();
 
     let dist = levenshtein(&text.to_lowercase(), &reference.to_lowercase());
-    assert!(dist <= 5,
-        "audio.wav offline: Levenshtein distance {} > 5\nExpected: {}\nGot: {}", dist, reference, text);
+    assert!(
+        dist <= 5,
+        "audio.wav offline: Levenshtein distance {} > 5\nExpected: {}\nGot: {}",
+        dist,
+        reference,
+        text
+    );
 }
 
 #[test]
@@ -195,8 +235,13 @@ fn test_segmented_audio_wav() {
     let text = result.unwrap();
 
     let dist = levenshtein(&text.to_lowercase(), &reference.to_lowercase());
-    assert!(dist <= 10,
-        "audio.wav segmented: Levenshtein distance {} > 10\nExpected: {}\nGot: {}", dist, reference, text);
+    assert!(
+        dist <= 10,
+        "audio.wav segmented: Levenshtein distance {} > 10\nExpected: {}\nGot: {}",
+        dist,
+        reference,
+        text
+    );
 }
 
 #[test]
@@ -226,14 +271,25 @@ fn test_streaming_audio_wav() {
     let text = result.unwrap();
 
     let dist = levenshtein(&text.to_lowercase(), &reference.to_lowercase());
-    assert!(dist <= 10,
-        "audio.wav streaming: Levenshtein distance {} > 10\nExpected: {}\nGot: {}", dist, reference, text);
+    assert!(
+        dist <= 10,
+        "audio.wav streaming: Levenshtein distance {} > 10\nExpected: {}\nGot: {}",
+        dist,
+        reference,
+        text
+    );
 }
 
 fn setup_aligner_model() -> Option<QwenCtx> {
     let model_dir = "qwen3-aligner-0.6b";
-    if !std::path::Path::new(model_dir).join("model.safetensors").exists() {
-        eprintln!("Skipping alignment test: aligner model not downloaded at {}", model_dir);
+    if !std::path::Path::new(model_dir)
+        .join("model.safetensors")
+        .exists()
+    {
+        eprintln!(
+            "Skipping alignment test: aligner model not downloaded at {}",
+            model_dir
+        );
         return None;
     }
     kernels::set_verbose(0);
@@ -266,19 +322,77 @@ fn test_forced_align() {
 
     // Word count should match whitespace-split of input text
     let expected_words: Vec<&str> = text.split_whitespace().collect();
-    assert_eq!(results.len(), expected_words.len(),
-        "Word count mismatch: expected {}, got {}", expected_words.len(), results.len());
+    assert_eq!(
+        results.len(),
+        expected_words.len(),
+        "Word count mismatch: expected {}, got {}",
+        expected_words.len(),
+        results.len()
+    );
 
     // All timestamps should be non-negative
     for r in &results {
-        assert!(r.start_ms >= 0.0, "Negative start_ms for '{}': {}", r.text, r.start_ms);
-        assert!(r.end_ms >= 0.0, "Negative end_ms for '{}': {}", r.text, r.end_ms);
+        assert!(
+            r.start_ms >= 0.0,
+            "Negative start_ms for '{}': {}",
+            r.text,
+            r.start_ms
+        );
+        assert!(
+            r.end_ms >= 0.0,
+            "Negative end_ms for '{}': {}",
+            r.text,
+            r.end_ms
+        );
     }
 
     // Timestamps should be generally non-decreasing (each word starts >= previous word's start)
     for i in 1..results.len() {
-        assert!(results[i].start_ms >= results[i - 1].start_ms,
+        assert!(
+            results[i].start_ms >= results[i - 1].start_ms,
             "Non-monotonic start_ms at word '{}' ({}): {} < {}",
-            results[i].text, i, results[i].start_ms, results[i - 1].start_ms);
+            results[i].text,
+            i,
+            results[i].start_ms,
+            results[i - 1].start_ms
+        );
+    }
+}
+
+#[test]
+fn test_transcribe_full_json_shape() {
+    let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    let mut ctx = match setup_model() {
+        Some(c) => c,
+        None => return,
+    };
+
+    let wav = "audio.wav";
+    if !std::path::Path::new(wav).exists() {
+        eprintln!("Skipping: {} not found", wav);
+        return;
+    }
+
+    let samples = qwen_asr::audio::load_wav(wav);
+    assert!(samples.is_some(), "Should load audio.wav");
+    let samples = samples.unwrap();
+
+    let result = transcribe::transcribe_full(&mut ctx, None, &samples, None);
+    assert!(result.is_some(), "Full transcription should succeed");
+    let result = result.unwrap();
+
+    assert!(
+        !result.segments.is_empty(),
+        "Should produce at least one segment"
+    );
+    assert!(result.vtt.starts_with("WEBVTT\n\n"));
+    assert!(result.to_json().contains("\"transcription_info\""));
+    assert!(result.to_json().contains("\"segments\""));
+
+    let mut prev_end = 0;
+    for segment in &result.segments {
+        assert!(segment.start_ms <= segment.end_ms);
+        assert!(segment.start_ms >= prev_end);
+        prev_end = segment.end_ms;
     }
 }
