@@ -468,6 +468,14 @@ pub struct DecoderBuffers {
     pub gate_buf: Vec<f32>,
     pub ffn_out: Vec<f32>,
 
+    /// INT8 quantization scratch for the fused single-token decode region
+    /// (aarch64): quantized layer input (`dim`), attention output (`q_dim`)
+    /// and FFN activation (`intermediate`). Reused across layers/tokens so the
+    /// region never allocates.
+    pub x_int8: Vec<i8>,
+    pub attn_int8: Vec<i8>,
+    pub ffn_int8: Vec<i8>,
+
     // Prefill buffers
     pub pref_x: Vec<f32>,
     pub pref_x_norm: Vec<f32>,
@@ -510,6 +518,9 @@ impl DecoderBuffers {
             proj_out: vec![0.0f32; dim],
             gate_buf: vec![0.0f32; 2 * intermediate],
             ffn_out: vec![0.0f32; intermediate],
+            x_int8: vec![0i8; dim],
+            attn_int8: vec![0i8; q_dim],
+            ffn_int8: vec![0i8; intermediate],
             pref_x: Vec::new(),
             pref_x_norm: Vec::new(),
             pref_q: Vec::new(),
@@ -767,6 +778,183 @@ pub fn decoder_forward(
 
     let scale = 1.0 / (head_dim as f32).sqrt();
 
+    // aarch64: run the whole 28-layer single-token loop inside ONE persistent
+    // parallel region. Workers stay resident across every stage of every layer,
+    // synchronized by spin barriers, instead of one thread-pool dispatch/join
+    // cycle per stage (~5 per layer). Row/head partitions are identical to the
+    // standalone threaded kernels, and each output element is written by
+    // exactly one thread, so results are bit-identical to the dispatch-per-stage
+    // path. Serial glue (norms, RoPE, KV write, activation quantization) runs on
+    // tid 0 between barriers — microsecond-scale work at dim 1024.
+    #[cfg(target_arch = "aarch64")]
+    {
+        let total_seq = pos + 1;
+        let n_kv = kv_cache.n_kv_heads;
+        let kv_head_stride = kv_cache.head_stride();
+        let layers: &[DecLayer] = &decoder.layers;
+
+        // Shared mutable state, published across threads only via barriers.
+        // scales[0]: QKV input, [1]: O-proj input, [2]: SwiGLU input, [3]: down-proj input.
+        let mut scales = [0.0f32; 4];
+        let scales_ptr = scales.as_mut_ptr() as usize;
+
+        let x_ptr = bufs.x.as_mut_ptr() as usize;
+        let x_norm_ptr = bufs.x_norm.as_mut_ptr() as usize;
+        let q_ptr = bufs.q.as_mut_ptr() as usize;
+        let k_ptr = bufs.k.as_mut_ptr() as usize;
+        let v_ptr = bufs.v.as_mut_ptr() as usize;
+        let attn_out_ptr = bufs.attn_out.as_mut_ptr() as usize;
+        let ffn_out_ptr = bufs.ffn_out.as_mut_ptr() as usize;
+        let x_int8_ptr = bufs.x_int8.as_mut_ptr() as usize;
+        let attn_int8_ptr = bufs.attn_int8.as_mut_ptr() as usize;
+        let ffn_int8_ptr = bufs.ffn_int8.as_mut_ptr() as usize;
+        let kv_k_ptr = kv_cache.k.as_mut_ptr() as usize;
+        let kv_v_ptr = kv_cache.v.as_mut_ptr() as usize;
+
+        kernels::parallel_region(|barrier, tid, nt| {
+            for (layer_idx, layer) in layers.iter().enumerate() {
+                let layer_kv_off = layer_idx * n_kv * kv_head_stride;
+                let k_base = unsafe { (kv_k_ptr as *const f32).add(layer_kv_off) };
+                let v_base = unsafe { (kv_v_ptr as *const f32).add(layer_kv_off) };
+
+                // Stage: pre-attention norm + input quantization (tid 0).
+                if tid == 0 {
+                    let x = unsafe { std::slice::from_raw_parts(x_ptr as *const f32, dim) };
+                    let x_norm = unsafe { std::slice::from_raw_parts_mut(x_norm_ptr as *mut f32, dim) };
+                    kernels::rms_norm(x_norm, x, &layer.input_norm, 1, dim, eps);
+                    let x_int8 = unsafe { std::slice::from_raw_parts_mut(x_int8_ptr as *mut i8, dim) };
+                    unsafe { *(scales_ptr as *mut f32) = kernels::quantize_into(x_int8, x_norm); }
+                }
+                barrier.wait();
+
+                // Stage: fused QKV projection, split over q|k|v output rows.
+                {
+                    let (s, e) = kernels::range_for(tid, nt, q_dim + 2 * kv_dim);
+                    let x_scale = unsafe { *(scales_ptr as *const f32) };
+                    unsafe {
+                        kernels::int8_qkv_range(
+                            q_ptr as *mut f32, k_ptr as *mut f32, v_ptr as *mut f32,
+                            x_int8_ptr as *const i8, x_scale,
+                            layer.wq_int8.as_ptr(), layer.wq_int8_scales.as_ptr(),
+                            layer.wk_int8.as_ptr(), layer.wk_int8_scales.as_ptr(),
+                            layer.wv_int8.as_ptr(), layer.wv_int8_scales.as_ptr(),
+                            dim, q_dim, kv_dim, s, e,
+                        );
+                    }
+                }
+                barrier.wait();
+
+                // Stage: q/k norms, RoPE, KV-cache write (tid 0 serial glue).
+                if tid == 0 {
+                    let q = unsafe { std::slice::from_raw_parts_mut(q_ptr as *mut f32, q_dim) };
+                    let k = unsafe { std::slice::from_raw_parts_mut(k_ptr as *mut f32, kv_dim) };
+                    kernels::rms_norm_per_head(q, &layer.q_norm_weight, 1, n_heads, head_dim, eps);
+                    kernels::rms_norm_per_head(k, &layer.k_norm_weight, 1, n_kv_heads, head_dim, eps);
+                    kernels::apply_rope_neox(q, rope_cos, rope_sin, 1, n_heads, head_dim);
+                    kernels::apply_rope_neox(k, rope_cos, rope_sin, 1, n_kv_heads, head_dim);
+
+                    // Head-contiguous KV write at `pos` (same as k/v_write_pos).
+                    let v = unsafe { std::slice::from_raw_parts(v_ptr as *const f32, kv_dim) };
+                    for h in 0..n_kv {
+                        let dst = layer_kv_off + h * kv_head_stride + pos * head_dim;
+                        let src = h * head_dim;
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                k.as_ptr().add(src), (kv_k_ptr as *mut f32).add(dst), head_dim);
+                            std::ptr::copy_nonoverlapping(
+                                v.as_ptr().add(src), (kv_v_ptr as *mut f32).add(dst), head_dim);
+                        }
+                    }
+                }
+                barrier.wait();
+
+                // Stage: causal attention, split by KV-head group (GQA-paired).
+                if let Some((h0, h1)) = kernels::attn_head_range(tid, nt, 1, n_heads, n_kv_heads) {
+                    let attn_out = unsafe { std::slice::from_raw_parts_mut(attn_out_ptr as *mut f32, q_dim) };
+                    let q = unsafe { std::slice::from_raw_parts(q_ptr as *const f32, q_dim) };
+                    kernels::causal_attention_heads(
+                        attn_out, q, k_base, v_base, kv_head_stride,
+                        1, total_seq, n_heads, n_kv_heads, head_dim, scale, pos, h0, h1,
+                    );
+                }
+                barrier.wait();
+
+                // Stage: quantize attention output for the O-projection (tid 0).
+                if tid == 0 {
+                    let attn_out = unsafe { std::slice::from_raw_parts(attn_out_ptr as *const f32, q_dim) };
+                    let attn_int8 = unsafe { std::slice::from_raw_parts_mut(attn_int8_ptr as *mut i8, q_dim) };
+                    unsafe { *(scales_ptr as *mut f32).add(1) = kernels::quantize_into(attn_int8, attn_out); }
+                }
+                barrier.wait();
+
+                // Stage: O-projection with fused residual add (x += attn @ wo).
+                // Each output row of x is owned by exactly one thread.
+                {
+                    let (s, e) = kernels::range_for(tid, nt, dim);
+                    let x_scale = unsafe { *(scales_ptr as *const f32).add(1) };
+                    unsafe {
+                        kernels::int8_matvec_range(
+                            x_ptr as *mut f32, attn_int8_ptr as *const i8, x_scale,
+                            layer.wo_int8.as_ptr(), layer.wo_int8_scales.as_ptr(),
+                            Some(x_ptr as *const f32), q_dim, s, e,
+                        );
+                    }
+                }
+                barrier.wait();
+
+                // Stage: post-attention norm + input quantization (tid 0).
+                if tid == 0 {
+                    let x = unsafe { std::slice::from_raw_parts(x_ptr as *const f32, dim) };
+                    let x_norm = unsafe { std::slice::from_raw_parts_mut(x_norm_ptr as *mut f32, dim) };
+                    kernels::rms_norm(x_norm, x, &layer.post_attn_norm, 1, dim, eps);
+                    let x_int8 = unsafe { std::slice::from_raw_parts_mut(x_int8_ptr as *mut i8, dim) };
+                    unsafe { *(scales_ptr as *mut f32).add(2) = kernels::quantize_into(x_int8, x_norm); }
+                }
+                barrier.wait();
+
+                // Stage: fused gate_up + SwiGLU, split over intermediate rows.
+                {
+                    let (s, e) = kernels::range_for(tid, nt, intermediate);
+                    let x_scale = unsafe { *(scales_ptr as *const f32).add(2) };
+                    unsafe {
+                        kernels::int8_swiglu_range(
+                            ffn_out_ptr as *mut f32, x_int8_ptr as *const i8, x_scale,
+                            layer.gate_up_int8.as_ptr(), layer.gate_up_int8_scales.as_ptr(),
+                            dim, s, e,
+                        );
+                    }
+                }
+                barrier.wait();
+
+                // Stage: quantize FFN activation for the down-projection (tid 0).
+                if tid == 0 {
+                    let ffn_out = unsafe { std::slice::from_raw_parts(ffn_out_ptr as *const f32, intermediate) };
+                    let ffn_int8 = unsafe { std::slice::from_raw_parts_mut(ffn_int8_ptr as *mut i8, intermediate) };
+                    unsafe { *(scales_ptr as *mut f32).add(3) = kernels::quantize_into(ffn_int8, ffn_out); }
+                }
+                barrier.wait();
+
+                // Stage: down-projection with fused residual add (x += ffn @ down).
+                {
+                    let (s, e) = kernels::range_for(tid, nt, dim);
+                    let x_scale = unsafe { *(scales_ptr as *const f32).add(3) };
+                    unsafe {
+                        kernels::int8_matvec_range(
+                            x_ptr as *mut f32, ffn_int8_ptr as *const i8, x_scale,
+                            layer.down_int8.as_ptr(), layer.down_int8_scales.as_ptr(),
+                            Some(x_ptr as *const f32), intermediate, s, e,
+                        );
+                    }
+                }
+                // Next layer's tid-0 norm reads every row of x; the region join
+                // covers the last layer, and this barrier covers the rest.
+                barrier.wait();
+            }
+        });
+    }
+
+    // Non-aarch64 (BF16) path: unchanged dispatch-per-stage layer loop.
+    #[cfg(not(target_arch = "aarch64"))]
     for (layer_idx, layer) in decoder.layers.iter().enumerate() {
         kernels::rms_norm(
             &mut bufs.x_norm[..dim],
@@ -777,24 +965,6 @@ pub fn decoder_forward(
             eps,
         );
 
-        // INT8 fused QKV projection (aarch64 only, BF16 fallback on x86_64)
-        #[cfg(target_arch = "aarch64")]
-        kernels::linear_nobias_int8_qkv(
-            &mut bufs.q[..q_dim],
-            &mut bufs.k[..kv_dim],
-            &mut bufs.v[..kv_dim],
-            &bufs.x_norm[..dim],
-            &layer.wq_int8,
-            &layer.wq_int8_scales,
-            &layer.wk_int8,
-            &layer.wk_int8_scales,
-            &layer.wv_int8,
-            &layer.wv_int8_scales,
-            dim,
-            q_dim,
-            kv_dim,
-        );
-        #[cfg(not(target_arch = "aarch64"))]
         unsafe {
             kernels::linear_nobias_bf16(&mut bufs.q[..q_dim], &bufs.x_norm[..dim], layer.wq_weight_bf16, 1, dim, q_dim);
             kernels::linear_nobias_bf16(&mut bufs.k[..kv_dim], &bufs.x_norm[..dim], layer.wk_weight_bf16, 1, dim, kv_dim);
@@ -858,17 +1028,7 @@ pub fn decoder_forward(
             pos,
         );
 
-        // O-projection with fused residual add: x += attn_out @ wo (INT8 on aarch64, BF16 on x86_64)
-        #[cfg(target_arch = "aarch64")]
-        kernels::linear_nobias_int8_addto(
-            &mut bufs.x[..dim],
-            &bufs.attn_out[..q_dim],
-            &layer.wo_int8,
-            &layer.wo_int8_scales,
-            q_dim,
-            dim,
-        );
-        #[cfg(not(target_arch = "aarch64"))]
+        // O-projection with fused residual add: x += attn_out @ wo
         kernels::linear_nobias_bf16_addto(
             &mut bufs.x[..dim],
             &bufs.attn_out[..q_dim],
@@ -886,17 +1046,7 @@ pub fn decoder_forward(
             eps,
         );
 
-        // gate_up + SwiGLU (INT8 on aarch64, BF16 on x86_64)
-        #[cfg(target_arch = "aarch64")]
-        kernels::linear_nobias_int8_swiglu(
-            &mut bufs.ffn_out[..intermediate],
-            &bufs.x_norm[..dim],
-            &layer.gate_up_int8,
-            &layer.gate_up_int8_scales,
-            dim,
-            intermediate,
-        );
-        #[cfg(not(target_arch = "aarch64"))]
+        // gate_up + SwiGLU
         kernels::linear_nobias_bf16_swiglu(
             &mut bufs.ffn_out[..intermediate],
             &bufs.x_norm[..dim],
@@ -905,17 +1055,7 @@ pub fn decoder_forward(
             intermediate,
         );
 
-        // down-projection with fused residual add: x += ffn_out @ down (INT8 on aarch64, BF16 on x86_64)
-        #[cfg(target_arch = "aarch64")]
-        kernels::linear_nobias_int8_addto(
-            &mut bufs.x[..dim],
-            &bufs.ffn_out[..intermediate],
-            &layer.down_int8,
-            &layer.down_int8_scales,
-            intermediate,
-            dim,
-        );
-        #[cfg(not(target_arch = "aarch64"))]
+        // down-projection with fused residual add: x += ffn_out @ down
         kernels::linear_nobias_bf16_addto(
             &mut bufs.x[..dim],
             &bufs.ffn_out[..intermediate],

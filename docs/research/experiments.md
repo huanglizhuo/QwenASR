@@ -3483,6 +3483,73 @@ heavy offline and segmented modes by ~3.2–3.5%; streaming is within noise
 (dominated by other costs). The change was kept in
 `crates/qwen-asr/src/kernels/mod.rs`.
 
+### R5-B: fused single-token decoder layer parallel region
+
+Change:
+- Follow-up to the deferred F9 audit: single-token `decoder_forward` issued ~5
+  independent `parallel_for` dispatches per layer per token (QKV, attention,
+  O-proj, SwiGLU, down-proj), ~140 dispatch/wake/join cycles per token across
+  28 layers, with F25 having measured the dispatch ceiling at 70–105 ms per
+  benchmark run.
+- Added a persistent parallel-region facility to the thread pool
+  (`crates/qwen-asr/src/kernels/mod.rs`): `parallel_region` dispatches once and
+  keeps every worker resident inside the closure, and a reusable
+  generation-counter spin barrier (`RegionBarrier`, cache-line-padded
+  `arrived`/`generation` atomics, AcqRel arrival + Release/Acquire generation
+  hand-off, no-op for `nt == 1`) synchronizes dependent stages inside the
+  region.
+- Factored the per-range inner bodies of the INT8 decode kernels into slice
+  functions (`int8_matvec_range`, `int8_qkv_range`, `int8_swiglu_range`, plus
+  `attn_head_range` reusing the R5-A KV-group partition and the existing
+  `causal_attention_heads`). The public kernels delegate to these same slice
+  functions under their own `parallel_for`, so prefill and all other callers
+  are unchanged, and `quantize_into` writes activation quantization into
+  reusable `DecoderBuffers` scratch (`x_int8`/`attn_int8`/`ffn_int8`).
+- On aarch64, `decoder_forward` now runs the whole 28-layer single-token loop
+  inside ONE `parallel_region` (~2 dispatches per token including the lm_head
+  argmax, down from ~141): matvec/attention stages are computed in row/head
+  slices identical to the standalone threaded kernels, and the serial glue
+  (pre/post-attn `rms_norm`, activation quantization, `rms_norm_per_head`,
+  RoPE, KV-cache write — microsecond-scale at dim 1024) runs on tid 0 between
+  spin barriers. Every output element is written by exactly one thread and
+  every producer→consumer stage boundary has a barrier, so results are
+  bit-identical. The B9 argmax/grow/ensure overlap after the final norm is
+  untouched, as are decoder prefill, the encoder, and the non-aarch64 (BF16)
+  layer loop.
+
+Baseline is HEAD (`31713a9`), measured back-to-back in the same session
+(`bench/run.sh --runs 10`):
+
+| Mode | Baseline | R5-B fused region | Delta |
+|------|---------:|------------------:|------:|
+| offline (inference) | 848.0 ms | 806.0 ms | −5.0% |
+| offline (wall) | 1085.1 ms | 1052.5 ms | −3.0% |
+| segmented (inference) | 837.0 ms | 807.0 ms | −3.6% |
+| segmented (wall) | 1080.2 ms | 1055.0 ms | −2.3% |
+| streaming (inference) | 831.0 ms | 804.0 ms | −3.2% |
+| streaming (wall) | 1073.5 ms | 1054.7 ms | −1.8% |
+
+- 100-file LibriSpeech offline WER (fused-region binary, this session):
+
+| Metric | Baseline (R5-A session) | R5-B fused region |
+|--------|------------------------:|------------------:|
+| Corpus WER | 0.0357 | 0.0357 |
+| Macro WER | 0.0397 | 0.0397 |
+| Corpus CER | 0.0122 | 0.0122 |
+
+Decision: **Accepted.** WER is identical to baseline on the full 100-file
+corpus and the `bench/samples/audio.wav` offline transcript is byte-identical,
+as required for a change that only moves existing per-row/per-head work between
+threads without changing any row's FP operation order. What the
+dispatch-elimination actually measured: replacing ~140 thread-pool
+dispatch/wake/join cycles per token with one dispatch plus ~280 sub-microsecond
+spin-barrier crossings recovers 27–42 ms per benchmark run (3.2–5.0% inference
+time), consistent with F25's measured 70–105 ms dispatch ceiling once the
+retained argmax/prefill dispatches and the barrier cost are accounted for. All
+three modes improve; the decode-heaviest mode (offline) improves most. Code
+kept in `crates/qwen-asr/src/kernels/mod.rs` and
+`crates/qwen-asr/src/decoder.rs`.
+
 
 ---
 

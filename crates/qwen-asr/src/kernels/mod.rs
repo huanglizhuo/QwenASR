@@ -375,6 +375,84 @@ fn parallel_for<F: Fn(usize, usize) + Send + Sync>(f: F) {
     }
 }
 
+/// Cache-line-padded wrapper to keep two atomics on separate cache lines and
+/// avoid false sharing between the arrival counter and the generation counter.
+#[cfg(target_arch = "aarch64")]
+#[repr(align(64))]
+struct CachePadded<T>(T);
+
+/// Spin barrier for use inside a [`parallel_region`]. Generation-counter based:
+/// every participant increments `arrived`; the last arriver resets `arrived`
+/// and bumps `generation` (Release), which the spinning participants observe
+/// (Acquire). Reusable across many stages within one region. Correct for
+/// `nt == 1` (immediate no-op) and for participants whose stage slice was empty
+/// (they still call `wait` the same number of times as everyone else).
+#[cfg(target_arch = "aarch64")]
+pub(crate) struct RegionBarrier {
+    arrived: CachePadded<AtomicUsize>,
+    generation: CachePadded<AtomicUsize>,
+    nt: usize,
+}
+
+#[cfg(target_arch = "aarch64")]
+impl RegionBarrier {
+    #[inline]
+    fn new(nt: usize) -> Self {
+        RegionBarrier {
+            arrived: CachePadded(AtomicUsize::new(0)),
+            generation: CachePadded(AtomicUsize::new(0)),
+            nt,
+        }
+    }
+
+    /// Block until all `nt` participants have called `wait`.
+    #[inline]
+    pub(crate) fn wait(&self) {
+        if self.nt <= 1 {
+            return;
+        }
+        let gen = self.generation.0.load(Ordering::Acquire);
+        // AcqRel so the arrival RMWs form a release sequence: the last arriver
+        // acquires every earlier participant's writes (e.g. tid-0 serial glue),
+        // and its `generation` Release then publishes them to all waiters.
+        let count = self.arrived.0.fetch_add(1, Ordering::AcqRel) + 1;
+        if count == self.nt {
+            // Last arriver: reset the counter, then open the gate.
+            self.arrived.0.store(0, Ordering::Relaxed);
+            self.generation.0.fetch_add(1, Ordering::Release);
+        } else {
+            while self.generation.0.load(Ordering::Acquire) == gen {
+                core::hint::spin_loop();
+            }
+        }
+    }
+}
+
+/// Run a closure once on every worker (plus the calling thread) in a single
+/// thread-pool dispatch, keeping the workers resident for the whole closure.
+/// The closure receives a shared [`RegionBarrier`] plus `(tid, nt)` and uses
+/// `barrier.wait()` to synchronize between dependent stages — so a multi-stage
+/// pipeline runs under one dispatch/wake/join cycle instead of one per stage.
+#[cfg(target_arch = "aarch64")]
+pub(crate) fn parallel_region<F: Fn(&RegionBarrier, usize, usize) + Send + Sync>(f: F) {
+    let n_threads = get_num_threads();
+    let barrier = RegionBarrier::new(n_threads);
+    // Reuse the existing dispatch machinery: one dispatch, and the closure body
+    // (with its internal barriers) is what keeps workers spinning across stages.
+    parallel_for(|tid, nt| f(&barrier, tid, nt));
+}
+
+/// Even split of `total` items across `nt` workers; returns this worker's
+/// `[start, end)` range (possibly empty).
+#[cfg(target_arch = "aarch64")]
+#[inline]
+pub(crate) fn range_for(tid: usize, nt: usize, total: usize) -> (usize, usize) {
+    let chunk = total.div_ceil(nt);
+    let start = (tid * chunk).min(total);
+    let end = (start + chunk).min(total);
+    (start, end)
+}
+
 // ========================================================================
 // Dispatch helpers - pick NEON/AVX/generic at compile time
 // ========================================================================
@@ -870,6 +948,104 @@ pub fn linear_nobias_bf16_swiglu(
 }
 
 /// INT8 threaded matvec: y = W_int8 @ x + bias  (x is f32, quantized on the fly)
+/// Compute output rows `[start, end)` of an INT8 matvec (`y = W @ x`, optional
+/// fused bias). Shared inner body for both the threaded public kernel and the
+/// fused decode region. `y_ptr`/`bias_ptr` may alias (fused residual add), in
+/// which case each thread owns a disjoint row range so reads-before-writes are
+/// per-row and safe. No-op when `start >= end`.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+pub(crate) unsafe fn int8_matvec_range(
+    y_ptr: *mut f32, x_int8: *const i8, x_scale: f32,
+    w_int8: *const i8, w_scales: *const f32,
+    bias_ptr: Option<*const f32>,
+    in_dim: usize, start: usize, end: usize,
+) {
+    if start >= end { return; }
+    let n = end - start;
+    let y_local = std::slice::from_raw_parts_mut(y_ptr.add(start), n);
+    let w_local = w_int8.add(start * in_dim);
+    let w_scales_local = std::slice::from_raw_parts(w_scales.add(start), n);
+    let bias_local = bias_ptr.map(|p| std::slice::from_raw_parts(p.add(start), n));
+    neon::matvec_int8(y_local, x_int8, x_scale, w_local, w_scales_local, bias_local, in_dim, n);
+}
+
+/// Compute the `[start, end)` slice (over the concatenated `q|k|v` output rows,
+/// total `q_dim + 2*kv_dim`) of the fused INT8 QKV projection. Shared inner
+/// body for the threaded public kernel and the fused decode region.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn int8_qkv_range(
+    q_ptr: *mut f32, k_ptr: *mut f32, v_ptr: *mut f32,
+    x_int8: *const i8, x_scale: f32,
+    wq: *const i8, wq_scales: *const f32,
+    wk: *const i8, wk_scales: *const f32,
+    wv: *const i8, wv_scales: *const f32,
+    in_dim: usize, q_dim: usize, kv_dim: usize,
+    start: usize, end: usize,
+) {
+    if start >= end { return; }
+    let total_dim = q_dim + 2 * kv_dim;
+    let q_end = q_dim;
+    let k_end = q_end + kv_dim;
+
+    // Q range
+    if start < q_end {
+        let s = start;
+        let e = end.min(q_end);
+        if s < e {
+            let y = std::slice::from_raw_parts_mut(q_ptr.add(s), e - s);
+            let sc = std::slice::from_raw_parts(wq_scales.add(s), e - s);
+            neon::matvec_int8(y, x_int8, x_scale, wq.add(s * in_dim), sc, None, in_dim, e - s);
+        }
+    }
+    // K range
+    if start < k_end && end > q_end {
+        let s = start.max(q_end) - q_end;
+        let e = end.min(k_end) - q_end;
+        if s < e {
+            let y = std::slice::from_raw_parts_mut(k_ptr.add(s), e - s);
+            let sc = std::slice::from_raw_parts(wk_scales.add(s), e - s);
+            neon::matvec_int8(y, x_int8, x_scale, wk.add(s * in_dim), sc, None, in_dim, e - s);
+        }
+    }
+    // V range
+    if end > k_end {
+        let s = start.max(k_end) - k_end;
+        let e = end.min(total_dim) - k_end;
+        if s < e {
+            let y = std::slice::from_raw_parts_mut(v_ptr.add(s), e - s);
+            let sc = std::slice::from_raw_parts(wv_scales.add(s), e - s);
+            neon::matvec_int8(y, x_int8, x_scale, wv.add(s * in_dim), sc, None, in_dim, e - s);
+        }
+    }
+}
+
+/// Compute intermediate rows `[start, end)` of the fused INT8 gate_up + SwiGLU
+/// projection. Shared inner body for the threaded public kernel and the fused
+/// decode region. `x_int8` is the already-quantized input of length `in_dim`.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+pub(crate) unsafe fn int8_swiglu_range(
+    ffn_ptr: *mut f32, x_int8: *const i8, x_scale: f32,
+    w_int8: *const i8, w_scales: *const f32,
+    in_dim: usize, start: usize, end: usize,
+) {
+    if start >= end { return; }
+    let n_rows = end - start;
+    let w_local = w_int8.add(2 * start * in_dim);
+    let w_scales_local = std::slice::from_raw_parts(w_scales.add(2 * start), 2 * n_rows);
+    let mut gate_up_local = vec![0.0f32; 2 * n_rows];
+    neon::matvec_int8(&mut gate_up_local, x_int8, x_scale, w_local, w_scales_local, None, in_dim, 2 * n_rows);
+    let ffn_local = std::slice::from_raw_parts_mut(ffn_ptr.add(start), n_rows);
+    for j in 0..n_rows {
+        let g = gate_up_local[2 * j];
+        let u = gate_up_local[2 * j + 1];
+        ffn_local[j] = g / (1.0 + (-g).exp()) * u;
+    }
+}
+
 fn int8_matvec_threaded(y: &mut [f32], x: &[f32], w_int8: &[i8], w_scales: &[f32], bias: Option<&[f32]>, in_dim: usize, out_dim: usize) {
     let (x_int8, x_scale) = quantize_f32_to_int8(x);
     let n_threads = get_num_threads();
@@ -890,18 +1066,14 @@ fn int8_matvec_threaded(y: &mut [f32], x: &[f32], w_int8: &[i8], w_scales: &[f32
         let bias_ptr = bias.map(|b| b.as_ptr() as usize);
 
         parallel_for(|tid, nt| {
-            let chunk = out_dim.div_ceil(nt);
-            let start = tid * chunk;
-            let end = (start + chunk).min(out_dim);
-            if start >= end { return; }
-
-            let y_local = unsafe { std::slice::from_raw_parts_mut((y_ptr as *mut f32).add(start), end - start) };
-            let w_local = unsafe { (w_int8_ptr as *const i8).add(start * in_dim) };
-            let w_scales_local = unsafe { std::slice::from_raw_parts((w_scales_ptr as *const f32).add(start), end - start) };
-            let bias_local = bias_ptr.map(|p| unsafe { std::slice::from_raw_parts((p as *const f32).add(start), end - start) });
-
+            let (start, end) = range_for(tid, nt, out_dim);
             unsafe {
-                neon::matvec_int8(y_local, x_int8_ptr as *const i8, x_scale, w_local, w_scales_local, bias_local, in_dim, end - start);
+                int8_matvec_range(
+                    y_ptr as *mut f32, x_int8_ptr as *const i8, x_scale,
+                    w_int8_ptr as *const i8, w_scales_ptr as *const f32,
+                    bias_ptr.map(|p| p as *const f32),
+                    in_dim, start, end,
+                );
             }
         });
     }
@@ -950,46 +1122,16 @@ pub fn linear_nobias_int8_qkv(
         let wv_scales_ptr = wv_scales.as_ptr() as usize;
 
         parallel_for(|tid, nt| {
-            let chunk = total_dim.div_ceil(nt);
-            let start = tid * chunk;
-            let end = (start + chunk).min(total_dim);
-            if start >= end { return; }
-
-            let q_end = q_dim;
-            let k_end = q_end + kv_dim;
-
-            // Q range
-            if start < q_end {
-                let s = start;
-                let e = end.min(q_end);
-                if s < e {
-                    let y_local = unsafe { std::slice::from_raw_parts_mut((q_ptr as *mut f32).add(s), e - s) };
-                    let w_local = unsafe { (wq_ptr as *const i8).add(s * in_dim) };
-                    let scales_local = unsafe { std::slice::from_raw_parts((wq_scales_ptr as *const f32).add(s), e - s) };
-                    unsafe { neon::matvec_int8(y_local, x_int8_ptr as *const i8, x_scale, w_local, scales_local, None, in_dim, e - s); }
-                }
-            }
-            // K range
-            if start < k_end && end > q_end {
-                let s = start.max(q_end) - q_end;
-                let e = end.min(k_end) - q_end;
-                if s < e {
-                    let y_local = unsafe { std::slice::from_raw_parts_mut((k_ptr as *mut f32).add(s), e - s) };
-                    let w_local = unsafe { (wk_ptr as *const i8).add(s * in_dim) };
-                    let scales_local = unsafe { std::slice::from_raw_parts((wk_scales_ptr as *const f32).add(s), e - s) };
-                    unsafe { neon::matvec_int8(y_local, x_int8_ptr as *const i8, x_scale, w_local, scales_local, None, in_dim, e - s); }
-                }
-            }
-            // V range
-            if end > k_end {
-                let s = start.max(k_end) - k_end;
-                let e = end.min(total_dim) - k_end;
-                if s < e {
-                    let y_local = unsafe { std::slice::from_raw_parts_mut((v_ptr as *mut f32).add(s), e - s) };
-                    let w_local = unsafe { (wv_ptr as *const i8).add(s * in_dim) };
-                    let scales_local = unsafe { std::slice::from_raw_parts((wv_scales_ptr as *const f32).add(s), e - s) };
-                    unsafe { neon::matvec_int8(y_local, x_int8_ptr as *const i8, x_scale, w_local, scales_local, None, in_dim, e - s); }
-                }
+            let (start, end) = range_for(tid, nt, total_dim);
+            unsafe {
+                int8_qkv_range(
+                    q_ptr as *mut f32, k_ptr as *mut f32, v_ptr as *mut f32,
+                    x_int8_ptr as *const i8, x_scale,
+                    wq_ptr as *const i8, wq_scales_ptr as *const f32,
+                    wk_ptr as *const i8, wk_scales_ptr as *const f32,
+                    wv_ptr as *const i8, wv_scales_ptr as *const f32,
+                    in_dim, q_dim, kv_dim, start, end,
+                );
             }
         });
     }
@@ -1031,25 +1173,13 @@ pub fn linear_nobias_int8_swiglu(
         }
 
         parallel_for(|tid, nt| {
-            let chunk = intermediate.div_ceil(nt);
-            let start = tid * chunk;
-            let end = (start + chunk).min(intermediate);
-            if start >= end { return; }
-            let n_rows = end - start;
-
-            let w_local = unsafe { (w_int8_ptr as *const i8).add(2 * start * in_dim) };
-            let w_scales_local = unsafe { std::slice::from_raw_parts((w_scales_ptr as *const f32).add(2 * start), 2 * n_rows) };
-
-            let mut gate_up_local = vec![0.0f32; 2 * n_rows];
+            let (start, end) = range_for(tid, nt, intermediate);
             unsafe {
-                neon::matvec_int8(&mut gate_up_local, x_int8_ptr as *const i8, x_scale, w_local, w_scales_local, None, in_dim, 2 * n_rows);
-            }
-
-            let ffn_local = unsafe { std::slice::from_raw_parts_mut((ffn_ptr as *mut f32).add(start), n_rows) };
-            for j in 0..n_rows {
-                let g = gate_up_local[2 * j];
-                let u = gate_up_local[2 * j + 1];
-                ffn_local[j] = g / (1.0 + (-g).exp()) * u;
+                int8_swiglu_range(
+                    ffn_ptr as *mut f32, x_int8_ptr as *const i8, x_scale,
+                    w_int8_ptr as *const i8, w_scales_ptr as *const f32,
+                    in_dim, start, end,
+                );
             }
         });
     }
@@ -1606,7 +1736,7 @@ pub fn bidirectional_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
 /// Multi-token (seq_q>1): 3-pass BLAS sgemm approach.
 #[cfg(feature = "blas")]
 #[allow(clippy::too_many_arguments)]
-fn causal_attention_heads(out: &mut [f32], q: &[f32],
+pub(crate) fn causal_attention_heads(out: &mut [f32], q: &[f32],
                            k_base: *const f32, v_base: *const f32,
                            head_stride: usize,
                            seq_q: usize, seq_k: usize, n_heads: usize, n_kv_heads: usize,
@@ -1771,7 +1901,7 @@ fn causal_attention_heads(out: &mut [f32], q: &[f32],
 /// Fallback: online softmax causal attention (no BLAS), head-contiguous KV layout.
 #[cfg(not(feature = "blas"))]
 #[allow(clippy::too_many_arguments)]
-fn causal_attention_heads(out: &mut [f32], q: &[f32],
+pub(crate) fn causal_attention_heads(out: &mut [f32], q: &[f32],
                            k_base: *const f32, v_base: *const f32,
                            head_stride: usize,
                            seq_q: usize, seq_k: usize, n_heads: usize, n_kv_heads: usize,
@@ -1848,6 +1978,31 @@ fn causal_attention_heads(out: &mut [f32], q: &[f32],
     }
 }
 
+/// Partition attention work for one worker. Single-token (`seq_q == 1`) splits
+/// by KV-head **group** so a GQA-paired group is never split across threads
+/// (each K/V row is loaded once per group); multi-token splits by query head.
+/// Returns this worker's `[head_start, head_end)`, or `None` if empty. Shared
+/// by the threaded public kernel and the fused decode region.
+#[inline]
+pub(crate) fn attn_head_range(tid: usize, nt: usize, seq_q: usize, n_heads: usize, n_kv_heads: usize)
+    -> Option<(usize, usize)>
+{
+    if seq_q == 1 && n_heads % n_kv_heads == 0 {
+        let heads_per_kv = n_heads / n_kv_heads;
+        let chunk = n_kv_heads.div_ceil(nt);
+        let g0 = tid * chunk;
+        let g1 = (g0 + chunk).min(n_kv_heads);
+        if g0 >= g1 { return None; }
+        Some((g0 * heads_per_kv, g1 * heads_per_kv))
+    } else {
+        let chunk = n_heads.div_ceil(nt);
+        let h0 = tid * chunk;
+        let h1 = (h0 + chunk).min(n_heads);
+        if h0 >= h1 { return None; }
+        Some((h0, h1))
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn causal_attention(out: &mut [f32], q: &[f32],
                          k_base: *const f32, v_base: *const f32,
@@ -1864,22 +2019,9 @@ pub fn causal_attention(out: &mut [f32], q: &[f32],
         let q_hidden = n_heads * head_dim;
 
         parallel_for(|tid, nt| {
-            // Single-token: split work by KV-head group so a GQA-paired group is
-            // never split across threads (each K/V row loaded once per group).
-            // Multi-token: split by query head as before.
-            let (h0, h1) = if seq_q == 1 && n_heads % n_kv_heads == 0 {
-                let heads_per_kv = n_heads / n_kv_heads;
-                let chunk = n_kv_heads.div_ceil(nt);
-                let g0 = tid * chunk;
-                let g1 = (g0 + chunk).min(n_kv_heads);
-                if g0 >= g1 { return; }
-                (g0 * heads_per_kv, g1 * heads_per_kv)
-            } else {
-                let chunk = n_heads.div_ceil(nt);
-                let h0 = tid * chunk;
-                let h1 = (h0 + chunk).min(n_heads);
-                if h0 >= h1 { return; }
-                (h0, h1)
+            let (h0, h1) = match attn_head_range(tid, nt, seq_q, n_heads, n_kv_heads) {
+                Some(r) => r,
+                None => return,
             };
 
             let out_local = unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut f32, seq_q * q_hidden) };
@@ -1995,12 +2137,25 @@ pub fn apply_rope_neox(x: &mut [f32], cos_vals: &[f32], sin_vals: &[f32],
 /// Streaming argmax: finds argmax(W_bf16 @ x) without materializing full logits.
 /// Quantize x (f32) to int8 with absmax scaling. Returns (x_int8, scale).
 pub fn quantize_f32_to_int8(x: &[f32]) -> (Vec<i8>, f32) {
+    let mut int8 = vec![0i8; x.len()];
+    let scale = quantize_into(&mut int8, x);
+    (int8, scale)
+}
+
+/// Quantize `x` into a caller-provided `dst` buffer with absmax scaling and
+/// return the scale. Bit-identical to [`quantize_f32_to_int8`] but writes into
+/// reusable storage (used by the fused decode region to avoid per-stage
+/// allocation). `dst.len()` must equal `x.len()`.
+pub fn quantize_into(dst: &mut [i8], x: &[f32]) -> f32 {
+    debug_assert_eq!(dst.len(), x.len());
     let mut max_abs = 0.0f32;
     for &v in x { max_abs = max_abs.max(v.abs()); }
     let scale = if max_abs > 0.0 { max_abs / 127.0 } else { 1.0 };
     let inv_scale = 127.0 / max_abs.max(1e-10);
-    let int8: Vec<i8> = x.iter().map(|&v| (v * inv_scale).round().clamp(-127.0, 127.0) as i8).collect();
-    (int8, scale)
+    for (d, &v) in dst.iter_mut().zip(x.iter()) {
+        *d = (v * inv_scale).round().clamp(-127.0, 127.0) as i8;
+    }
+    scale
 }
 
 /// Quantize BF16 weights to INT8 per-row. Returns (int8_data, per_row_scales).
