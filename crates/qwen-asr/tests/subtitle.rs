@@ -99,6 +99,23 @@ fn respects_cjk_width_budget_without_spaces() {
 }
 
 #[test]
+fn joins_on_adjacent_boundary_chars_not_whole_words() {
+    // "你好" + "世界": adjacent chars are both CJK — no space.
+    let cues = group_words_to_cues(
+        &[word("你好", 0.0, 400.0), word("世界", 400.0, 800.0)],
+        2000,
+    );
+    assert_eq!(cues[0].text, "你好世界");
+
+    // "你好," + "世界": the char at the boundary is an ASCII comma — space inserted.
+    let cues = group_words_to_cues(
+        &[word("你好,", 0.0, 400.0), word("世界", 400.0, 800.0)],
+        2000,
+    );
+    assert_eq!(cues[0].text, "你好, 世界");
+}
+
+#[test]
 fn falls_back_to_soft_break_on_width_overflow() {
     let cues = group_words_to_cues(
         &[

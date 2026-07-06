@@ -90,30 +90,6 @@ fn default_output_path(input: &str, extension: &str) -> String {
     format!("{}/{}.{}", dir, stem, extension)
 }
 
-fn segment_result_to_cues(
-    segment: &qwen_asr::output::SegmentResult,
-    audio_end_ms: u64,
-) -> Vec<subtitle::Cue> {
-    if segment.words.is_empty() {
-        return vec![subtitle::Cue {
-            start_ms: segment.start_ms,
-            end_ms: segment.end_ms,
-            text: segment.text.trim().to_string(),
-        }];
-    }
-
-    let words: Vec<_> = segment
-        .words
-        .iter()
-        .map(|word| align::AlignResult {
-            text: word.word.clone(),
-            start_ms: word.start_ms as f32,
-            end_ms: word.end_ms as f32,
-        })
-        .collect();
-    subtitle::group_words_to_cues(&words, audio_end_ms)
-}
-
 fn stream_token(piece: &str) {
     use std::io::Write;
     print!("{}", piece);
@@ -698,16 +674,17 @@ fn main() {
             None => None,
         };
 
-        let audio_end_ms = (samples.len() as u64 * 1000) / SAMPLE_RATE as u64;
         let mut srt_index = 1u32;
         let mut vtt_index = 1u32;
         let mut write_error: Option<String> = None;
 
-        let mut on_segment = |segment: &qwen_asr::output::SegmentResult| {
-            let cues = segment_result_to_cues(segment, audio_end_ms);
+        // Cues are computed once per segment inside transcribe_full and shared
+        // with this callback, so the streamed files match the JSON `vtt` field.
+        let mut on_segment = |_segment: &qwen_asr::output::SegmentResult,
+                              cues: &[subtitle::Cue]| {
             if let Some(file) = srt_file.as_mut() {
-                let chunk = subtitle::format_srt_from_index(&cues, srt_index);
-                srt_index += subtitle::cue_count(&cues);
+                let chunk = subtitle::format_srt_from_index(cues, srt_index);
+                srt_index += subtitle::cue_count(cues);
                 if write_error.is_none() {
                     if let Err(e) = file.write_all(chunk.as_bytes()).and_then(|_| file.flush()) {
                         write_error = Some(format!("failed to write SRT: {}", e));
@@ -715,8 +692,8 @@ fn main() {
                 }
             }
             if let Some(file) = vtt_file.as_mut() {
-                let chunk = subtitle::format_vtt_from_index(&cues, vtt_index, false);
-                vtt_index += subtitle::cue_count(&cues);
+                let chunk = subtitle::format_vtt_from_index(cues, vtt_index, false);
+                vtt_index += subtitle::cue_count(cues);
                 if write_error.is_none() {
                     if let Err(e) = file.write_all(chunk.as_bytes()).and_then(|_| file.flush()) {
                         write_error = Some(format!("failed to write VTT: {}", e));

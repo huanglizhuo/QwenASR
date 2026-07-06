@@ -175,7 +175,7 @@ fn cue_width_with(cur: &[Word], next: &Word) -> usize {
     for (idx, word) in cur.iter().chain(std::iter::once(next)).enumerate() {
         if idx > 0 {
             let prev = &cur[idx - 1];
-            if !both_cjk(&prev.text, &word.text) {
+            if !cjk_join(&prev.text, &word.text) {
                 width += 1;
             }
         }
@@ -187,7 +187,7 @@ fn cue_width_with(cur: &[Word], next: &Word) -> usize {
 fn join_words(words: &[Word]) -> String {
     let mut out = String::new();
     for (idx, word) in words.iter().enumerate() {
-        if idx > 0 && !both_cjk(&words[idx - 1].text, &word.text) {
+        if idx > 0 && !cjk_join(&words[idx - 1].text, &word.text) {
             out.push(' ');
         }
         out.push_str(&word.text);
@@ -195,8 +195,12 @@ fn join_words(words: &[Word]) -> String {
     out
 }
 
-fn both_cjk(left: &str, right: &str) -> bool {
-    left.chars().all(is_cjk_width_char) && right.chars().all(is_cjk_width_char)
+/// No space is inserted between two words when the characters adjacent to
+/// the boundary (last char of `left`, first char of `right`) are both
+/// CJK-width chars.
+fn cjk_join(left: &str, right: &str) -> bool {
+    left.chars().next_back().is_some_and(is_cjk_width_char)
+        && right.chars().next().is_some_and(is_cjk_width_char)
 }
 
 pub fn is_cjk_width_char(ch: char) -> bool {

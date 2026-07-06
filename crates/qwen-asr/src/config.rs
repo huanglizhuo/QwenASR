@@ -174,38 +174,52 @@ impl QwenConfig {
     }
 }
 
-pub const SUPPORTED_LANGUAGES: &[&str] = &[
-    "Chinese",
-    "English",
-    "Cantonese",
-    "Arabic",
-    "German",
-    "French",
-    "Spanish",
-    "Portuguese",
-    "Indonesian",
-    "Italian",
-    "Korean",
-    "Russian",
-    "Thai",
-    "Vietnamese",
-    "Japanese",
-    "Turkish",
-    "Hindi",
-    "Malay",
-    "Dutch",
-    "Swedish",
-    "Danish",
-    "Finnish",
-    "Polish",
-    "Czech",
-    "Filipino",
-    "Persian",
-    "Greek",
-    "Romanian",
-    "Hungarian",
-    "Macedonian",
+/// Single source of truth for supported languages: `(English name, ISO 639 code)`.
+/// `SUPPORTED_LANGUAGES` and [`language_to_iso639`] are both derived from it.
+const LANGUAGE_TABLE: &[(&str, &str)] = &[
+    ("Chinese", "zh"),
+    ("English", "en"),
+    ("Cantonese", "yue"),
+    ("Arabic", "ar"),
+    ("German", "de"),
+    ("French", "fr"),
+    ("Spanish", "es"),
+    ("Portuguese", "pt"),
+    ("Indonesian", "id"),
+    ("Italian", "it"),
+    ("Korean", "ko"),
+    ("Russian", "ru"),
+    ("Thai", "th"),
+    ("Vietnamese", "vi"),
+    ("Japanese", "ja"),
+    ("Turkish", "tr"),
+    ("Hindi", "hi"),
+    ("Malay", "ms"),
+    ("Dutch", "nl"),
+    ("Swedish", "sv"),
+    ("Danish", "da"),
+    ("Finnish", "fi"),
+    ("Polish", "pl"),
+    ("Czech", "cs"),
+    ("Filipino", "fil"),
+    ("Persian", "fa"),
+    ("Greek", "el"),
+    ("Romanian", "ro"),
+    ("Hungarian", "hu"),
+    ("Macedonian", "mk"),
 ];
+
+const SUPPORTED_LANGUAGES_ARRAY: [&str; LANGUAGE_TABLE.len()] = {
+    let mut names = [""; LANGUAGE_TABLE.len()];
+    let mut i = 0;
+    while i < LANGUAGE_TABLE.len() {
+        names[i] = LANGUAGE_TABLE[i].0;
+        i += 1;
+    }
+    names
+};
+
+pub const SUPPORTED_LANGUAGES: &[&str] = &SUPPORTED_LANGUAGES_ARRAY;
 
 pub fn normalize_language(language: &str) -> Option<String> {
     let trimmed = language.trim();
@@ -227,39 +241,11 @@ pub fn normalize_language(language: &str) -> Option<String> {
 }
 
 pub fn language_to_iso639(name: &str) -> Option<&'static str> {
-    match normalize_language(name)?.as_str() {
-        "Chinese" => Some("zh"),
-        "English" => Some("en"),
-        "Cantonese" => Some("yue"),
-        "Arabic" => Some("ar"),
-        "German" => Some("de"),
-        "French" => Some("fr"),
-        "Spanish" => Some("es"),
-        "Portuguese" => Some("pt"),
-        "Indonesian" => Some("id"),
-        "Italian" => Some("it"),
-        "Korean" => Some("ko"),
-        "Russian" => Some("ru"),
-        "Thai" => Some("th"),
-        "Vietnamese" => Some("vi"),
-        "Japanese" => Some("ja"),
-        "Turkish" => Some("tr"),
-        "Hindi" => Some("hi"),
-        "Malay" => Some("ms"),
-        "Dutch" => Some("nl"),
-        "Swedish" => Some("sv"),
-        "Danish" => Some("da"),
-        "Finnish" => Some("fi"),
-        "Polish" => Some("pl"),
-        "Czech" => Some("cs"),
-        "Filipino" => Some("fil"),
-        "Persian" => Some("fa"),
-        "Greek" => Some("el"),
-        "Romanian" => Some("ro"),
-        "Hungarian" => Some("hu"),
-        "Macedonian" => Some("mk"),
-        _ => None,
-    }
+    let normalized = normalize_language(name)?;
+    LANGUAGE_TABLE
+        .iter()
+        .find(|(lang, _)| *lang == normalized)
+        .map(|(_, code)| *code)
 }
 
 #[cfg(test)]
@@ -268,42 +254,20 @@ mod tests {
 
     #[test]
     fn maps_supported_languages_to_iso639_codes() {
-        let expected = [
-            ("Chinese", "zh"),
-            ("English", "en"),
-            ("Cantonese", "yue"),
-            ("Arabic", "ar"),
-            ("German", "de"),
-            ("French", "fr"),
-            ("Spanish", "es"),
-            ("Portuguese", "pt"),
-            ("Indonesian", "id"),
-            ("Italian", "it"),
-            ("Korean", "ko"),
-            ("Russian", "ru"),
-            ("Thai", "th"),
-            ("Vietnamese", "vi"),
-            ("Japanese", "ja"),
-            ("Turkish", "tr"),
-            ("Hindi", "hi"),
-            ("Malay", "ms"),
-            ("Dutch", "nl"),
-            ("Swedish", "sv"),
-            ("Danish", "da"),
-            ("Finnish", "fi"),
-            ("Polish", "pl"),
-            ("Czech", "cs"),
-            ("Filipino", "fil"),
-            ("Persian", "fa"),
-            ("Greek", "el"),
-            ("Romanian", "ro"),
-            ("Hungarian", "hu"),
-            ("Macedonian", "mk"),
-        ];
-
-        for (language, code) in expected {
-            assert_eq!(language_to_iso639(language), Some(code));
+        // Every table entry must be a supported language and round-trip
+        // through normalization to its ISO code.
+        for (language, code) in LANGUAGE_TABLE {
+            assert!(SUPPORTED_LANGUAGES.contains(language));
+            assert_eq!(language_to_iso639(language), Some(*code));
+            assert_eq!(language_to_iso639(&language.to_lowercase()), Some(*code));
         }
+        assert_eq!(SUPPORTED_LANGUAGES.len(), LANGUAGE_TABLE.len());
+
+        // Spot checks against the frozen mapping.
+        assert_eq!(language_to_iso639("English"), Some("en"));
+        assert_eq!(language_to_iso639("Chinese"), Some("zh"));
+        assert_eq!(language_to_iso639("Cantonese"), Some("yue"));
+        assert_eq!(language_to_iso639("Filipino"), Some("fil"));
         assert_eq!(language_to_iso639("not a language"), None);
     }
 }

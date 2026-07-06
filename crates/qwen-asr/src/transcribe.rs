@@ -7,7 +7,7 @@ use crate::context::QwenCtx;
 use crate::decoder::{self, tok_embed_bf16_to_f32};
 use crate::kernels;
 use crate::output::{SegmentResult, TranscriptionResult, WordTimestamp};
-use crate::subtitle::{format_vtt, group_words_to_cues, segment_to_cue};
+use crate::subtitle::{format_vtt, group_words_to_cues, segment_to_cue, Cue};
 use crate::tokenizer::QwenTokenizer;
 
 use std::time::Instant;
@@ -476,6 +476,47 @@ pub fn transcribe_segmented(ctx: &mut QwenCtx, samples: &[f32]) -> Option<Vec<Tr
         return None;
     }
 
+    let mut segments: Vec<TranscriptSegment> = Vec::new();
+    transcribe_splits(ctx, samples, &tokenizer, &mut |_, seg_start, seg_end, text| {
+        segments.push(TranscriptSegment {
+            start_ms: samples_to_ms(seg_start),
+            end_ms: samples_to_ms(seg_end),
+            text,
+        });
+    });
+
+    Some(segments)
+}
+
+/// Build low-energy split points for segmented transcription. Always contains
+/// a leading `0`; further splits are added only when the audio exceeds one
+/// segment (`target_samples + margin_samples`).
+fn build_split_points(
+    samples: &[f32],
+    target_samples: usize,
+    margin_samples: usize,
+    search_sec: f32,
+) -> Vec<usize> {
+    let mut splits = vec![0usize];
+    let mut pos = 0;
+    while pos + target_samples + margin_samples < samples.len() {
+        let split = find_split_point(samples, pos + target_samples, search_sec);
+        splits.push(split);
+        pos = split;
+    }
+    splits
+}
+
+/// Shared segmentation driver for timestamp-preserving transcription: split
+/// `samples` at low-energy boundaries (`ctx.segment_sec`, 30 s fallback),
+/// transcribe each split, and invoke `on_text` with
+/// `(ctx, seg_start, seg_end, text)` for every non-empty segment transcript.
+fn transcribe_splits(
+    ctx: &mut QwenCtx,
+    samples: &[f32],
+    tokenizer: &QwenTokenizer,
+    on_text: &mut dyn FnMut(&mut QwenCtx, usize, usize, String),
+) {
     let segment_sec = if ctx.segment_sec > 0.0 {
         ctx.segment_sec
     } else {
@@ -486,44 +527,7 @@ pub fn transcribe_segmented(ctx: &mut QwenCtx, samples: &[f32]) -> Option<Vec<Tr
     let margin_samples = (search_sec * SAMPLE_RATE as f32) as usize;
     let min_samples = SAMPLE_RATE as usize / 2;
 
-    let mut segments: Vec<TranscriptSegment> = Vec::new();
-
-    if samples.len() <= target_samples + margin_samples {
-        let seg_end = samples.len();
-        let start_ms = 0u64;
-        let end_ms = (seg_end as u64 * 1000) / SAMPLE_RATE as u64;
-        ctx.perf_audio_ms = 1000.0 * seg_end as f64 / SAMPLE_RATE as f64;
-        let seg_buf: Vec<f32>;
-        let seg_ptr = if seg_end < min_samples {
-            seg_buf = {
-                let mut buf = vec![0.0f32; min_samples];
-                buf[..seg_end].copy_from_slice(samples);
-                buf
-            };
-            &seg_buf[..]
-        } else {
-            samples
-        };
-        if let Some((text, _)) = transcribe_segment(ctx, seg_ptr, &tokenizer, None) {
-            if !text.is_empty() {
-                segments.push(TranscriptSegment {
-                    start_ms,
-                    end_ms,
-                    text,
-                });
-            }
-        }
-        return Some(segments);
-    }
-
-    // Build split points over the original (uncompacted) samples
-    let mut splits = vec![0usize];
-    let mut pos = 0;
-    while pos + target_samples + margin_samples < samples.len() {
-        let split = find_split_point(samples, pos + target_samples, search_sec);
-        splits.push(split);
-        pos = split;
-    }
+    let splits = build_split_points(samples, target_samples, margin_samples, search_sec);
     let n_splits = splits.len();
 
     for s in 0..n_splits {
@@ -534,9 +538,6 @@ pub fn transcribe_segmented(ctx: &mut QwenCtx, samples: &[f32]) -> Option<Vec<Tr
             samples.len()
         };
         let seg_len = seg_end - seg_start;
-
-        let start_ms = (seg_start as u64 * 1000) / SAMPLE_RATE as u64;
-        let end_ms = (seg_end as u64 * 1000) / SAMPLE_RATE as u64;
 
         // Set perf_audio_ms to this segment's duration so any per-segment
         // token budgets are relative to the segment, not the full file.
@@ -554,7 +555,7 @@ pub fn transcribe_segmented(ctx: &mut QwenCtx, samples: &[f32]) -> Option<Vec<Tr
             &samples[seg_start..seg_end]
         };
 
-        let (text, _) = match transcribe_segment(ctx, seg_ptr, &tokenizer, None) {
+        let (text, _) = match transcribe_segment(ctx, seg_ptr, tokenizer, None) {
             Some(r) => r,
             None => continue,
         };
@@ -563,21 +564,15 @@ pub fn transcribe_segmented(ctx: &mut QwenCtx, samples: &[f32]) -> Option<Vec<Tr
             continue;
         }
 
-        segments.push(TranscriptSegment {
-            start_ms,
-            end_ms,
-            text,
-        });
+        on_text(ctx, seg_start, seg_end, text);
     }
-
-    Some(segments)
 }
 
 pub fn transcribe_full(
     ctx: &mut QwenCtx,
     mut aligner: Option<&mut QwenCtx>,
     samples: &[f32],
-    mut on_segment: Option<&mut dyn FnMut(&SegmentResult)>,
+    mut on_segment: Option<&mut dyn FnMut(&SegmentResult, &[Cue])>,
 ) -> Option<TranscriptionResult> {
     ctx.reset_perf();
 
@@ -586,63 +581,14 @@ pub fn transcribe_full(
         return None;
     }
 
-    let segment_sec = if ctx.segment_sec > 0.0 {
-        ctx.segment_sec
-    } else {
-        30.0
-    };
-    let search_sec = ctx.search_sec.min(segment_sec / 2.0);
-    let target_samples = (segment_sec * SAMPLE_RATE as f32) as usize;
-    let margin_samples = (search_sec * SAMPLE_RATE as f32) as usize;
-    let min_samples = SAMPLE_RATE as usize / 2;
-
-    let mut splits = vec![0usize];
-    if samples.len() > target_samples + margin_samples {
-        let mut pos = 0;
-        while pos + target_samples + margin_samples < samples.len() {
-            let split = find_split_point(samples, pos + target_samples, search_sec);
-            splits.push(split);
-            pos = split;
-        }
-    }
-    let n_splits = splits.len();
-
+    let audio_end_ms = samples_to_ms(samples.len());
     let mut segments = Vec::new();
-    let mut all_cues = Vec::new();
+    let mut all_cues: Vec<Cue> = Vec::new();
     let mut text = String::new();
 
-    for s in 0..n_splits {
-        let seg_start = splits[s];
-        let seg_end = if s + 1 < n_splits {
-            splits[s + 1]
-        } else {
-            samples.len()
-        };
-        let seg_len = seg_end - seg_start;
-        let start_ms = (seg_start as u64 * 1000) / SAMPLE_RATE as u64;
-        let end_ms = (seg_end as u64 * 1000) / SAMPLE_RATE as u64;
-
-        ctx.perf_audio_ms = 1000.0 * seg_len as f64 / SAMPLE_RATE as f64;
-
-        let seg_buf: Vec<f32>;
-        let seg_ptr = if seg_len < min_samples {
-            seg_buf = {
-                let mut buf = vec![0.0f32; min_samples];
-                buf[..seg_len].copy_from_slice(&samples[seg_start..seg_end]);
-                buf
-            };
-            &seg_buf[..]
-        } else {
-            &samples[seg_start..seg_end]
-        };
-
-        let (seg_text, _) = match transcribe_segment(ctx, seg_ptr, &tokenizer, None) {
-            Some(r) => r,
-            None => continue,
-        };
-        if seg_text.is_empty() {
-            continue;
-        }
+    transcribe_splits(ctx, samples, &tokenizer, &mut |ctx, seg_start, seg_end, seg_text| {
+        let start_ms = samples_to_ms(seg_start);
+        let end_ms = samples_to_ms(seg_end);
 
         if !text.is_empty() {
             let prev = *text.as_bytes().last().unwrap_or(&0);
@@ -686,18 +632,18 @@ pub fn transcribe_full(
             }
         }
 
-        if cue_words.is_empty() {
-            all_cues.push(segment_to_cue(&TranscriptSegment {
+        // Compute this segment's cues exactly once; the on_segment callback
+        // (incremental SRT/VTT writing) and the final `vtt` field both see
+        // the same cue list, keeping streamed and one-shot output identical.
+        let seg_cues = if cue_words.is_empty() {
+            vec![segment_to_cue(&TranscriptSegment {
                 start_ms,
                 end_ms,
                 text: seg_text.clone(),
-            }));
+            })]
         } else {
-            all_cues.extend(group_words_to_cues(
-                &cue_words,
-                samples_to_ms(samples.len()),
-            ));
-        }
+            group_words_to_cues(&cue_words, audio_end_ms)
+        };
 
         let segment = SegmentResult {
             start_ms,
@@ -707,10 +653,11 @@ pub fn transcribe_full(
         };
 
         if let Some(callback) = on_segment.as_deref_mut() {
-            callback(&segment);
+            callback(&segment, &seg_cues);
         }
+        all_cues.extend(seg_cues);
         segments.push(segment);
-    }
+    });
 
     let language = ctx
         .force_language
@@ -787,13 +734,7 @@ pub fn transcribe_audio(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
     }
 
     // Build split points
-    let mut splits = vec![0usize];
-    let mut pos = 0;
-    while pos + target_samples + margin_samples < audio_samples.len() {
-        let split = find_split_point(&audio_samples, pos + target_samples, search);
-        splits.push(split);
-        pos = split;
-    }
+    let splits = build_split_points(&audio_samples, target_samples, margin_samples, search);
     let n_splits = splits.len();
 
     if kernels::verbose() >= 2 {
