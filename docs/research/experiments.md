@@ -11,6 +11,7 @@ This file collects the optimization experiment diaries.
 - [Speed Improvement Experiments — Round 3 (unchecked-ideas.md)](#speed-improvement-experiments--round-3-unchecked-ideasmd)
 - [Speed Improvement Experiments — Round 4 (ggml-idea.md)](#speed-improvement-experiments--round-4-ggml-ideamd)
 - [Fable Ideas Experiments](#fable-ideas-experiments)
+- [Speed Improvement Experiments — Round 5 (decode-focused)](#speed-improvement-experiments--round-5-decode-focused)
 - [Autoresearch Program Baseline Experiments](#autoresearch-program-baseline-experiments)
 - [Historical Commit Ledger (perf-opt-1 branch)](#historical-commit-ledger-perf-opt-1-branch)
 - [Opportunity Backlog](#opportunity-backlog)
@@ -3415,6 +3416,72 @@ Decision: **Accepted.** WER is unchanged and all offline/segmented modes show a
 small speed improvement; streaming is within noise. The change is low-risk and
 removes a small serial dependency at the end of each decode step. The code was
 kept in `crates/qwen-asr/src/decoder.rs`.
+
+
+---
+
+## Speed Improvement Experiments — Round 5 (decode-focused)
+
+Goal: improve decode speed on the single-token generation path. Gate is the
+100-file LibriSpeech offline corpus WER ≤ 0.04 (dataset
+`librispeech-wer-bench/dev-clean-2`). Machine Apple M5 Pro, model
+`qwen3-asr-0.6b`. Speed measured with `bench/run.sh --runs 10` (median inference
+`total_ms` and wall), attention timing via `--profile`.
+
+### R5-A: GQA-paired KV scan in single-token causal attention
+
+Change:
+- The decoder uses GQA with `dec_heads = 16` query heads over `dec_kv_heads = 8`
+  KV heads (`heads_per_kv = 2`), so in the single-token (`seq_q == 1`) online-
+  softmax path of `causal_attention_heads` (both the `blas` and non-`blas`
+  variants in `crates/qwen-asr/src/kernels/mod.rs`) every K row and V row was
+  loaded from the KV cache twice per layer per token — once for each query head
+  sharing the KV head.
+- Restructured the single-token path to iterate over **KV-head groups** and
+  process all `heads_per_kv` query heads of a group in one pass over positions
+  `j in 0..k_end`: `k_row`/`v_row` are loaded once per position and reused for
+  every query head in the group, with per-head online-softmax state
+  (`max_score`, `sum_exp`, output row) kept on the stack. Each query head's
+  per-`j` operation sequence (dot, max/exp recurrence, order over `j`) is
+  unchanged — only the interleaving between the paired heads changes — so the
+  output is bit-identical. The general case is handled (`heads_per_kv` may be 1;
+  head ranges are clamped to group boundaries), nothing hardcodes 2.
+- `causal_attention`'s `parallel_for` chunking now splits the single-token case
+  by KV-head **group** (8 groups) so a paired group is never split across
+  threads; the multi-token BLAS path and its chunking are untouched.
+
+Baseline is current HEAD (`ca7e2f9`), measured back-to-back in the same session
+(`bench/run.sh --runs 10`):
+
+| Mode | Baseline | R5-A paired | Delta |
+|------|---------:|------------:|------:|
+| offline (inference) | 869.5 ms | 839.0 ms | −3.5% |
+| offline (wall) | 1115.7 ms | 1082.4 ms | −3.0% |
+| segmented (inference) | 872.5 ms | 844.5 ms | −3.2% |
+| segmented (wall) | 1117.4 ms | 1087.7 ms | −2.7% |
+| streaming (inference) | 847.0 ms | 848.0 ms | +0.1% |
+| streaming (wall) | 1096.8 ms | 1098.6 ms | +0.2% |
+
+- Attention kernel time (`--profile`, offline, `--runs 3`):
+  `attention_causal_ms` 101.7 → 83.9 (−17.5%).
+
+- 100-file LibriSpeech offline WER (baseline binary and R5-A binary, both this
+  session):
+
+| Metric | Baseline | R5-A paired |
+|--------|---------:|------------:|
+| Corpus WER | 0.0357 | 0.0357 |
+| Macro WER | 0.0397 | 0.0397 |
+| Corpus CER | 0.0122 | 0.0122 |
+
+Decision: **Accepted.** WER is bit-identical to baseline (confirmed on the full
+100-file corpus and by identical bench transcripts), as expected for a change
+that only reorders which heads share a memory load and never a head's own FP
+operation order. Halving the KV-cache read traffic in the bandwidth-bound
+single-token path cuts `attention_causal_ms` by ~17.5% and improves the decode-
+heavy offline and segmented modes by ~3.2–3.5%; streaming is within noise
+(dominated by other costs). The change was kept in
+`crates/qwen-asr/src/kernels/mod.rs`.
 
 
 ---

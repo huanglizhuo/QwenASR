@@ -1615,50 +1615,81 @@ fn causal_attention_heads(out: &mut [f32], q: &[f32],
     let heads_per_kv = n_heads / n_kv_heads;
     let q_hidden = n_heads * head_dim;
 
-    // Single-token path: online softmax without allocation or BLAS
+    // Single-token path: online softmax without allocation or BLAS.
+    // Iterate by KV-head group so each K/V row is loaded once and shared by
+    // all `heads_per_kv` query heads of that group (GQA-paired scan). Each
+    // query head's per-j operation sequence is identical to the per-head scan
+    // below — only the interleaving between heads changes — so results are
+    // bit-identical.
     if seq_q == 1 {
-        for h in head_start..head_end {
+        // Per-head online-softmax state, indexed within the current group.
+        // heads_per_kv is bounded by the model's head count; keep on stack.
+        const MAX_GROUP: usize = 32;
+        debug_assert!(heads_per_kv <= MAX_GROUP);
+        let mut max_score = [-1e30f32; MAX_GROUP];
+        let mut sum_exp = [0.0f32; MAX_GROUP];
+
+        let k_end = (q_offset + 1).min(seq_k);
+
+        let mut h = head_start;
+        while h < head_end {
             let kv_h = h / heads_per_kv;
-            let k_head = unsafe { k_base.add(kv_h * head_stride) };
-            let v_head = unsafe { v_base.add(kv_h * head_stride) };
-            let q_off = h * head_dim;
-            let o_row = &mut out[q_off..q_off + head_dim];
-            let k_end = (q_offset + 1).min(seq_k);
+            // Query heads of this KV group, clamped to [head_start, head_end).
+            let group_start = h;
+            let group_end = ((kv_h + 1) * heads_per_kv).min(head_end);
+            let group_size = group_end - group_start;
+
+            let o_span = &mut out[group_start * head_dim..group_end * head_dim];
 
             if k_end == 0 {
-                for val in o_row.iter_mut().take(head_dim) { *val = 0.0; }
+                for val in o_span.iter_mut() { *val = 0.0; }
+                h = group_end;
                 continue;
             }
 
-            let q_row = &q[q_off..q_off + head_dim];
+            let k_head = unsafe { k_base.add(kv_h * head_stride) };
+            let v_head = unsafe { v_base.add(kv_h * head_stride) };
 
-            // Online softmax: single pass over KV positions
-            let mut max_score = -1e30f32;
-            let mut sum_exp = 0.0f32;
-            for val in o_row.iter_mut().take(head_dim) { *val = 0.0; }
+            for g in 0..group_size {
+                max_score[g] = -1e30f32;
+                sum_exp[g] = 0.0f32;
+            }
+            for val in o_span.iter_mut() { *val = 0.0; }
 
+            // Single pass over KV positions; each row loaded once for the group.
             for j in 0..k_end {
                 let k_row = unsafe { std::slice::from_raw_parts(k_head.add(j * head_dim), head_dim) };
                 let v_row = unsafe { std::slice::from_raw_parts(v_head.add(j * head_dim), head_dim) };
 
-                let score = dot_f32(q_row, k_row, head_dim) * scale;
+                for g in 0..group_size {
+                    let q_off = (group_start + g) * head_dim;
+                    let q_row = &q[q_off..q_off + head_dim];
+                    let o_row = &mut o_span[g * head_dim..g * head_dim + head_dim];
 
-                if score > max_score {
-                    let correction = (max_score - score).exp();
-                    sum_exp = sum_exp * correction + 1.0;
-                    vec_scale_add(o_row, v_row, correction, head_dim);
-                    max_score = score;
-                } else {
-                    let wt = (score - max_score).exp();
-                    sum_exp += wt;
-                    vec_axpy_inplace(o_row, v_row, wt, head_dim);
+                    let score = dot_f32(q_row, k_row, head_dim) * scale;
+
+                    if score > max_score[g] {
+                        let correction = (max_score[g] - score).exp();
+                        sum_exp[g] = sum_exp[g] * correction + 1.0;
+                        vec_scale_add(o_row, v_row, correction, head_dim);
+                        max_score[g] = score;
+                    } else {
+                        let wt = (score - max_score[g]).exp();
+                        sum_exp[g] += wt;
+                        vec_axpy_inplace(o_row, v_row, wt, head_dim);
+                    }
                 }
             }
 
-            if sum_exp > 0.0 {
-                let inv_sum = 1.0 / sum_exp;
-                vec_scale_inplace(o_row, inv_sum, head_dim);
+            for g in 0..group_size {
+                if sum_exp[g] > 0.0 {
+                    let inv_sum = 1.0 / sum_exp[g];
+                    let o_row = &mut o_span[g * head_dim..g * head_dim + head_dim];
+                    vec_scale_inplace(o_row, inv_sum, head_dim);
+                }
             }
+
+            h = group_end;
         }
         return;
     }
@@ -1749,42 +1780,70 @@ fn causal_attention_heads(out: &mut [f32], q: &[f32],
     let heads_per_kv = n_heads / n_kv_heads;
     let q_hidden = n_heads * head_dim;
 
-    for h in head_start..head_end {
-        let kv_h = h / heads_per_kv;
+    // Per-head online-softmax state, indexed within the current KV group.
+    const MAX_GROUP: usize = 32;
+    debug_assert!(heads_per_kv <= MAX_GROUP);
+    let mut max_score = [-1e30f32; MAX_GROUP];
+    let mut sum_exp = [0.0f32; MAX_GROUP];
 
-        for i in 0..seq_q {
-            let q_off = i * q_hidden + h * head_dim;
-            let q_row = &q[q_off..q_off + head_dim];
-            let o_row = &mut out[i * q_hidden + h * head_dim..i * q_hidden + h * head_dim + head_dim];
-            let global_pos = q_offset + i;
-            let k_end = (global_pos + 1).min(seq_k);
+    for i in 0..seq_q {
+        let global_pos = q_offset + i;
+        let k_end = (global_pos + 1).min(seq_k);
+        let row_base = i * q_hidden;
 
-            let mut max_score = -1e30f32;
-            let mut sum_exp = 0.0f32;
-            for val in o_row.iter_mut().take(head_dim) { *val = 0.0; }
+        // Iterate by KV-head group so each K/V row is loaded once and shared by
+        // all query heads of that group. Each query head's per-j operation
+        // sequence is identical to a per-head scan, so results are bit-identical.
+        let mut h = head_start;
+        while h < head_end {
+            let kv_h = h / heads_per_kv;
+            let group_start = h;
+            let group_end = ((kv_h + 1) * heads_per_kv).min(head_end);
+            let group_size = group_end - group_start;
+
+            let span_start = row_base + group_start * head_dim;
+            let span_end = row_base + group_end * head_dim;
+            let o_span = &mut out[span_start..span_end];
+
+            for g in 0..group_size {
+                max_score[g] = -1e30f32;
+                sum_exp[g] = 0.0f32;
+            }
+            for val in o_span.iter_mut() { *val = 0.0; }
 
             for j in 0..k_end {
                 let k_row = unsafe { std::slice::from_raw_parts(k_base.add(kv_h * head_stride + j * head_dim), head_dim) };
                 let v_row = unsafe { std::slice::from_raw_parts(v_base.add(kv_h * head_stride + j * head_dim), head_dim) };
 
-                let score = dot_f32(q_row, k_row, head_dim) * scale;
+                for g in 0..group_size {
+                    let q_off = row_base + (group_start + g) * head_dim;
+                    let q_row = &q[q_off..q_off + head_dim];
+                    let o_row = &mut o_span[g * head_dim..g * head_dim + head_dim];
 
-                if score > max_score {
-                    let correction = (max_score - score).exp();
-                    sum_exp = sum_exp * correction + 1.0;
-                    vec_scale_add(o_row, v_row, correction, head_dim);
-                    max_score = score;
-                } else {
-                    let wt = (score - max_score).exp();
-                    sum_exp += wt;
-                    vec_axpy_inplace(o_row, v_row, wt, head_dim);
+                    let score = dot_f32(q_row, k_row, head_dim) * scale;
+
+                    if score > max_score[g] {
+                        let correction = (max_score[g] - score).exp();
+                        sum_exp[g] = sum_exp[g] * correction + 1.0;
+                        vec_scale_add(o_row, v_row, correction, head_dim);
+                        max_score[g] = score;
+                    } else {
+                        let wt = (score - max_score[g]).exp();
+                        sum_exp[g] += wt;
+                        vec_axpy_inplace(o_row, v_row, wt, head_dim);
+                    }
                 }
             }
 
-            if sum_exp > 0.0 {
-                let inv_sum = 1.0 / sum_exp;
-                vec_scale_inplace(o_row, inv_sum, head_dim);
+            for g in 0..group_size {
+                if sum_exp[g] > 0.0 {
+                    let inv_sum = 1.0 / sum_exp[g];
+                    let o_row = &mut o_span[g * head_dim..g * head_dim + head_dim];
+                    vec_scale_inplace(o_row, inv_sum, head_dim);
+                }
             }
+
+            h = group_end;
         }
     }
 }
@@ -1805,10 +1864,23 @@ pub fn causal_attention(out: &mut [f32], q: &[f32],
         let q_hidden = n_heads * head_dim;
 
         parallel_for(|tid, nt| {
-            let chunk = n_heads.div_ceil(nt);
-            let h0 = tid * chunk;
-            let h1 = (h0 + chunk).min(n_heads);
-            if h0 >= h1 { return; }
+            // Single-token: split work by KV-head group so a GQA-paired group is
+            // never split across threads (each K/V row loaded once per group).
+            // Multi-token: split by query head as before.
+            let (h0, h1) = if seq_q == 1 && n_heads % n_kv_heads == 0 {
+                let heads_per_kv = n_heads / n_kv_heads;
+                let chunk = n_kv_heads.div_ceil(nt);
+                let g0 = tid * chunk;
+                let g1 = (g0 + chunk).min(n_kv_heads);
+                if g0 >= g1 { return; }
+                (g0 * heads_per_kv, g1 * heads_per_kv)
+            } else {
+                let chunk = n_heads.div_ceil(nt);
+                let h0 = tid * chunk;
+                let h1 = (h0 + chunk).min(n_heads);
+                if h0 >= h1 { return; }
+                (h0, h1)
+            };
 
             let out_local = unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut f32, seq_q * q_hidden) };
             let q_local = unsafe { std::slice::from_raw_parts(q_ptr as *const f32, seq_q * q_hidden) };
