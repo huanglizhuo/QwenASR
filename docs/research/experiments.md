@@ -3550,6 +3550,83 @@ three modes improve; the decode-heaviest mode (offline) improves most. Code
 kept in `crates/qwen-asr/src/kernels/mod.rs` and
 `crates/qwen-asr/src/decoder.rs`.
 
+### R5-C: f16 KV cache with native f16 attention kernels
+
+Change:
+- Implemented (then reverted) the G10/F8 re-entry condition: attention kernels
+  that consume a compressed KV format directly, instead of a storage-only
+  patch. This satisfies the explicit re-entry condition recorded in both G10
+  and F8 ("only be reconsidered as part of a new attention kernel that
+  consumes the compressed KV format directly").
+- `KvCache` K/V became `Vec<u16>` holding IEEE-754 binary16 bits (halving KV
+  RSS and per-token KV read bytes). All write sites — `k_write_pos`/
+  `v_write_pos`, the head-contiguous prefill scatter, and the fused-region
+  decode write — rounded f32→f16 with round-to-nearest-even via a new NEON
+  `f32_to_f16_buf` (FCVTN/FCVTN2 inline asm) with a correct scalar fallback
+  (subnormals, RNE ties, inf/NaN clamping; unit-tested including tie-to-even
+  cases and bit-exact SIMD-vs-scalar agreement). `grow()` copied u16s;
+  `k_layer_base`/`v_layer_base` returned `*const u16`.
+- Single-token attention (`causal_attention_heads`, both blas and non-blas
+  variants): the R5-A GQA-paired scan converted each f16 K/V row to f32 once
+  per KV group into a stack buffer using NEON `f16_to_f32_buf`
+  (FCVTL/FCVTL2 inline asm), then ran the existing f32 `dot_f32`/
+  `vec_axpy_inplace`/`vec_scale_add` math. All softmax math stayed f32.
+- Multi-token prefill attention: each head's f16 K rows (then V rows) were
+  converted into one reusable `seq_k × head_dim` f32 scratch (allocated once
+  per call) before the two per-head `cblas_sgemm` calls.
+- Zero new dependencies; f16 conversion is bit-manipulation + inline asm.
+
+Results (Apple M5 Pro, back-to-back same session, `bench/run.sh --runs 10`,
+baseline binary = HEAD `307016b`; baseline run FIRST in each adjacent pair):
+
+| Mode | Baseline | R5-C f16 KV | Delta |
+|------|---------:|------------:|------:|
+| offline (inference) | 791 ms | 824 ms | +4.2% |
+| offline (wall) | 1031.0 ms | 1065.8 ms | +3.4% |
+| segmented (inference) | 793 ms | 820 ms | +3.4% |
+| segmented (wall) | 1034.6 ms | 1060.2 ms | +2.5% |
+| streaming (inference) | 787 ms | 814 ms | +3.4% |
+| streaming (wall) | 1028.6 ms | 1055.6 ms | +2.6% |
+
+A second interleaved pair (f16 run before the baseline rerun) agreed: f16
+818/819/811 ms vs baseline 791/793/787 ms inference. The regression is
+consistent, not run-ordering noise.
+
+- `--profile` offline (`--runs 3`): `attention_causal_ms` 37.0 (baseline) →
+  36.3 (f16) — flat. This counter only sees `causal_attention` dispatches
+  (prefill and non-fused paths); the R5-B fused decode region calls
+  `causal_attention_heads` directly without the profile guard, so the decode
+  regression is invisible to it. The slowdown therefore sits in the fused
+  single-token scan (per-row FCVTL conversion through a stack buffer, which
+  the f32 helpers then re-read from L1) plus the per-head prefill conversion
+  pass — added compute that the halved KV bandwidth did not pay back at these
+  sequence lengths (~seq 400, KV working set already largely cache-resident
+  per layer).
+
+- 100-file LibriSpeech offline WER (both binaries, this session):
+
+| Metric | Baseline | R5-C f16 KV |
+|--------|---------:|------------:|
+| Corpus WER | 0.0357 | 0.0365 |
+| Macro WER | 0.0397 | 0.0392 |
+| Corpus CER | 0.0122 | 0.0120 |
+
+Decision: **Rejected.** The WER gate was NOT the problem: f16 K/V rounding
+moved corpus WER only 0.0357→0.0365 (macro WER and CER slightly improved),
+comfortably inside the ≤ 0.04 gate, and the `bench/samples/audio.wav` offline
+transcript was byte-identical to baseline — f16 KV precision is a non-issue
+for this model. The change was rejected purely on speed: all three modes
+regressed ~3–4% inference time because the in-register f16→f32 conversion adds
+compute on the decode hot path that the halved KV-read bandwidth does not
+recover on this machine — post-R5-A the paired scan already halved KV traffic,
+and at typical sequence lengths the per-layer KV slice is small enough that
+the scan is no longer bandwidth-limited enough for f16 to win. This settles
+the G10/F8 question for the 0.6B model on Apple Silicon: even with native
+f16-consuming kernels (the exact re-entry condition), f16 KV is accuracy-safe
+but a speed loss; a future attempt would need conversion fused *inside* the
+dot/axpy kernels (no scratch-buffer round trip) or much longer contexts. All
+code was reverted; no dependencies were added.
+
 
 ---
 
