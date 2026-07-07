@@ -3705,6 +3705,72 @@ is ~668 MB extra RSS for the owned f32 copies, accepted as the standard
 speed-for-memory trade already established by exp-01 and D3.
 
 
+### R5-E: parallel bf16→f32 prefill weight scratch conversion
+
+Change:
+- The decoder prefill (`decoder_prefill`, and the forced aligner's
+  `decoder_prefill_logits`) streams every layer's weights through
+  `kernels::linear_nobias_bf16_scratch` — 7 weight matrices × 28 layers per
+  prefill (wq/wk/wv, wo, gate, up, down). Each multi-token call converted the
+  full BF16 weight matrix into an f32 scratch via `bf16_to_f32_buf` and then ran
+  the f32 GEMM. `bf16_to_f32_buf` was a **single-threaded** SIMD loop — per
+  prefill that is ~840 MB of BF16 reads plus ~1.7 GB of f32 scratch writes done
+  on one core while the other thread-pool workers idle. E2 parallelized the
+  *load-time* conversions; this inference-time scratch conversion was never
+  parallelized.
+- Added `kernels::bf16_to_f32_buf_parallel`: splits `n` across the persistent
+  thread pool via `parallel_for`, each worker running the existing SIMD
+  `neon`/`avx` `bf16_to_f32_buf` on its disjoint subslice. Chunk boundaries are
+  aligned to a multiple of 64 elements (SIMD-friendly, no per-chunk inner tail
+  except the last). Only parallelizes above `n >= 1<<18` elements — small
+  conversions stay serial to avoid dispatch overhead. Used it in the
+  `seq_len > 1` paths of `linear_nobias_bf16_scratch`, `linear_bf16_scratch`,
+  and `linear_accumulate_bf16_scratch`; the `seq_len == 1` matvec paths are
+  untouched. No API/storage/memory-footprint change. BF16→f32 widening is a pure
+  element-wise op over disjoint chunks, so the GEMMs consume bit-identical values.
+- `bench/samples/audio.wav` offline transcript is byte-identical to baseline.
+- Touched files: `crates/qwen-asr/src/kernels/mod.rs`. Zero new dependencies.
+
+Results (Apple M5 Pro, back-to-back same session, `bench/run.sh --runs 10`,
+baseline binary = HEAD `9141b78`, baseline run FIRST):
+
+| Mode | Baseline infer | R5-E infer | Baseline wall | R5-E wall |
+|------|---------------:|-----------:|--------------:|----------:|
+| offline   | 782.0 ms | **772.0 ms** (−1.3%) | 1031.8 ms | **1025.0 ms** (−0.7%) |
+| segmented | 782.0 ms | **768.0 ms** (−1.8%) | 1032.2 ms | **1020.9 ms** (−1.1%) |
+| streaming | 760.0 ms | **750.0 ms** (−1.3%) | 1011.8 ms | **1001.5 ms** (−1.0%) |
+
+`--profile` offline (`--runs 3`):
+
+| Counter | Baseline | R5-E |
+|---------|---------:|-----:|
+| `bf16_matvec_ms` | 242.1 | **232.7** |
+| `sgemm_ms`       | 342.8 | 338.1 |
+
+The `bf16_matvec` bucket (which wraps both the conversion and the nested GEMM)
+drops ~9.4 ms — that is the parallelized conversion share coming off the single
+core; `sgemm` is unchanged within noise. The conversion is memory-bound, so the
+speedup is bounded by memory bandwidth rather than core count, which is why the
+win is a solid but modest ~1–2% per mode rather than proportional to thread
+count.
+
+WER (100-file LibriSpeech `dev-clean-2`, offline, change binary):
+
+| Metric | Baseline (recent) | R5-E |
+|--------|------------------:|-----:|
+| Corpus WER | 0.0357 | 0.0357 |
+| Macro WER  | 0.0397 | 0.0397 |
+| Corpus CER | 0.0122 | 0.0122 |
+
+Decision: **Accepted.** WER is identical (the change is bit-exact) and inference
+improves in all three modes (−1.3% / −1.8% / −1.3%) with wall improving too
+(−0.7% / −1.1% / −1.0%) and no mode regressing. The memory-bus-saturation risk
+(parallel conversion no faster because one core already saturates bandwidth) did
+not materialize: spreading the ~840 MB read + ~1.7 GB write across idle workers
+still nets a real ~9 ms off the per-prefill conversion. The change is
+zero-cost in memory and API surface, so the modest gain is accepted outright.
+
+
 ---
 
 ## Autoresearch Program Baseline Experiments

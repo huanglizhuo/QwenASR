@@ -499,6 +499,40 @@ pub fn bf16_to_f32_buf(dst: &mut [f32], src: &[u16]) {
     }
 }
 
+/// Parallel bf16→f32 widening: splits `src`/`dst` across the persistent thread
+/// pool so idle workers share the conversion instead of one core streaming the
+/// whole matrix. Bit-exact vs [`bf16_to_f32_buf`] (pure element-wise widening
+/// over disjoint chunks). Chunk boundaries are aligned to a multiple of 64
+/// elements so each worker (except the last) runs the SIMD converter on a whole
+/// vector-width-friendly span with no per-chunk tail. Falls back to the serial
+/// converter below a size threshold or when single-threaded, to avoid dispatch
+/// overhead on small conversions.
+pub fn bf16_to_f32_buf_parallel(dst: &mut [f32], src: &[u16]) {
+    // Below this many elements the dispatch/wake/join cost outweighs the win.
+    const PAR_THRESHOLD: usize = 1 << 18;
+    let n = src.len();
+    if n < PAR_THRESHOLD || get_num_threads() <= 1 {
+        bf16_to_f32_buf(dst, src);
+        return;
+    }
+
+    // SAFETY: workers touch disjoint [start, end) spans of the same buffers.
+    let dst_send = dst.as_mut_ptr() as usize;
+    let src_send = src.as_ptr() as usize;
+
+    parallel_for(|tid, nt| {
+        // Round the per-worker span up to a multiple of 64 elements.
+        let chunk = n.div_ceil(nt).div_ceil(64) * 64;
+        let start = (tid * chunk).min(n);
+        let end = (start + chunk).min(n);
+        if start >= end { return; }
+        let len = end - start;
+        let dst_local = unsafe { std::slice::from_raw_parts_mut((dst_send as *mut f32).add(start), len) };
+        let src_local = unsafe { std::slice::from_raw_parts((src_send as *const u16).add(start), len) };
+        bf16_to_f32_buf(dst_local, src_local);
+    });
+}
+
 fn bf16_matvec_fused(y: &mut [f32], x: &[f32], w_bf16: *const u16, bias: Option<&[f32]>, in_dim: usize, out_dim: usize) {
     #[cfg(target_arch = "aarch64")]
     { unsafe { neon::bf16_matvec_fused(y, x, w_bf16, bias, in_dim, out_dim); } }
@@ -805,7 +839,7 @@ pub unsafe fn linear_nobias_bf16_scratch(y: &mut [f32], x: &[f32], w_bf16: *cons
     }
     let n = out_dim * in_dim;
     let src = unsafe { std::slice::from_raw_parts(w_bf16, n) };
-    bf16_to_f32_buf(&mut scratch[..n], src);
+    bf16_to_f32_buf_parallel(&mut scratch[..n], src);
     linear_nobias(y, x, &scratch[..n], seq_len, in_dim, out_dim);
 }
 
@@ -831,7 +865,7 @@ pub unsafe fn linear_bf16_scratch(y: &mut [f32], x: &[f32], w_bf16: *const u16, 
     }
     let n = out_dim * in_dim;
     let src = unsafe { std::slice::from_raw_parts(w_bf16, n) };
-    bf16_to_f32_buf(&mut scratch[..n], src);
+    bf16_to_f32_buf_parallel(&mut scratch[..n], src);
     linear(y, x, &scratch[..n], b, seq_len, in_dim, out_dim);
 }
 
@@ -843,7 +877,7 @@ pub unsafe fn linear_accumulate_bf16_scratch(y: &mut [f32], x: &[f32], w_bf16: *
     let _pg = ProfileGuard::new(&PROF.bf16_matvec);
     let n = out_dim * in_dim;
     let src = unsafe { std::slice::from_raw_parts(w_bf16, n) };
-    bf16_to_f32_buf(&mut scratch[..n], src);
+    bf16_to_f32_buf_parallel(&mut scratch[..n], src);
     linear_accumulate(y, x, &scratch[..n], b, seq_len, in_dim, out_dim);
 }
 
