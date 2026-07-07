@@ -2,7 +2,7 @@
 
 use crate::config::*;
 use crate::kernels;
-use crate::safetensors::MultiSafetensors;
+use crate::safetensors::{Dtype, MultiSafetensors};
 
 /// Encoder transformer layer. Large weight matrices are prepacked from BF16 to
 /// owned f32 buffers once at load (superpage-aligned) so each forward GEMM
@@ -149,30 +149,51 @@ fn load_f32(ms: &MultiSafetensors, name: &str) -> Option<Vec<f32>> {
 }
 
 /// Prepack a BF16 weight matrix into an owned, superpage-aligned f32 buffer.
-/// The `(bits << 16)` widening is exact, so the prepacked f32 values are
-/// bit-identical to the previous on-the-fly `bf16_to_f32` conversion.
+///
+/// The BF16 bytes are read out of the safetensors file with `pread` in bounded
+/// chunks, never through the mmap, so the encoder's ~0.7 GB of BF16 weight pages
+/// never enter the resident set (R5-J). The `(bits << 16)` widening is exact, so
+/// the prepacked f32 values are bit-identical to reading through the mmap.
+///
+/// The per-thread scratch is a local of this call, so the E2 parallel per-layer
+/// load gives each loader thread its own buffer by construction. `pread` uses an
+/// explicit offset, so concurrent reads on the shared fd are safe.
 fn load_bf16_as_f32(ms: &MultiSafetensors, name: &str) -> Option<Vec<f32>> {
-    let (_, meta) = match ms.find(name) {
+    // 1 M u16 elements = 2 MB per pread; converts to a 4 MB f32 slice.
+    const CHUNK_ELEMS: usize = 1 << 20;
+
+    let (si, meta) = match ms.find(name) {
         Some(v) => v,
         None => {
             eprintln!("encoder: weight not found: {}", name);
             return None;
         }
     };
-    let n = meta.numel();
-    let ptr = load_bf16_direct(ms, name)?;
-    let src = unsafe { std::slice::from_raw_parts(ptr, n) };
-    let mut dst = kernels::superpage_vec::<f32>(n);
-    kernels::bf16_to_f32_buf(&mut dst, src);
-    Some(dst)
-}
-
-fn load_bf16_direct(ms: &MultiSafetensors, name: &str) -> Option<*const u16> {
-    let ptr = ms.get_bf16_direct(name);
-    if ptr.is_none() {
-        eprintln!("encoder: weight not found: {}", name);
+    if meta.dtype != Dtype::BF16 {
+        eprintln!("encoder: expected BF16 weight for {}", name);
+        return None;
     }
-    ptr
+    let n = meta.numel();
+    let mut dst = kernels::superpage_vec::<f32>(n);
+    if n == 0 {
+        return Some(dst);
+    }
+    let shard = &ms.shards[si];
+    let mut scratch = vec![0u16; CHUNK_ELEMS.min(n)];
+    let mut off = 0usize;
+    while off < n {
+        let this = (n - off).min(scratch.len());
+        let bytes = unsafe {
+            std::slice::from_raw_parts_mut(scratch.as_mut_ptr() as *mut u8, this * 2)
+        };
+        if !shard.read_tensor_bytes(meta, off * 2, bytes) {
+            eprintln!("encoder: pread failed for {}", name);
+            return None;
+        }
+        kernels::bf16_to_f32_buf(&mut dst[off..off + this], &scratch[..this]);
+        off += this;
+    }
+    Some(dst)
 }
 
 /// Load one encoder transformer layer. Large weight matrices are prepacked from

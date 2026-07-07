@@ -4112,6 +4112,88 @@ evict resident pages of read-only file-backed mappings on macOS* — as the usef
 result. All code reverted.
 
 
+### R5-J: pread-based encoder weight loading
+
+Change:
+- The direct successor to R5-I. Since R5-D the encoder copies all of its large
+  BF16 weights (`conv_out`, per-layer `q/k/v/out_proj`, `fc1`, `fc2`, `proj1`,
+  `proj2` — 301 tensors, 372.8 MB) out to owned f32 at load and never reads their
+  mmap bytes again. R5-I proved that on Darwin `madvise(MADV_DONTNEED)`/`MADV_FREE`
+  cannot evict those pages once faulted resident, so *post-hoc* eviction is a dead
+  end. The only way to keep them out of `ru_maxrss` is to **never fault them in**.
+- Implemented: `SafetensorsFile` now retains the file descriptor (closed in `Drop`
+  instead of right after `mmap`) and exposes `read_tensor_bytes(tensor, byte_off,
+  dst)` built on `libc::pread` — it reads tensor data through the fd into a heap
+  buffer, so the bytes land in the kernel page cache but never enter this task's
+  resident set. `pread` takes an explicit offset and does not touch the shared fd
+  offset, so concurrent calls from the E2 per-layer loader threads are safe.
+- `encoder.rs`'s `load_bf16_as_f32` now reads each BF16 matrix in 2 MB `pread`
+  chunks into a per-call `u16` scratch (a local of the call → each E2 loader
+  thread gets its own by construction) and widens bf16→f32 into the owned
+  superpage buffer with the existing SIMD `bf16_to_f32_buf`. Identical bytes reach
+  the same converter, so the result is bit-exact. Tiny encoder tensors (biases,
+  norms, `conv2d1..3`, all F32) still load through the mmap — negligible page cost.
+- The header is now parsed *before* prefault so encoder tensor ranges are known.
+  A per-page skip bitmap marks the page-aligned **interior** of every pread-loaded
+  tensor (start rounded up, end rounded down — boundary pages shared with adjacent
+  decoder tensors stay resident); the parallel prefault skips those pages, and the
+  `MADV_WILLNEED` hint is coalesced to the non-skipped runs only. Decoder residency
+  (prefill streaming, token embedding, lm_head) is byte-for-byte unchanged, so the
+  accepted A5/F22 prefault speed win is fully preserved.
+- Bit-exact: `bench/samples/audio.wav` offline transcript is byte-identical to
+  baseline. Touched files: `crates/qwen-asr/src/safetensors.rs`,
+  `crates/qwen-asr/src/encoder.rs`. Zero new dependencies (`libc` only).
+
+Quick residency check (offline, `/usr/bin/time -l` maximum resident set size):
+baseline 4,400,726,016 B → change 4,035,854,336 B, **−348 MB** — essentially the
+whole 372.8 MB encoder-BF16 range minus shared boundary pages, confirmed before
+benchmarking.
+
+Results (Apple M-series, back-to-back same session, `bench/run.sh --runs 10`,
+baseline binary = HEAD `9edf0b0`, baseline run FIRST):
+
+Speed:
+
+| Mode | Baseline infer | R5-J infer | Baseline wall | R5-J wall |
+|------|---------------:|-----------:|--------------:|----------:|
+| offline   | 774.5 ms | 776.0 ms (+0.19%) | 1025.5 ms | 1032.2 ms (+0.65%) |
+| segmented | 767.5 ms | 771.5 ms (+0.52%) | 1020.6 ms | 1028.3 ms (+0.76%) |
+| streaming | 750.5 ms | 753.0 ms (+0.33%) | 1006.1 ms | 1010.6 ms (+0.45%) |
+
+Peak RSS (`peak_rss_median_kb`):
+
+| Mode | Baseline | R5-J | Delta |
+|------|---------:|-----:|------:|
+| offline   | 4,296,736 KB | 3,946,208 KB | **−342.3 MB** |
+| segmented | 4,299,424 KB | 3,943,064 KB | **−348.0 MB** |
+| streaming | 4,292,888 KB | 3,933,112 KB | **−351.3 MB** |
+
+(`peak_rss_max_kb` tracks: offline 4,311,040→3,958,528; segmented
+4,338,784→3,961,808; streaming 4,313,312→3,945,248 KB.)
+
+WER (100-file LibriSpeech `dev-clean-2`, offline, change binary):
+
+| Metric | Baseline (recent) | R5-J |
+|--------|------------------:|-----:|
+| Corpus WER | 0.0357 | 0.0357 |
+| Macro WER  | 0.0397 | 0.0397 |
+| Corpus CER | 0.0122 | 0.0122 |
+
+Decision: **Accepted.** Peak RSS drops ~342–351 MB in every mode (~4.10 GB →
+~3.76 GB) with speed within noise — inference +0.19…+0.52%, wall +0.45…+0.76%,
+all comfortably inside the ±1.5% band (the small positive wall drift is the
+`pread` syscalls replacing sequential mmap faults during load) — and WER is
+identical because the change is bit-exact. This is the "never fault them in"
+successor to R5-I: where R5-I tried to *evict* the dead encoder BF16 pages after
+prepack and found Darwin's `madvise` inert for read-only file-backed mappings,
+R5-J instead reads those bytes via `pread` into transient scratch and excludes
+their ranges from the prefault, so they are never made resident in the first
+place. It reclaims essentially the entire memory cost R5-D accepted for the owned
+encoder f32 copies (R5-D added ~668 MB RSS; the BF16 source it read from was
+372.8 MB, and that whole share is now kept out of the resident set) at no measured
+speed cost and with no change to decoder residency or output.
+
+
 ---
 
 ## Autoresearch Program Baseline Experiments

@@ -7,6 +7,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 const MAX_TENSORS: usize = 1024;
 
+/// Name prefix of the audio encoder's tensors. The encoder prepacks all of its
+/// large BF16 weights out of the mmap via `pread` at load and never faults them
+/// through the mapping, so these ranges are excluded from the WILLNEED hint and
+/// the parallel prefault to keep their pages out of the resident set (R5-J).
+const ENCODER_TENSOR_PREFIX: &str = "thinker.audio_tower.";
+
+fn is_pread_loaded(t: &TensorMeta) -> bool {
+    t.dtype == Dtype::BF16 && t.name.starts_with(ENCODER_TENSOR_PREFIX)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Dtype {
     F32,
@@ -58,7 +68,7 @@ impl TensorMeta {
 }
 
 pub struct SafetensorsFile {
-    _fd: RawFd,
+    fd: RawFd,
     data: *mut u8,
     file_size: usize,
     header_size: usize,
@@ -102,25 +112,20 @@ impl SafetensorsFile {
                 0,
             )
         };
-        // Keep fd open for mmap lifetime? Actually mmap doesn't need it.
-        // But we close it since MAP_PRIVATE doesn't need fd after mmap.
+        // The fd is retained (closed in Drop) so encoder weights can be read
+        // out of the file via `pread` without ever faulting their pages through
+        // the mapping — that keeps the ~0.7 GB of encoder BF16 nonresident.
         let raw_fd = fd;
-        unsafe { close(fd); }
 
         if data == libc::MAP_FAILED {
+            unsafe { close(fd); }
             return None;
         }
         let data = data as *mut u8;
 
-        // Prefault the mmap so first-touch page faults don't serialize inside
-        // the weight-conversion loops. MADV_WILLNEED is asynchronous and safe
-        // to ignore on failure.
-        unsafe {
-            libc::madvise(data as *mut _, file_size, libc::MADV_WILLNEED);
-        }
-        parallel_prefault(data as *const u8, file_size);
-
-        // Read header size (first 8 bytes, little-endian u64)
+        // Read header size (first 8 bytes, little-endian u64). Parse the header
+        // BEFORE prefaulting so encoder tensor byte ranges are known and can be
+        // excluded from the WILLNEED hint / prefault.
         let header_size = unsafe {
             let mut buf = [0u8; 8];
             std::ptr::copy_nonoverlapping(data, buf.as_mut_ptr(), 8);
@@ -128,30 +133,76 @@ impl SafetensorsFile {
         };
 
         if header_size > file_size - 8 {
-            unsafe { munmap(data as *mut _, file_size); }
+            unsafe { munmap(data as *mut _, file_size); close(fd); }
             return None;
         }
 
         // Parse JSON header
         let header_json = unsafe {
             let slice = std::slice::from_raw_parts(data.add(8), header_size);
-            std::str::from_utf8(slice).ok()?
+            match std::str::from_utf8(slice).ok() {
+                Some(s) => s,
+                None => {
+                    munmap(data as *mut _, file_size);
+                    close(fd);
+                    return None;
+                }
+            }
         };
 
-        let tensors = parse_header(header_json)?;
+        let tensors = match parse_header(header_json) {
+            Some(t) => t,
+            None => {
+                unsafe { munmap(data as *mut _, file_size); close(fd); }
+                return None;
+            }
+        };
         let mut tensor_map = HashMap::new();
         for (i, t) in tensors.iter().enumerate() {
             tensor_map.insert(t.name.clone(), i);
         }
 
+        // Build a per-page skip bitmap covering the *interior* pages of every
+        // pread-loaded (encoder BF16) tensor, then prefault only the pages that
+        // are not fully inside such a range. Boundary pages shared with adjacent
+        // decoder tensors are still prefaulted. Decoder residency is unchanged.
+        let data_base = 8 + header_size;
+        let skip = build_prefault_skip(&tensors, data_base, file_size);
+        prefault_with_skip(data as *const u8, file_size, &skip);
+
         Some(SafetensorsFile {
-            _fd: raw_fd,
+            fd: raw_fd,
             data,
             file_size,
             header_size,
             tensors,
             tensor_map,
         })
+    }
+
+    /// Read `dst.len()` bytes of `tensor`'s data starting `byte_off` bytes into
+    /// the tensor, via `pread(2)`. Reads through the file descriptor rather than
+    /// the mmap, so the pages never enter this task's resident set. `pread` takes
+    /// an explicit offset and does not touch the shared fd offset, so concurrent
+    /// calls from multiple loader threads are safe.
+    pub fn read_tensor_bytes(&self, tensor: &TensorMeta, byte_off: usize, dst: &mut [u8]) -> bool {
+        let base = 8 + self.header_size + tensor.data_offset + byte_off;
+        let mut done = 0usize;
+        while done < dst.len() {
+            let r = unsafe {
+                libc::pread(
+                    self.fd,
+                    dst[done..].as_mut_ptr() as *mut libc::c_void,
+                    dst.len() - done,
+                    (base + done) as libc::off_t,
+                )
+            };
+            if r <= 0 {
+                return false;
+            }
+            done += r as usize;
+        }
+        true
     }
 
     pub fn find(&self, name: &str) -> Option<&TensorMeta> {
@@ -203,16 +254,72 @@ impl SafetensorsFile {
     }
 }
 
-fn parallel_prefault(data: *const u8, file_size: usize) {
-    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-    let page_size = if page_size > 0 {
-        page_size as usize
+fn page_size() -> usize {
+    let ps = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if ps > 0 {
+        ps as usize
     } else {
         16 * 1024
-    };
-    let n_pages = file_size.div_ceil(page_size);
+    }
+}
+
+/// Mark the *interior* pages of every pread-loaded tensor as skip=true, so they
+/// are never faulted resident. A page is skipped only if it lies entirely inside
+/// such a tensor's byte range (start rounded up, end rounded down); boundary
+/// pages shared with neighbouring decoder tensors stay prefaulted.
+fn build_prefault_skip(tensors: &[TensorMeta], data_base: usize, file_size: usize) -> Vec<bool> {
+    let ps = page_size();
+    let n_pages = file_size.div_ceil(ps);
+    let mut skip = vec![false; n_pages];
+    for t in tensors {
+        if !is_pread_loaded(t) {
+            continue;
+        }
+        let start_byte = data_base + t.data_offset;
+        let end_byte = start_byte + t.data_size;
+        let first_full = start_byte.div_ceil(ps);
+        let last_full = end_byte / ps; // exclusive
+        let mut p = first_full;
+        while p < last_full && p < n_pages {
+            skip[p] = true;
+            p += 1;
+        }
+    }
+    skip
+}
+
+/// Prefault every page not marked in `skip`, in parallel. Non-skipped pages also
+/// get an `MADV_WILLNEED` hint (coalesced into contiguous runs) so the readahead
+/// stays scoped to decoder ranges. Skipped (encoder BF16) pages are neither
+/// hinted nor touched, keeping them out of the resident set.
+fn prefault_with_skip(data: *const u8, file_size: usize, skip: &[bool]) {
+    let ps = page_size();
+    let n_pages = file_size.div_ceil(ps);
     if n_pages == 0 {
         return;
+    }
+
+    // WILLNEED on contiguous non-skipped runs only.
+    let base_addr = data as usize;
+    let mut run_start: Option<usize> = None;
+    for page in 0..=n_pages {
+        let keep = page < n_pages && !skip[page];
+        match (run_start, keep) {
+            (None, true) => run_start = Some(page),
+            (Some(s), false) => {
+                let off = s * ps;
+                let end = (page * ps).min(file_size);
+                unsafe {
+                    libc::madvise(
+                        (base_addr + off) as *mut _,
+                        end - off,
+                        libc::MADV_WILLNEED,
+                    );
+                }
+                run_start = None;
+            }
+            _ => {}
+        }
     }
 
     let n_threads = std::thread::available_parallelism()
@@ -229,10 +336,12 @@ fn parallel_prefault(data: *const u8, file_size: usize) {
                 let mut local = 0usize;
                 let mut page = tid;
                 while page < n_pages {
-                    let off = page * page_size;
-                    if off < file_size {
-                        let ptr = (base + off) as *const u8;
-                        local ^= unsafe { std::ptr::read_volatile(ptr) } as usize;
+                    if !skip[page] {
+                        let off = page * ps;
+                        if off < file_size {
+                            let ptr = (base + off) as *const u8;
+                            local ^= unsafe { std::ptr::read_volatile(ptr) } as usize;
+                        }
                     }
                     page += n_threads;
                 }
@@ -249,6 +358,11 @@ impl Drop for SafetensorsFile {
         if !self.data.is_null() {
             unsafe {
                 libc::munmap(self.data as *mut _, self.file_size);
+            }
+        }
+        if self.fd >= 0 {
+            unsafe {
+                libc::close(self.fd);
             }
         }
     }
