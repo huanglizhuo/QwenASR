@@ -4032,6 +4032,86 @@ prefill-attention idea: the attention kernel is not where end-to-end offline/
 decode time can be meaningfully recovered on this machine. All code reverted.
 
 
+### R5-I: release encoder bf16 mmap residency after prepack
+
+Change:
+- Since R5-D the encoder copies all of its BF16 transformer/projection weights
+  (`conv_out`, per-layer `q/k/v/out_proj`, `fc1`, `fc2`, `proj1`, `proj2`) out to
+  owned f32 at load and never reads their mmap bytes again for the rest of the
+  process. But A5's `MADV_WILLNEED` + F22's parallel page-touch prefault make the
+  whole 1.87 GB `model.safetensors` resident up front, so the encoder's ~660 MB
+  share of BF16 pages sits in RSS forever as pure waste.
+- Implemented: a `SafetensorsFile::release_range`/`MultiSafetensors::release_tensor`
+  that `madvise(MADV_DONTNEED)`s the page-aligned *interior* of a tensor's byte
+  range (start rounded up, end rounded down, so boundary pages shared with
+  adjacent decoder tensors are never dropped), called from the encoder loader
+  right after each BF16→f32 prepack. The encoder BF16 ranges were also excluded
+  from the F22 synchronous prefault (per-page skip bitmap) so soon-to-be-released
+  pages are not made resident in the first place; the load conversion faults them
+  in on demand. Decoder tensor residency (prefill streaming, token-embedding,
+  lm_head) was left exactly as today.
+- The change is bit-exact — it only affects *which* file pages are resident, not
+  any computed value. `bench/samples/audio.wav` offline transcript is
+  byte-identical to baseline.
+
+Empirical Darwin probe (throwaway, read-only `MAP_PRIVATE` map of
+`model.safetensors`, measuring both `getrusage.ru_maxrss` and live
+`mach_task_basic_info.resident_size`): after touching region A resident
+(`resident_size` 917,536 KB), `madvise(A_interior, MADV_DONTNEED)` left
+`resident_size` unchanged (917,568 KB), and touching region B then *stacked* to
+1,833,648 KB rather than reusing A's budget. `MADV_FREE` behaved identically.
+On this OS, `madvise` does **not** evict resident pages of a read-only
+file-backed mapping — so the bench's `peak_rss` (= `ru_maxrss` = resident-size
+high-water) cannot be reduced this way.
+
+Results (Apple M-series, back-to-back same session, `bench/run.sh --runs 10`,
+baseline binary = HEAD `8a51426`, baseline run FIRST):
+
+Speed:
+
+| Mode | Baseline infer | R5-I infer | Baseline wall | R5-I wall |
+|------|---------------:|-----------:|--------------:|----------:|
+| offline   | 771.5 ms | 770.5 ms (−0.13%) | 1019.6 ms | 1020.6 ms (+0.10%) |
+| segmented | 769.5 ms | 768.0 ms (−0.19%) | 1018.2 ms | 1017.7 ms (−0.05%) |
+| streaming | 746.5 ms | 745.5 ms (−0.13%) |  998.4 ms |  997.6 ms (−0.08%) |
+
+Peak RSS (`peak_rss_median_kb`, ~4.3 GB footprint):
+
+| Mode | Baseline | R5-I | Delta |
+|------|---------:|-----:|------:|
+| offline   | 4,302,152 KB | 4,297,920 KB | −0.10% |
+| segmented | 4,297,816 KB | 4,301,808 KB | +0.09% |
+| streaming | 4,286,552 KB | 4,284,328 KB | −0.05% |
+
+WER (100-file LibriSpeech `dev-clean-2`, offline, change binary):
+
+| Metric | Baseline (recent) | R5-I |
+|--------|------------------:|-----:|
+| Corpus WER | 0.0357 | 0.0357 |
+| Macro WER  | 0.0397 | 0.0397 |
+| Corpus CER | 0.0122 | 0.0122 |
+
+Decision: **Rejected.** Peak RSS is unchanged (all three modes within ±0.1%,
+sub-4 MB deltas that are pure run-to-run jitter on a 4.3 GB footprint), because
+`MADV_DONTNEED`/`MADV_FREE` do not release resident pages of a read-only
+file-backed mapping on Darwin — the standalone probe proved it directly
+(`resident_size` did not drop after the call, and a later touch stacked on top
+instead of reusing the "freed" budget). This experiment was meant to reclaim the
+~660 MB memory cost that R5-D accepted for the owned encoder f32 copies, but the
+only sanctioned mechanism for shedding the now-dead BF16 mmap pages is
+ineffective on this OS. Unlike the rejected F1 (which `Vec::clear`-ed 1.76 GB of
+owned allocator-backed prefill copies and regressed wall +2.6% from the
+deallocation work), this change touches only a read-only file mapping with no
+allocator involvement, so it is speed-neutral and WER-identical — it simply does
+not move the metric it targets. The only way to keep these pages non-resident on
+Darwin would be to never fault them in at all (e.g. read the encoder BF16 bytes
+via `pread` into transient scratch instead of through the mmap, bypassing both
+the prefault and the conversion read), which is a larger dual-read-path redesign
+outside this experiment's scope. Recording the Darwin finding — *madvise cannot
+evict resident pages of read-only file-backed mappings on macOS* — as the useful
+result. All code reverted.
+
+
 ---
 
 ## Autoresearch Program Baseline Experiments
