@@ -447,8 +447,6 @@ pub struct DecoderBuffers {
     pub k: Vec<f32>,
     pub v: Vec<f32>,
     pub attn_out: Vec<f32>,
-    pub proj_out: Vec<f32>,
-    pub gate_buf: Vec<f32>,
     pub ffn_out: Vec<f32>,
 
     /// INT8 quantization scratch for the fused single-token decode region
@@ -498,8 +496,6 @@ impl DecoderBuffers {
             k: vec![0.0f32; kv_dim],
             v: vec![0.0f32; kv_dim],
             attn_out: vec![0.0f32; q_dim],
-            proj_out: vec![0.0f32; dim],
-            gate_buf: vec![0.0f32; 2 * intermediate],
             ffn_out: vec![0.0f32; intermediate],
             x_int8: vec![0i8; dim],
             attn_int8: vec![0i8; q_dim],

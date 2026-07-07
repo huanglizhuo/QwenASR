@@ -543,58 +543,6 @@ pub unsafe fn exp_inplace(x: &mut [f32]) {
         i += 1;
     }
 }
-
-/// NEON-accelerated SwiGLU: `out[j] = silu(gate[2j]) * gate[2j+1]` for interleaved gate/up.
-///
-/// # Safety
-/// Uses NEON intrinsics; gate_up must have at least 2*n elements.
-#[cfg(target_arch = "aarch64")]
-pub unsafe fn swiglu_interleaved(out: &mut [f32], gate_up: &[f32], n: usize) {
-    let one = vdupq_n_f32(1.0);
-    let mut j = 0usize;
-
-    // Process 8 elements per iteration (2x float32x4)
-    while j + 8 <= n {
-        let pair0 = vld1q_f32(gate_up.as_ptr().add(2 * j));
-        let pair1 = vld1q_f32(gate_up.as_ptr().add(2 * j + 4));
-        let gates0 = vuzp1q_f32(pair0, pair1);
-        let ups0 = vuzp2q_f32(pair0, pair1);
-
-        let pair2 = vld1q_f32(gate_up.as_ptr().add(2 * j + 8));
-        let pair3 = vld1q_f32(gate_up.as_ptr().add(2 * j + 12));
-        let gates1 = vuzp1q_f32(pair2, pair3);
-        let ups1 = vuzp2q_f32(pair2, pair3);
-
-        let exp0 = fast_exp_neon(vnegq_f32(gates0));
-        let exp1 = fast_exp_neon(vnegq_f32(gates1));
-        let silu0 = vdivq_f32(gates0, vaddq_f32(one, exp0));
-        let silu1 = vdivq_f32(gates1, vaddq_f32(one, exp1));
-
-        vst1q_f32(out.as_mut_ptr().add(j), vmulq_f32(silu0, ups0));
-        vst1q_f32(out.as_mut_ptr().add(j + 4), vmulq_f32(silu1, ups1));
-        j += 8;
-    }
-
-    while j + 4 <= n {
-        let pair0 = vld1q_f32(gate_up.as_ptr().add(2 * j));
-        let pair1 = vld1q_f32(gate_up.as_ptr().add(2 * j + 4));
-        let gates = vuzp1q_f32(pair0, pair1);
-        let ups = vuzp2q_f32(pair0, pair1);
-        let exp_ng = fast_exp_neon(vnegq_f32(gates));
-        let silu_g = vdivq_f32(gates, vaddq_f32(one, exp_ng));
-        vst1q_f32(out.as_mut_ptr().add(j), vmulq_f32(silu_g, ups));
-        j += 4;
-    }
-
-    while j < n {
-        let g = gate_up[2 * j];
-        let u = gate_up[2 * j + 1];
-        let g_silu = g / (1.0 + (-g).exp());
-        out[j] = g_silu * u;
-        j += 1;
-    }
-}
-
 /// NEON-accelerated GELU (tanh approximation).
 ///
 /// # Safety

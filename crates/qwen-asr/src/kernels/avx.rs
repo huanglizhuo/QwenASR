@@ -561,39 +561,3 @@ pub unsafe fn gelu_inplace(x: &mut [f32], n: usize) {
         i += 1;
     }
 }
-
-/// AVX2-accelerated SwiGLU with interleaved gate/up.
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2", enable = "fma")]
-pub unsafe fn swiglu_interleaved(out: &mut [f32], gate_up: &[f32], n: usize) {
-    let one = _mm256_set1_ps(1.0);
-    let mut j = 0usize;
-
-    while j + 8 <= n {
-        // Load 16 floats: [g0,u0,g1,u1,g2,u2,g3,u3] x2
-        let lo = _mm256_loadu_ps(gate_up.as_ptr().add(2 * j));
-        let hi = _mm256_loadu_ps(gate_up.as_ptr().add(2 * j + 8));
-
-        // Deinterleave using shuffle + permute
-        let shuf_lo = _mm256_shuffle_ps(lo, hi, 0b10_00_10_00); // g0,g1,g4,g5,g2,g3,g6,g7
-        let shuf_hi = _mm256_shuffle_ps(lo, hi, 0b11_01_11_01); // u0,u1,u4,u5,u2,u3,u6,u7
-        let gates = _mm256_permutevar8x32_ps(shuf_lo, _mm256_setr_epi32(0,1,4,5,2,3,6,7));
-        let ups = _mm256_permutevar8x32_ps(shuf_hi, _mm256_setr_epi32(0,1,4,5,2,3,6,7));
-
-        let neg_g = _mm256_sub_ps(_mm256_setzero_ps(), gates);
-        let exp_ng = fast_exp_avx(neg_g);
-        let denom = _mm256_add_ps(one, exp_ng);
-        let silu_g = _mm256_div_ps(gates, denom);
-
-        _mm256_storeu_ps(out.as_mut_ptr().add(j), _mm256_mul_ps(silu_g, ups));
-        j += 8;
-    }
-
-    while j < n {
-        let g = gate_up[2 * j];
-        let u = gate_up[2 * j + 1];
-        let g_silu = g / (1.0 + (-g).exp());
-        out[j] = g_silu * u;
-        j += 1;
-    }
-}

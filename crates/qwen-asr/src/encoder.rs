@@ -35,9 +35,7 @@ pub struct EncoderBuffers {
     pub k: Vec<f32>,
     pub v: Vec<f32>,
     pub attn_out: Vec<f32>,
-    pub proj_out: Vec<f32>,
     pub ffn_mid: Vec<f32>,
-    pub ffn_out: Vec<f32>,
     pub chunk_mel: Vec<f32>,
     pub c1: Vec<f32>,
     pub c2: Vec<f32>,
@@ -64,9 +62,7 @@ impl EncoderBuffers {
             k: Vec::new(),
             v: Vec::new(),
             attn_out: Vec::new(),
-            proj_out: Vec::new(),
             ffn_mid: Vec::new(),
-            ffn_out: Vec::new(),
             chunk_mel: Vec::new(),
             c1: Vec::new(),
             c2: Vec::new(),
@@ -97,9 +93,7 @@ impl EncoderBuffers {
         self.k.resize(new_cap * d_model, 0.0);
         self.v.resize(new_cap * d_model, 0.0);
         self.attn_out.resize(new_cap * d_model, 0.0);
-        self.proj_out.resize(new_cap * d_model, 0.0);
         self.ffn_mid.resize(new_cap * ffn_dim, 0.0);
-        self.ffn_out.resize(new_cap * d_model, 0.0);
         self.cap_tokens = new_cap;
     }
 
