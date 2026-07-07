@@ -13,7 +13,10 @@ fn quantize_to_superpage(
     out_dim: usize,
     in_dim: usize,
 ) -> (Vec<i8>, Vec<f32>) {
-    let (int8, scales) = kernels::quantize_bf16_weights_to_int8(w_bf16, out_dim, in_dim);
+    // Safety: callers pass tensor pointers from the mmap'd model file, which
+    // cover at least out_dim * in_dim BF16 values and outlive this call.
+    let (int8, scales) =
+        unsafe { kernels::quantize_bf16_weights_to_int8(w_bf16, out_dim, in_dim) };
     let mut sp = superpage_vec::<i8>(int8.len());
     sp.copy_from_slice(&int8);
     (sp, scales)

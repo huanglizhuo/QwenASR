@@ -221,7 +221,7 @@ fn text_width(text: &str) -> usize {
 }
 
 fn sentence_tail(text: &str) -> Option<char> {
-    text.trim_end_matches(|ch| matches!(ch, '"' | '\'' | '」' | '』' | '）' | ')' | ']' | '》'))
+    text.trim_end_matches(['"', '\'', '」', '』', '）', ')', ']', '》'])
         .chars()
         .next_back()
 }

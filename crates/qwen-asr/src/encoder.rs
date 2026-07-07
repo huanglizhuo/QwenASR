@@ -520,7 +520,7 @@ impl Encoder {
                 n_heads,
                 head_dim,
                 scale,
-                &window_starts,
+                window_starts,
                 n_windows,
             );
 

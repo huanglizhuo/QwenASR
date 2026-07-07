@@ -302,9 +302,8 @@ fn prefault_with_skip(data: *const u8, file_size: usize, skip: &[bool]) {
     // WILLNEED on contiguous non-skipped runs only.
     let base_addr = data as usize;
     let mut run_start: Option<usize> = None;
-    for page in 0..=n_pages {
-        let keep = page < n_pages && !skip[page];
-        match (run_start, keep) {
+    for (page, &skip_page) in skip.iter().enumerate() {
+        match (run_start, !skip_page) {
             (None, true) => run_start = Some(page),
             (Some(s), false) => {
                 let off = s * ps;
@@ -319,6 +318,17 @@ fn prefault_with_skip(data: *const u8, file_size: usize, skip: &[bool]) {
                 run_start = None;
             }
             _ => {}
+        }
+    }
+    // Close a run that extends to the end of the file.
+    if let Some(s) = run_start {
+        let off = s * ps;
+        unsafe {
+            libc::madvise(
+                (base_addr + off) as *mut _,
+                file_size - off,
+                libc::MADV_WILLNEED,
+            );
         }
     }
 

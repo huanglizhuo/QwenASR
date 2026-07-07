@@ -568,11 +568,15 @@ fn transcribe_splits(
     }
 }
 
+/// Callback invoked after each transcribed segment with the segment result and
+/// its subtitle cues.
+pub type OnSegmentFn<'a> = &'a mut dyn FnMut(&SegmentResult, &[Cue]);
+
 pub fn transcribe_full(
     ctx: &mut QwenCtx,
     mut aligner: Option<&mut QwenCtx>,
     samples: &[f32],
-    mut on_segment: Option<&mut dyn FnMut(&SegmentResult, &[Cue])>,
+    mut on_segment: Option<OnSegmentFn<'_>>,
 ) -> Option<TranscriptionResult> {
     ctx.reset_perf();
 

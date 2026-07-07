@@ -679,7 +679,7 @@ pub unsafe fn quantize_bf16_to_int8(w_bf16: *const u16, out_dim: usize, in_dim: 
             let q16 = vqmovn_s32(q0);
             let q16b = vqmovn_s32(q1);
             let q8 = vqmovn_s16(vcombine_s16(q16, q16b));
-            vst1_s8(dst.as_mut_ptr().add(k) as *mut i8, q8);
+            vst1_s8(dst.as_mut_ptr().add(k), q8);
             k += 8;
         }
         while k < in_dim {
@@ -713,6 +713,7 @@ unsafe fn sdot_s32(mut acc: int32x4_t, a: int8x16_t, b: int8x16_t) -> int32x4_t 
 /// # Safety
 /// Uses NEON SDOT via inline asm.
 #[cfg(target_arch = "aarch64")]
+#[allow(clippy::too_many_arguments)] // hot kernel entry point; params mirror the C-style ABI
 pub unsafe fn matvec_int8(
     y: &mut [f32], x_int8: *const i8, x_scale: f32,
     w_int8: *const i8, w_scales: &[f32],

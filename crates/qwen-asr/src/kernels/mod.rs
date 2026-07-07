@@ -1013,6 +1013,7 @@ pub fn linear_nobias_bf16_swiglu(
 /// per-row and safe. No-op when `start >= end`.
 #[cfg(target_arch = "aarch64")]
 #[inline]
+#[allow(clippy::too_many_arguments)] // hot kernel entry point; params mirror the SIMD call
 pub(crate) unsafe fn int8_matvec_range(
     y_ptr: *mut f32, x_int8: *const i8, x_scale: f32,
     w_int8: *const i8, w_scales: *const f32,
@@ -1085,6 +1086,7 @@ pub(crate) unsafe fn int8_qkv_range(
 /// decode region. `x_int8` is the already-quantized input of length `in_dim`.
 #[cfg(target_arch = "aarch64")]
 #[inline]
+#[allow(clippy::too_many_arguments)] // hot kernel entry point; params mirror the SIMD call
 pub(crate) unsafe fn int8_swiglu_range(
     ffn_ptr: *mut f32, x_int8: *const i8, x_scale: f32,
     w_int8: *const i8, w_scales: *const f32,
@@ -1917,8 +1919,8 @@ pub(crate) fn causal_attention_heads(out: &mut [f32], q: &[f32],
             }
 
             let mut max_s = row[0];
-            for j in 1..k_end { if row[j] > max_s { max_s = row[j]; } }
-            for j in 0..k_end { row[j] -= max_s; }
+            for &s in &row[1..k_end] { if s > max_s { max_s = s; } }
+            for s in &mut row[..k_end] { *s -= max_s; }
 
             #[cfg(all(feature = "vdsp", target_vendor = "apple"))]
             {
@@ -1927,17 +1929,17 @@ pub(crate) fn causal_attention_heads(out: &mut [f32], q: &[f32],
             }
             #[cfg(not(all(feature = "vdsp", target_vendor = "apple")))]
             {
-                for j in 0..k_end { row[j] = row[j].exp(); }
+                for s in &mut row[..k_end] { *s = s.exp(); }
             }
 
             let mut sum_exp = 0.0f32;
-            for j in 0..k_end { sum_exp += row[j]; }
+            for &s in &row[..k_end] { sum_exp += s; }
             if sum_exp > 0.0 {
                 let inv = 1.0 / sum_exp;
-                for j in 0..k_end { row[j] *= inv; }
+                for s in &mut row[..k_end] { *s *= inv; }
             }
             // Zero the masked (future) keys so the O = S @ V GEMM ignores them.
-            for j in k_end..seq_k { row[j] = 0.0; }
+            for s in &mut row[k_end..seq_k] { *s = 0.0; }
         }
 
         // O[seq_q, head_dim] = S[seq_q, seq_k] @ V_h[seq_k, head_dim].
@@ -2045,7 +2047,7 @@ pub(crate) fn causal_attention_heads(out: &mut [f32], q: &[f32],
 pub(crate) fn attn_head_range(tid: usize, nt: usize, seq_q: usize, n_heads: usize, n_kv_heads: usize)
     -> Option<(usize, usize)>
 {
-    if seq_q == 1 && n_heads % n_kv_heads == 0 {
+    if seq_q == 1 && n_heads.is_multiple_of(n_kv_heads) {
         let heads_per_kv = n_heads / n_kv_heads;
         let chunk = n_kv_heads.div_ceil(nt);
         let g0 = tid * chunk;
@@ -2217,9 +2219,13 @@ pub fn quantize_into(dst: &mut [i8], x: &[f32]) -> f32 {
 }
 
 /// Quantize BF16 weights to INT8 per-row. Returns (int8_data, per_row_scales).
-pub fn quantize_bf16_weights_to_int8(w_bf16: *const u16, out_dim: usize, in_dim: usize) -> (Vec<i8>, Vec<f32>) {
+///
+/// # Safety
+/// `w_bf16` must point to at least `out_dim * in_dim` readable `u16` (BF16)
+/// values that stay valid for the duration of the call.
+pub unsafe fn quantize_bf16_weights_to_int8(w_bf16: *const u16, out_dim: usize, in_dim: usize) -> (Vec<i8>, Vec<f32>) {
     #[cfg(target_arch = "aarch64")]
-    unsafe { return neon::quantize_bf16_to_int8(w_bf16, out_dim, in_dim); }
+    unsafe { neon::quantize_bf16_to_int8(w_bf16, out_dim, in_dim) }
     #[cfg(not(target_arch = "aarch64"))]
     {
         let mut int8_data = vec![0i8; out_dim * in_dim];
@@ -2295,7 +2301,7 @@ pub fn argmax_matvec_int8(x: &[f32], w_int8: &[i8], w_scales: &[f32], in_dim: us
                 best = best_indices[i];
             }
         }
-        return best;
+        best
     }
 
     #[cfg(not(target_arch = "aarch64"))]
