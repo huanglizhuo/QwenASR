@@ -3844,6 +3844,115 @@ the bottleneck is raw achievable bandwidth, not kernel-level load parallelism.
 Reverted; no further row-widening of these kernels is worth retrying without a
 change to the memory subsystem itself.
 
+### R5-G: weighted all-core fused decode region
+
+Change:
+- Follow-up to R5-F's conclusion that decode is limited by the AGGREGATE
+  weight-read bandwidth of the 5 P-cores: this experiment added the 10 E-cores
+  as extra weight-streaming workers inside the R5-B fused single-token decode
+  region. The thread pool (`crates/qwen-asr/src/kernels/mod.rs`) gained a
+  second worker class — `wide_pool_worker` threads with their own generation
+  counter (`wide_gen_atomic`) and condvar (`wide_cv`), spawned lazily only when
+  the pool runs at the default P-core width on a machine reporting E-cores
+  (`hw.perflevel1.physicalcpu`) — so ordinary `parallel_for` dispatches,
+  `get_num_threads()`, the encoder, prefill, and the lm_head argmax all kept
+  their existing P-core width, and the extra workers slept through every
+  non-decode phase (they are only woken by the region dispatch, never by
+  `parallel_for`'s notify).
+- `parallel_region` became `parallel_region_weighted`: one dispatch across all
+  15 workers (`parallel_for_wide` bumps both generation counters, single shared
+  done counter), the `RegionBarrier` spanning all participants, and the closure
+  receiving `np` = number of P-class participants (tid 0 = the caller, P-class
+  by construction; serial glue stayed on tid 0). The row-partitioned INT8
+  stages in `decoder_forward` (QKV, O-proj, gate-up/SwiGLU, down) switched from
+  `range_for` to `weighted_range_for(tid, nt, np, total)` — contiguous
+  cumulative-weight row slices with P-class workers weighted `W_p` and E-class
+  `W_e`, so each output row is still computed wholly by one worker (INT8 SDOT
+  is integer-exact and the per-row f32 scale is unchanged → bit-identical
+  results for every partition). The attention stage kept `attn_head_range`,
+  which with nt=15 assigns the 8 KV-head groups one each to the first 8
+  workers (P-class tids first) and no slice to the rest. Non-aarch64 code
+  paths untouched.
+- Confirmed bit-exact: `bench/samples/audio.wav` offline transcript
+  byte-identical to baseline; `cargo test --release` all pass; zero warnings.
+
+Results (Apple M5 Pro 5P+10E, back-to-back same session, baseline = HEAD
+`1bbe2fc` run FIRST; median inference / wall ms):
+
+- Ratio scan (`--runs 3 --modes offline`), baseline 10-run reference 780 /
+  1031.9. First without any QoS hint, relying on default scheduling:
+
+| W_p:W_e (no QoS) | offline infer | wall |
+|------------------|--------------:|-----:|
+| 2:1 | 824 | 1076.6 |
+| 3:1 | 883 | 1164.2 |
+| 5:2 | 879 | 1141.5 |
+
+  Heavier P-weights regressing MORE is the signature of unstable placement:
+  macOS does not keep the original pool workers on P-cores once 15 threads are
+  busy, so tid-order weighting misallocates rows. Honest finding: by-tid
+  P/E partitioning is meaningless under default scheduling. Per the D2 caveat,
+  `pthread_set_qos_class_self_np(QOS_CLASS_UTILITY)` was then applied to ONLY
+  the 10 extra workers (original pool + caller kept default QoS) to bias them
+  onto the E-cluster, and the scan repeated:
+
+| W_p:W_e (UTILITY QoS on extras) | offline infer | wall |
+|---------------------------------|--------------:|-----:|
+| 1:1 | 842 | 1095.4 |
+| 2:1 | 796 | 1058.7 |
+| 3:1 | 843 | 1098.3 |
+| 5:2 | 824 | 1172.5 |
+
+  QoS stabilized placement (2:1 improved 824 → 796, and the ratio response
+  became unimodal around 2:1), but the best all-core config still lost to the
+  P-core baseline. Final A/B at 2:1 + scoped QoS (`--runs 10`), two
+  interleaved pairs (second pair baseline rebuilt via `git stash`):
+
+Pair 1 (baseline → allcore):
+
+| Mode | Base infer | R5-G infer | Base wall | R5-G wall |
+|------|-----------:|-----------:|----------:|----------:|
+| offline   | 780 | **789** (+1.2%) | 1031.9 | **1048.3** (+1.6%) |
+| segmented | 779 | **789** (+1.3%) | 1032.0 | **1047.7** (+1.5%) |
+| streaming | 755 | **770** (+2.0%) | 1010.3 | **1027.1** (+1.7%) |
+
+Pair 2 (baseline → allcore):
+
+| Mode | Base infer | R5-G infer | Base wall | R5-G wall |
+|------|-----------:|-----------:|----------:|----------:|
+| offline   | 783 | **823** (+5.1%) | 1044.8 | **1095.9** (+4.9%) |
+| segmented | 792 | **806** (+1.8%) | 1053.9 | **1070.9** (+1.6%) |
+| streaming | 754 | **770** (+2.1%) | 1014.6 | **1024.1** (+0.9%) |
+
+WER (100-file LibriSpeech `dev-clean-2`, offline, both binaries this session):
+
+| Metric | Baseline | R5-G allcore |
+|--------|---------:|-------------:|
+| Corpus WER | 0.0357 | 0.0357 |
+| Macro WER  | 0.0397 | 0.0397 |
+| Corpus CER | 0.0122 | 0.0122 |
+
+Decision: **Rejected.** WER is identical (bit-exact by construction), but every
+mode regresses in both A/B pairs (+0.9% to +5.1%), and no point in the
+seven-config ratio/QoS scan beat the 5-P-core baseline. The conclusion that
+settles the E-core question post-R5-B: the E-cluster adds no NET usable
+aggregate bandwidth for this stream pattern. Even with placement stabilized by
+scoped QoS and the row partition weighted so all workers nominally reach each
+barrier together, the costs of widening the region — ~280 spin-barrier
+crossings per token that now synchronize 15 threads across two clusters
+instead of 5 within one, 14 workers spinning through every tid-0 serial-glue
+stage, and 10 extra INT8 weight streams contending for the shared fabric/SLC —
+exceed whatever DRAM bandwidth the E-cluster contributes. This supersedes the
+pre-R5-B evidence rather than merely repeating it: E1-revisited compared
+15-vs-5 threads under the OLD per-stage dispatch model (where dispatch/join
+overhead scaled with width and E-cores gated every one of ~140 per-token
+joins), and D1's per-stage thread caps used EQUAL slices with no placement
+control — both left open the possibility that a single-dispatch region with
+weighted slices and E-biased QoS would flip the result. It does not: measured
+under the fused region with weighting and placement bias, all-core decode
+still loses, so P-core-only decode is the settled configuration on this
+machine. All code reverted.
+
 
 ---
 
