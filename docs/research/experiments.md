@@ -3953,6 +3953,84 @@ under the fused region with weighting and placement bias, all-core decode
 still loses, so P-core-only decode is the settled configuration on this
 machine. All code reverted.
 
+### R5-H: causally-tiled prefill attention GEMMs
+
+Change:
+- The multi-token (`seq_q > 1`) prefill path of `causal_attention_heads`
+  (`crates/qwen-asr/src/kernels/mod.rs`, `blas` variant) computed, per head,
+  the FULL rectangular `S[seq_q, seq_k] = scale·Q_h·K_hᵀ`, causal-masked the
+  rows, then the FULL `O[seq_q, head_dim] = S·V_h` (E8's design). For decoder
+  prefill `seq_q ≈ seq_k`, so ~half the FLOPs of both GEMMs land in the masked
+  upper triangle and are multiplied by zero. This experiment kept E8's exact
+  3-pass structure but tiled the QUERY dimension: for each `TILE`-row query tile
+  `[i0, i1)`, the valid key prefix is `n_valid = min(q_offset + i1, seq_k)`, so
+  both per-tile GEMMs span only `[0, n_valid)` (S GEMM with `N = n_valid`, O
+  GEMM with `K = n_valid`) instead of `[0, seq_k)`. The per-row causal-masked
+  softmax math is unchanged (each score element is the same complete head_dim
+  dot product; masked entries within `n_valid` zeroed as before). The `scores`
+  buffer shrank to `TILE * seq_k`, reused across tiles and heads as the
+  full-height buffer was reused across heads. Q/out tile rows are strided by
+  `n_heads*head_dim`. Single-token R5-A path, non-blas fallback,
+  `attn_head_range`, per-head `parallel_for` threading, and the encoder's
+  bidirectional attention were untouched.
+- Tile-size scan (`--runs 3 --modes offline --profile`, `attention_causal_ms`):
+  baseline 36.4 → tile-32 28.4, tile-64 29.4, tile-128 27.9 — all ~19–23%
+  lower and tied within 3-run noise. Kept **TILE = 64** (task default; finer
+  masking granularity than 128, generalizes to longer contexts; fewer tiny
+  GEMMs than 32).
+- `bench/samples/audio.wav` offline transcript byte-identical to baseline;
+  `cargo test --release` all pass; zero new warnings.
+
+Results (Apple M5 Pro 5P+10E, back-to-back same session, baseline = HEAD
+`a0ea8f9` built and run FIRST; median inference / wall ms):
+
+- `attention_causal_ms` (offline `--profile`): baseline **36.4** → tiled
+  **26.6** (also 27.9–29.4 across the tile scan) — a clean, repeatable ~19–27%
+  drop in the targeted kernel.
+
+Pair 1 (baseline → tiled):
+
+| Mode | Base infer | R5-H infer | Base wall | R5-H wall |
+|------|-----------:|-----------:|----------:|----------:|
+| offline   | 777 | **784** (+0.9%) | 1033.3 | **1055.4** (+2.1%) |
+| segmented | 782 | **781** (−0.1%) | 1046.8 | **1040.0** (−0.6%) |
+| streaming | 759 | **750** (−1.2%) | 1021.6 | **1008.2** (−1.3%) |
+
+Pair 2 (baseline → tiled, interleaved, both binaries reused back-to-back):
+
+| Mode | Base infer | R5-H infer | Base wall | R5-H wall |
+|------|-----------:|-----------:|----------:|----------:|
+| offline   | 785 | **780** (−0.6%) | 1047.3 | **1043.0** (−0.4%) |
+| segmented | 779 | **776** (−0.4%) | 1035.9 | **1033.2** (−0.3%) |
+| streaming | 764 | **753** (−1.4%) | 1024.5 | **1018.7** (−0.6%) |
+
+WER (100-file LibriSpeech `dev-clean-2`, offline):
+
+| Metric | Baseline | R5-H tiled |
+|--------|---------:|-----------:|
+| Corpus WER | 0.0357 | 0.0357 |
+| Macro WER  | 0.0397 | 0.0397 |
+| Corpus CER | 0.0122 | 0.0122 |
+
+Decision: **Rejected.** WER is identical (transcript byte-identical on the
+sample; the last-ULP shift the shorter O-GEMM summation could introduce did not
+change any token), and `attention_causal_ms` drops cleanly and repeatably by
+~19–27%. But that kernel is only ~36 ms of ~780 ms inference, so its ~9 ms
+saving is ~1.2% of end-to-end — below this session's ~±1.5% noise floor. The two
+A/B pairs bear this out: end-to-end is inconsistent (Pair 1 offline *regressed*
++0.9% infer / +2.1% wall while streaming improved; Pair 2 improved everywhere
+but only 0.3–1.4%), so the ACCEPT bar ("consistent improvement beyond noise;
+no mode regresses") is not met. This is the masked-FLOP subset E8 deliberately
+left on the table: E8 already captured the high-value prefill win (killing
+`2·seq_q` tiny N=1 BLAS calls per head, `attention_causal` −44%) and explicitly
+accepted computing the upper-triangle scores because the real GEMMs dwarfed the
+eliminated per-call overhead. Removing those masked FLOPs is arithmetically real
+but too small a share of total time to register, and G36 already rejected the
+larger true-tiled flash rewrite as unjustified until larger-context benchmarks
+make attention memory traffic the bottleneck. R5-H closes out the last local
+prefill-attention idea: the attention kernel is not where end-to-end offline/
+decode time can be meaningfully recovered on this machine. All code reverted.
+
 
 ---
 
