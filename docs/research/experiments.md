@@ -3627,6 +3627,83 @@ but a speed loss; a future attempt would need conversion fused *inside* the
 dot/axpy kernels (no scratch-buffer round trip) or much longer contexts. All
 code was reverted; no dependencies were added.
 
+### R5-D: prepack encoder transformer weights to f32 at load
+
+Change:
+- The encoder transformer kept its GEMM weights as raw BF16 mmap pointers
+  (`EncLayer::{wq,wk,wv,wo,fc1,fc2}` plus the stem/final projection weights
+  `conv_out`/`proj1`/`proj2`) and re-converted each matrix BF16→f32 into a
+  shared scratch on *every* forward via `linear_bf16_scratch` /
+  `linear_accumulate_bf16_scratch` — repeated identically per streaming chunk,
+  per segment, and per offline run (~600 MB BF16 reads + ~1.2 GB f32 scratch
+  writes per forward). This is the never-executed P0 "static weight prepack"
+  backlog item for the encoder (the decoder-prefill analogue is exp-01, kept).
+- Now those weights are prepacked to owned f32 buffers once at load, inside the
+  existing parallel per-layer load scope (E2 pattern), through a new
+  `load_bf16_as_f32` helper. Large buffers use superpage-aligned allocation:
+  `superpage_vec` (previously D3/G3-local to `decoder.rs`) was hoisted to
+  `kernels::superpage_vec` and is now shared by the decoder INT8/f32 prepack
+  and this encoder f32 prepack. The nine forward call sites switched from the
+  `*_bf16_scratch` kernels to the direct f32 `linear`/`linear_accumulate`, and
+  the encoder's per-forward `bf16_scratch` buffer + `ensure_scratch` were
+  deleted (only the encoder used them; the decoder keeps its own separate
+  scratch for its single-token BF16 path). BF16→f32 widening is exact, so the
+  GEMMs consume bit-identical values.
+- `bench/samples/audio.wav` offline transcript is byte-identical to baseline.
+- Touched files: `crates/qwen-asr/src/encoder.rs`,
+  `crates/qwen-asr/src/kernels/mod.rs`, `crates/qwen-asr/src/decoder.rs`.
+  Zero new dependencies.
+
+Results (Apple M5 Pro, back-to-back same session, `bench/run.sh --runs 10`,
+baseline binary = HEAD `8764113`, baseline run FIRST):
+
+| Mode | Baseline infer | R5-D infer | Baseline wall | R5-D wall |
+|------|---------------:|-----------:|--------------:|----------:|
+| offline   | 795.5 ms | **784.0 ms** (−1.4%) | 1035.9 ms | **1034.2 ms** (−0.2%) |
+| segmented | 791.0 ms | **780.0 ms** (−1.4%) | 1029.9 ms | 1031.5 ms (+0.2%) |
+| streaming | 789.0 ms | **763.5 ms** (−3.2%) | 1027.0 ms | **1014.6 ms** (−1.2%) |
+
+Peak RSS (offline `peak_rss_median_kb`): 3,615,640 KB (~3.45 GB) →
+**4,299,312 KB (~4.10 GB)**, +~668 MB — the owned f32 weight copies, as
+expected (all three modes tracked ~4.29–4.30 GB after the change).
+
+`--profile` offline (`--runs 3`):
+
+| Counter | Baseline | R5-D |
+|---------|---------:|-----:|
+| `bf16_matvec_ms` | 366.9 | **242.8** |
+| `sgemm_ms`       | 327.5 | 339.0 |
+| `encoder_load_ms`| 1.4   | 17.4 |
+| `model_load_ms`  | 127.5 | 141.4 |
+
+The `bf16_matvec` bucket (which had wrapped the whole encoder scratch-linear,
+including its nested GEMM) collapses by ~124 ms as the encoder path leaves it
+entirely; the actual GEMM work re-appears intact under `sgemm` (+11.5 ms). The
+per-forward BF16→f32 conversion (~40 ms serial, the old bucket-minus-sgemm
+residual) is gone from inference; the conversion now lands at load as
+`encoder_load` 1.4→17.4 ms.
+
+WER (100-file LibriSpeech `dev-clean-2`, offline, change binary):
+
+| Metric | Baseline (recent) | R5-D |
+|--------|------------------:|-----:|
+| Corpus WER | 0.0357 | 0.0357 |
+| Macro WER  | 0.0397 | 0.0397 |
+| Corpus CER | 0.0122 | 0.0122 |
+
+Decision: **Accepted.** WER is identical (the change is bit-exact) and
+inference improves in all three modes. E3's wall-conservation caveat — that for
+a single-forward mode, moving a conversion between load and inference merely
+relocates the same wall-clock cost — does not bite here, and the profile shows
+why: the removed inference-side conversion was ~40 ms *serial*, whereas the
+load-side conversions run parallelized across the 24 layers and add only ~16 ms
+to `encoder_load`. So even offline (one encoder forward) is inference −1.4% at
+neutral wall (−0.2%). The multi-forward modes win outright — streaming, which
+re-runs the encoder per chunk, is the largest gain at inference −3.2% / wall
+−1.2% because the repeated conversions are eliminated, not relocated. The cost
+is ~668 MB extra RSS for the owned f32 copies, accepted as the standard
+speed-for-memory trade already established by exp-01 and D3.
+
 
 ---
 

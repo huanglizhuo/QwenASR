@@ -4,31 +4,29 @@ use crate::config::*;
 use crate::kernels;
 use crate::safetensors::MultiSafetensors;
 
-/// Encoder transformer layer. Large weight matrices are kept as BF16 pointers
-/// into the mmap'd safetensors file — converted to f32 on the fly through a
-/// shared scratch buffer at each GEMM. Small per-output biases / norm params
-/// stay as f32 since they're tiny.
+/// Encoder transformer layer. Large weight matrices are prepacked from BF16 to
+/// owned f32 buffers once at load (superpage-aligned) so each forward GEMM
+/// consumes f32 directly — no per-call bf16→f32 conversion through scratch.
+/// The bf16→f32 widening is exact, so outputs are bit-identical to the old
+/// on-the-fly path. Small per-output biases / norm params stay as f32.
 pub struct EncLayer {
-    pub wq_weight_bf16: *const u16,
+    pub wq_weight: Vec<f32>,
     pub wq_bias: Vec<f32>,
-    pub wk_weight_bf16: *const u16,
+    pub wk_weight: Vec<f32>,
     pub wk_bias: Vec<f32>,
-    pub wv_weight_bf16: *const u16,
+    pub wv_weight: Vec<f32>,
     pub wv_bias: Vec<f32>,
-    pub wo_weight_bf16: *const u16,
+    pub wo_weight: Vec<f32>,
     pub wo_bias: Vec<f32>,
     pub attn_norm_weight: Vec<f32>,
     pub attn_norm_bias: Vec<f32>,
-    pub fc1_weight_bf16: *const u16,
+    pub fc1_weight: Vec<f32>,
     pub fc1_bias: Vec<f32>,
-    pub fc2_weight_bf16: *const u16,
+    pub fc2_weight: Vec<f32>,
     pub fc2_bias: Vec<f32>,
     pub ffn_norm_weight: Vec<f32>,
     pub ffn_norm_bias: Vec<f32>,
 }
-
-unsafe impl Send for EncLayer {}
-unsafe impl Sync for EncLayer {}
 
 pub struct EncoderBuffers {
     pub x: Vec<f32>,
@@ -48,9 +46,6 @@ pub struct EncoderBuffers {
     pub pe: Vec<f32>,
     pub conv_cols: Vec<f32>,
     pub window_starts: Vec<i32>,
-    /// Shared f32 scratch buffer for streaming BF16 weights into the GEMM kernel.
-    /// Sized to the largest weight matrix the encoder ever sees.
-    pub bf16_scratch: Vec<f32>,
     pub cap_tokens: usize,
 }
 
@@ -80,7 +75,6 @@ impl EncoderBuffers {
             pe: Vec::new(),
             conv_cols: Vec::new(),
             window_starts: Vec::new(),
-            bf16_scratch: Vec::new(),
             cap_tokens: 0,
         }
     }
@@ -125,12 +119,6 @@ impl EncoderBuffers {
         self.reshaped.resize(w3 * conv_proj_dim, 0.0);
         self.pe.resize(w3 * d_model, 0.0);
     }
-
-    pub fn ensure_scratch(&mut self, n: usize) {
-        if self.bf16_scratch.len() < n {
-            self.bf16_scratch.resize(n, 0.0);
-        }
-    }
 }
 
 pub struct Encoder {
@@ -140,18 +128,15 @@ pub struct Encoder {
     pub conv2_bias: Vec<f32>,
     pub conv3_weight: Vec<f32>,
     pub conv3_bias: Vec<f32>,
-    pub conv_out_weight_bf16: *const u16,
+    pub conv_out_weight: Vec<f32>,
     pub layers: Vec<EncLayer>,
     pub ln_post_weight: Vec<f32>,
     pub ln_post_bias: Vec<f32>,
-    pub proj1_weight_bf16: *const u16,
+    pub proj1_weight: Vec<f32>,
     pub proj1_bias: Vec<f32>,
-    pub proj2_weight_bf16: *const u16,
+    pub proj2_weight: Vec<f32>,
     pub proj2_bias: Vec<f32>,
 }
-
-unsafe impl Send for Encoder {}
-unsafe impl Sync for Encoder {}
 
 const ENC_PREFIX: &str = "thinker.audio_tower.";
 
@@ -163,6 +148,25 @@ fn load_f32(ms: &MultiSafetensors, name: &str) -> Option<Vec<f32>> {
     result
 }
 
+/// Prepack a BF16 weight matrix into an owned, superpage-aligned f32 buffer.
+/// The `(bits << 16)` widening is exact, so the prepacked f32 values are
+/// bit-identical to the previous on-the-fly `bf16_to_f32` conversion.
+fn load_bf16_as_f32(ms: &MultiSafetensors, name: &str) -> Option<Vec<f32>> {
+    let (_, meta) = match ms.find(name) {
+        Some(v) => v,
+        None => {
+            eprintln!("encoder: weight not found: {}", name);
+            return None;
+        }
+    };
+    let n = meta.numel();
+    let ptr = load_bf16_direct(ms, name)?;
+    let src = unsafe { std::slice::from_raw_parts(ptr, n) };
+    let mut dst = kernels::superpage_vec::<f32>(n);
+    kernels::bf16_to_f32_buf(&mut dst, src);
+    Some(dst)
+}
+
 fn load_bf16_direct(ms: &MultiSafetensors, name: &str) -> Option<*const u16> {
     let ptr = ms.get_bf16_direct(name);
     if ptr.is_none() {
@@ -171,24 +175,25 @@ fn load_bf16_direct(ms: &MultiSafetensors, name: &str) -> Option<*const u16> {
     ptr
 }
 
-/// Load one encoder transformer layer. All large weight matrices stay as BF16
-/// views into the mmap'd safetensors file (no Vec<f32> upconversion).
+/// Load one encoder transformer layer. Large weight matrices are prepacked from
+/// BF16 into owned f32 buffers here (in parallel across layers) so the forward
+/// GEMMs never re-convert them.
 fn load_enc_layer(ms: &MultiSafetensors, i: usize) -> Option<EncLayer> {
     let lp = format!("{}layers.{}", ENC_PREFIX, i);
     Some(EncLayer {
-        wq_weight_bf16: load_bf16_direct(ms, &format!("{}.self_attn.q_proj.weight", lp))?,
+        wq_weight: load_bf16_as_f32(ms, &format!("{}.self_attn.q_proj.weight", lp))?,
         wq_bias: load_f32(ms, &format!("{}.self_attn.q_proj.bias", lp))?,
-        wk_weight_bf16: load_bf16_direct(ms, &format!("{}.self_attn.k_proj.weight", lp))?,
+        wk_weight: load_bf16_as_f32(ms, &format!("{}.self_attn.k_proj.weight", lp))?,
         wk_bias: load_f32(ms, &format!("{}.self_attn.k_proj.bias", lp))?,
-        wv_weight_bf16: load_bf16_direct(ms, &format!("{}.self_attn.v_proj.weight", lp))?,
+        wv_weight: load_bf16_as_f32(ms, &format!("{}.self_attn.v_proj.weight", lp))?,
         wv_bias: load_f32(ms, &format!("{}.self_attn.v_proj.bias", lp))?,
-        wo_weight_bf16: load_bf16_direct(ms, &format!("{}.self_attn.out_proj.weight", lp))?,
+        wo_weight: load_bf16_as_f32(ms, &format!("{}.self_attn.out_proj.weight", lp))?,
         wo_bias: load_f32(ms, &format!("{}.self_attn.out_proj.bias", lp))?,
         attn_norm_weight: load_f32(ms, &format!("{}.self_attn_layer_norm.weight", lp))?,
         attn_norm_bias: load_f32(ms, &format!("{}.self_attn_layer_norm.bias", lp))?,
-        fc1_weight_bf16: load_bf16_direct(ms, &format!("{}.fc1.weight", lp))?,
+        fc1_weight: load_bf16_as_f32(ms, &format!("{}.fc1.weight", lp))?,
         fc1_bias: load_f32(ms, &format!("{}.fc1.bias", lp))?,
-        fc2_weight_bf16: load_bf16_direct(ms, &format!("{}.fc2.weight", lp))?,
+        fc2_weight: load_bf16_as_f32(ms, &format!("{}.fc2.weight", lp))?,
         fc2_bias: load_f32(ms, &format!("{}.fc2.bias", lp))?,
         ffn_norm_weight: load_f32(ms, &format!("{}.final_layer_norm.weight", lp))?,
         ffn_norm_bias: load_f32(ms, &format!("{}.final_layer_norm.bias", lp))?,
@@ -205,10 +210,11 @@ impl Encoder {
         let conv2_bias = load_f32(ms, &format!("{}conv2d2.bias", p))?;
         let conv3_weight = load_f32(ms, &format!("{}conv2d3.weight", p))?;
         let conv3_bias = load_f32(ms, &format!("{}conv2d3.bias", p))?;
-        let conv_out_weight_bf16 = load_bf16_direct(ms, &format!("{}conv_out.weight", p))?;
+        let conv_out_weight = load_bf16_as_f32(ms, &format!("{}conv_out.weight", p))?;
 
-        // Per-layer "loading" is now nearly free (just pointer + tiny bias reads),
-        // but keep the parallel scaffolding so it stays uniform with the decoder.
+        // Prepack each layer's transformer GEMM weights from BF16 to f32 in
+        // parallel across layers, so the parallel load absorbs the conversion
+        // cost once instead of the (serial) forward paying it every call.
         let nlayers = cfg.enc_layers;
         let nthreads = kernels::get_num_cpus().min(nlayers).max(1);
         let chunk = nlayers.div_ceil(nthreads);
@@ -239,9 +245,9 @@ impl Encoder {
 
         let ln_post_weight = load_f32(ms, &format!("{}ln_post.weight", p))?;
         let ln_post_bias = load_f32(ms, &format!("{}ln_post.bias", p))?;
-        let proj1_weight_bf16 = load_bf16_direct(ms, &format!("{}proj1.weight", p))?;
+        let proj1_weight = load_bf16_as_f32(ms, &format!("{}proj1.weight", p))?;
         let proj1_bias = load_f32(ms, &format!("{}proj1.bias", p))?;
-        let proj2_weight_bf16 = load_bf16_direct(ms, &format!("{}proj2.weight", p))?;
+        let proj2_weight = load_bf16_as_f32(ms, &format!("{}proj2.weight", p))?;
         let proj2_bias = load_f32(ms, &format!("{}proj2.bias", p))?;
 
         Some(Encoder {
@@ -251,13 +257,13 @@ impl Encoder {
             conv2_bias,
             conv3_weight,
             conv3_bias,
-            conv_out_weight_bf16,
+            conv_out_weight,
             layers,
             ln_post_weight,
             ln_post_bias,
-            proj1_weight_bf16,
+            proj1_weight,
             proj1_bias,
-            proj2_weight_bf16,
+            proj2_weight,
             proj2_bias,
         })
     }
@@ -316,21 +322,6 @@ impl Encoder {
                 &mut _owned_bufs
             }
         };
-        // Largest BF16 weight matrix the encoder GEMM streams through scratch:
-        //   conv_out:  conv_proj_dim × d_model     = 7680 × 1024 = ~7.5M
-        //   fc1/fc2:   d_model × ffn_dim           = 1024 × 4096 = ~4.2M
-        //   attn:      d_model × d_model           = 1024 × 1024 = ~1.0M
-        //   proj1:     d_model × d_model
-        //   proj2:     output_dim × d_model        (output_dim = dec_hidden, can exceed d_model)
-        // Sized to the max so conversion only needs one allocation. h3 is the
-        // post-conv frequency dim (128 mel bins → 16 after the conv stem), fixed
-        // by the architecture and independent of chunk size.
-        let conv_proj_dim = CONV_HIDDEN * 16; // h3 = 16
-        let scratch_n = (conv_proj_dim * d_model)
-            .max(d_model * ffn_dim)
-            .max(d_model * d_model)
-            .max(output_dim * d_model);
-        bufs.ensure_scratch(scratch_n);
 
         // Main sequence buffer: [total_tokens, d_model]
         let td = total_tokens * d_model;
@@ -428,18 +419,15 @@ impl Encoder {
 
             // Project: [w3, 7680] -> [w3, d_model]
             let projected = &mut bufs.x[token_offset * d_model..(token_offset + w3) * d_model];
-            unsafe {
-                kernels::linear_bf16_scratch(
-                    projected,
-                    reshaped,
-                    self.conv_out_weight_bf16,
-                    None,
-                    w3,
-                    conv_proj_dim,
-                    d_model,
-                    &mut bufs.bf16_scratch,
-                );
-            }
+            kernels::linear(
+                projected,
+                reshaped,
+                &self.conv_out_weight,
+                None,
+                w3,
+                conv_proj_dim,
+                d_model,
+            );
 
             // Add per-chunk sinusoidal PE
             let pe = &mut bufs.pe[..w3 * d_model];
@@ -474,38 +462,33 @@ impl Encoder {
                 1e-5,
             );
 
-            unsafe {
-                kernels::linear_bf16_scratch(
-                    &mut bufs.q[..td],
-                    &bufs.x_norm[..td],
-                    layer.wq_weight_bf16,
-                    Some(&layer.wq_bias),
-                    total_tokens,
-                    d_model,
-                    d_model,
-                    &mut bufs.bf16_scratch,
-                );
-                kernels::linear_bf16_scratch(
-                    &mut bufs.k[..td],
-                    &bufs.x_norm[..td],
-                    layer.wk_weight_bf16,
-                    Some(&layer.wk_bias),
-                    total_tokens,
-                    d_model,
-                    d_model,
-                    &mut bufs.bf16_scratch,
-                );
-                kernels::linear_bf16_scratch(
-                    &mut bufs.v[..td],
-                    &bufs.x_norm[..td],
-                    layer.wv_weight_bf16,
-                    Some(&layer.wv_bias),
-                    total_tokens,
-                    d_model,
-                    d_model,
-                    &mut bufs.bf16_scratch,
-                );
-            }
+            kernels::linear(
+                &mut bufs.q[..td],
+                &bufs.x_norm[..td],
+                &layer.wq_weight,
+                Some(&layer.wq_bias),
+                total_tokens,
+                d_model,
+                d_model,
+            );
+            kernels::linear(
+                &mut bufs.k[..td],
+                &bufs.x_norm[..td],
+                &layer.wk_weight,
+                Some(&layer.wk_bias),
+                total_tokens,
+                d_model,
+                d_model,
+            );
+            kernels::linear(
+                &mut bufs.v[..td],
+                &bufs.x_norm[..td],
+                &layer.wv_weight,
+                Some(&layer.wv_bias),
+                total_tokens,
+                d_model,
+                d_model,
+            );
 
             kernels::bidirectional_attention(
                 &mut bufs.attn_out[..td],
@@ -521,18 +504,15 @@ impl Encoder {
             );
 
             // Fused: x += wo_bias + attn_out @ wo_weight.T
-            unsafe {
-                kernels::linear_accumulate_bf16_scratch(
-                    &mut bufs.x[..td],
-                    &bufs.attn_out[..td],
-                    layer.wo_weight_bf16,
-                    Some(&layer.wo_bias),
-                    total_tokens,
-                    d_model,
-                    d_model,
-                    &mut bufs.bf16_scratch,
-                );
-            }
+            kernels::linear_accumulate(
+                &mut bufs.x[..td],
+                &bufs.attn_out[..td],
+                &layer.wo_weight,
+                Some(&layer.wo_bias),
+                total_tokens,
+                d_model,
+                d_model,
+            );
 
             // FFN
             kernels::layer_norm(
@@ -545,32 +525,26 @@ impl Encoder {
                 1e-5,
             );
 
-            unsafe {
-                kernels::linear_bf16_scratch(
-                    &mut bufs.ffn_mid[..tf],
-                    &bufs.x_norm[..td],
-                    layer.fc1_weight_bf16,
-                    Some(&layer.fc1_bias),
-                    total_tokens,
-                    d_model,
-                    ffn_dim,
-                    &mut bufs.bf16_scratch,
-                );
-            }
+            kernels::linear(
+                &mut bufs.ffn_mid[..tf],
+                &bufs.x_norm[..td],
+                &layer.fc1_weight,
+                Some(&layer.fc1_bias),
+                total_tokens,
+                d_model,
+                ffn_dim,
+            );
             kernels::gelu(&mut bufs.ffn_mid[..tf], tf);
             // Fused: x += fc2_bias + ffn_mid @ fc2_weight.T
-            unsafe {
-                kernels::linear_accumulate_bf16_scratch(
-                    &mut bufs.x[..td],
-                    &bufs.ffn_mid[..tf],
-                    layer.fc2_weight_bf16,
-                    Some(&layer.fc2_bias),
-                    total_tokens,
-                    ffn_dim,
-                    d_model,
-                    &mut bufs.bf16_scratch,
-                );
-            }
+            kernels::linear_accumulate(
+                &mut bufs.x[..td],
+                &bufs.ffn_mid[..tf],
+                &layer.fc2_weight,
+                Some(&layer.fc2_bias),
+                total_tokens,
+                ffn_dim,
+                d_model,
+            );
         }
 
         // Final LayerNorm: use x_norm as temp, then swap into x
@@ -585,34 +559,28 @@ impl Encoder {
         );
         bufs.x[..td].copy_from_slice(&bufs.x_norm[..td]);
 
-        // Projection: proj1 (GELU) -> proj2 (reuse scratch buffers)
-        unsafe {
-            kernels::linear_bf16_scratch(
-                &mut bufs.q[..td],
-                &bufs.x[..td],
-                self.proj1_weight_bf16,
-                Some(&self.proj1_bias),
-                total_tokens,
-                d_model,
-                d_model,
-                &mut bufs.bf16_scratch,
-            );
-        }
+        // Projection: proj1 (GELU) -> proj2 (reuse activation buffers)
+        kernels::linear(
+            &mut bufs.q[..td],
+            &bufs.x[..td],
+            &self.proj1_weight,
+            Some(&self.proj1_bias),
+            total_tokens,
+            d_model,
+            d_model,
+        );
         kernels::gelu(&mut bufs.q[..td], td);
 
         let mut enc_output = vec![0.0f32; total_tokens * output_dim];
-        unsafe {
-            kernels::linear_bf16_scratch(
-                &mut enc_output,
-                &bufs.q[..td],
-                self.proj2_weight_bf16,
-                Some(&self.proj2_bias),
-                total_tokens,
-                d_model,
-                output_dim,
-                &mut bufs.bf16_scratch,
-            );
-        }
+        kernels::linear(
+            &mut enc_output,
+            &bufs.q[..td],
+            &self.proj2_weight,
+            Some(&self.proj2_bias),
+            total_tokens,
+            d_model,
+            output_dim,
+        );
 
         Some((enc_output, total_tokens))
     }
