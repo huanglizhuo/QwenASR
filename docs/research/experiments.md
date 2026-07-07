@@ -3771,6 +3771,80 @@ still nets a real ~9 ms off the per-prefill conversion. The change is
 zero-cost in memory and API surface, so the modest gain is accepted outright.
 
 
+### R5-F: 4-row SDOT INT8 matvec/argmax kernels
+
+Change:
+- Single-token decode is bandwidth-bound: every generated token streams ~500 MB
+  of INT8 weights (QKV/O/gate-up/down across 28 layers plus the ~152k×1024
+  lm_head argmax). The hot NEON kernels `matvec_int8` and `argmax_int8_range` in
+  `crates/qwen-asr/src/kernels/neon.rs` computed **two** output rows per pass.
+  This experiment widened both to **four** rows per pass: per 16-byte block of
+  `x`, one `x` vector feeds four independent SDOT accumulator streams (one per
+  weight row, no cross-row combining), adding more independent weight-row loads
+  in flight per loop iteration — the standard memory-level-parallelism lever.
+- `matvec_int8` kept its depth-2 (32-byte) inner shape per row → 8 int32
+  accumulators for the 4-row loop; `argmax_int8_range` kept its depth-4 (64-byte)
+  shape per row → 16 accumulators + 4 `x` vectors ≈ 20 live vector registers,
+  well within aarch64's 32. The row remainder (`rows % 4`) falls through to the
+  unchanged 2-row and 1-row tails. Within-row block order and the per-row f32
+  scale multiply are unchanged; row partitioning across threads stays by
+  contiguous row ranges. All INT8 callers route through these two functions
+  (including the R5-B fused-region slices `int8_matvec_range` / `int8_qkv_range`
+  / `int8_swiglu_range`, which just call `neon::matvec_int8`), so the widening
+  reaches every decode path.
+- SDOT accumulates i8×i8 into i32 (exact regardless of order) and the argmax
+  comparisons run in strictly increasing row order with the same `>` tie-break,
+  so results are bit-identical. Confirmed: `bench/samples/audio.wav` offline
+  transcript byte-identical to baseline; `cargo test --release` all pass.
+
+Results (Apple M5 Pro, back-to-back same session, `bench/run.sh --runs 10`,
+baseline binary = HEAD `522c5cb`, baseline run FIRST). Median inference / wall in
+ms; because pair 1 deltas were all within ±1.5% a second interleaved A/B pair was
+run (baseline rebuilt via `git stash`):
+
+Pair 1 (baseline → sdot4):
+
+| Mode | Base infer | sdot4 infer | Base wall | sdot4 wall |
+|------|-----------:|------------:|----------:|-----------:|
+| offline   | 771 | **766** (−0.6%) | 1019.7 | **1016.7** (−0.3%) |
+| segmented | 773 | **767** (−0.8%) | 1021.9 | **1017.6** (−0.4%) |
+| streaming | 748 | **746** (−0.3%) |  998.5 |  **995.5** (−0.3%) |
+
+Pair 2 (baseline → sdot4):
+
+| Mode | Base infer | sdot4 infer | Base wall | sdot4 wall |
+|------|-----------:|------------:|----------:|-----------:|
+| offline   | 771 | **775** (+0.5%) | 1023.6 | **1024.4** (+0.1%) |
+| segmented | 767 | **766** (−0.1%) | 1020.2 | **1018.8** (−0.1%) |
+| streaming | 747 | **749** (+0.3%) |  999.3 | **1000.6** (+0.1%) |
+
+WER (100-file LibriSpeech `dev-clean-2`, offline, change binary):
+
+| Metric | Baseline (recent) | R5-F |
+|--------|------------------:|-----:|
+| Corpus WER | 0.0357 | 0.0357 |
+| Macro WER  | 0.0397 | 0.0397 |
+| Corpus CER | 0.0122 | 0.0122 |
+
+Decision: **Rejected.** WER is identical (the change is bit-exact), but there is
+no consistent speed improvement beyond run-to-run noise: offline and streaming
+flip sign between the two pairs (−0.6%/+0.5% and −0.3%/+0.3%), and segmented's
+apparent edge collapses to 1 ms (−0.1%) in the second pair. The data says the
+existing 2-row SDOT kernel already saturates the achievable per-core weight-read
+bandwidth on this machine — the sequential INT8 weight streams are already served
+as fast as the cores consume them across the contiguous row-range partition, so
+issuing four independent row streams instead of two adds no usable memory-level
+parallelism. This is distinct from the rejected B1 (SMMLA i8mm) and B6 (software
+prefetch): B1 regressed by changing the instruction mix and adding interleave/
+broadcast shuffle overhead, and B6 regressed by adding explicit `prfm`
+instructions the hardware prefetcher already covers. R5-F adds neither — it keeps
+plain SDOT with the identical instruction per dot product and only reorders which
+rows are in flight — yet still shows no gain, which is the stronger evidence that
+the bottleneck is raw achievable bandwidth, not kernel-level load parallelism.
+Reverted; no further row-widening of these kernels is worth retrying without a
+change to the memory subsystem itself.
+
+
 ---
 
 ## Autoresearch Program Baseline Experiments
