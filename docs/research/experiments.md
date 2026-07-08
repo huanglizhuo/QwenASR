@@ -4196,6 +4196,119 @@ speed cost and with no change to decoder residency or output.
 
 ---
 
+## Long-Audio Track (Round 6)
+
+The next optimization track (F27 shared-weights split -> F28 parallel segment
+transcription) targets long audio, but every existing gate is short-audio: the
+`bench/run.sh` gate uses a single 28 s sample and the WER gate uses 100 short
+LibriSpeech utterances (max ~15 s). Round 6 opens with the tooling needed to
+measure long audio before any long-audio code change lands.
+
+### L1: long-audio benchmark gate + baseline
+
+Tooling only. No `crates/` (library or CLI) change; this adds bench assets and
+scripts and records a baseline, in the spirit of the Round 4 G6/G8/G11 tooling
+entries.
+
+Change:
+- Added `bench/long/build_long_samples.py`, a deterministic long-sample builder.
+  It enumerates every `dev-clean-2` utterance via `librispeech_wer.find_items`,
+  imposes a FIXED order (ascending by POSIX relative FLAC path), and appends
+  utterances until accumulated audio + gaps first reaches a target duration. A
+  fixed 0.5 s silence gap is inserted *between* utterances (never leading or
+  trailing). Audio is rendered to 16 kHz mono s16 PCM WAV via ffmpeg, using the
+  same `convert_flac_to_wav` helper as the short WER harness so scores stay
+  comparable. Two samples are built:
+  - `long-2min.wav`  — 22 utterances, 120.7 s, md5 `a5adc3c83c4ab654fd039e95c3fe30a3`
+  - `long-10min.wav` — 102 utterances, 602.5 s, md5 `8015eda1f9290b1b84d12f073df9f048`
+  Each WAV gets a sidecar `<name>.ref.txt` (the utterances' reference texts joined
+  in order) and a committed `manifests/<name>.txt` recording the exact utterance
+  id list plus header metadata (order, gap, target, duration, md5). The WAVs and
+  results are gitignored and rebuilt from the committed manifest + builder; the
+  builder is idempotent (rebuild reproduces identical md5, verified).
+- Added `bench/long/score_long.py`, which imports `librispeech_wer.score` (the
+  shared normalizer/scorer — not a fork) so long-audio WER/CER uses the exact
+  normalization of the short gate.
+- Added `bench/long/run_long.sh`, styled after `bench/run.sh`: per sample × mode
+  it runs the release binary N times (default 3), records median inference ms,
+  median wall ms, realtime factor, and peak child RSS (`getrusage`, same as
+  G11), scores WER/CER against the sidecar reference, and emits one JSON result
+  per mode into the gitignored `bench/long/results/<label>/`.
+- Added `.gitignore` entries for `bench/long/samples/` and `bench/long/results/`.
+
+Determinism finding (investigated before recording the baseline):
+- There is **no run-to-run nondeterminism**. Every invocation is byte-identical
+  across repeated runs (md5 stable ×3–×5 per mode), matching the short-audio
+  bench. Evidence at HEAD `cfb202c` on `long-2min.wav`:
+  - offline: `5f4c7c43…` (×3, and identical with or without `--silent`).
+  - segmented `-S30`, non-silent: `4799ffc6…` (×3).
+  - segmented `-S30 --silent`: `4b83addf…` (×3).
+- The apparent "variance" first observed (WER 0.0357 vs 0.0429) was **not**
+  nondeterminism: it came from comparing a `--silent` sanity run against the
+  non-silent runner. `--silent` deterministically changes segmented output at a
+  segment boundary (`be one." And with` vs merged `be one."And with`), which
+  normalizes to one fewer/more word token. The runner **must** run non-silent
+  because `--silent` emits zero stderr and the runner parses the `Inference:` /
+  `Audio:` stderr lines for timing (same mechanism as `bench/run.sh`). The gate
+  therefore fixes the non-silent invocation, which is byte-stable.
+- Consequence: WER/CER for the gated modes are exact and repeatable (per-run
+  spread = 0), so the gate uses a strict tolerance rather than a spread band.
+
+Baseline (HEAD `cfb202c`, Apple M5 Pro, 5 performance cores, `RUSTFLAGS=-C
+target-cpu=native` release build, median of 3 runs, new process per run, OS
+page cache uncontrolled):
+
+| Sample | Mode | Inference ms | Wall ms | Realtime | Peak RSS | WER | CER |
+|--------|------|-------------:|--------:|---------:|---------:|----:|----:|
+| long-2min (120.7 s) | offline | 6098 | 6330 | 19.79x | 4.00 GB | 0.0286 | 0.0093 |
+| long-2min (120.7 s) | segmented -S30 | 4511 | 4745 | 26.76x | 3.79 GB | 0.0429 | 0.0136 |
+| long-2min (120.7 s) | streaming* | 3244 | 3461 | 37.21x | 3.90 GB | 0.9179 | 0.9024 |
+| long-10min (602.5 s) | offline | 67753 | 68063 | 8.89x | 9.03 GB | 0.0339 | 0.0098 |
+| long-10min (602.5 s) | segmented -S30 | 21833 | 22058 | 27.60x | 3.84 GB | 0.0339 | 0.0095 |
+
+Notes:
+- Long-sample WER (0.029–0.043 for offline/segmented) is in line with the short
+  100-utterance corpus WER (~0.039), confirming the concatenation, gap sizing,
+  and reference ordering are correct — the sanity check the builder targets.
+- **offline on long-10min is feasible**, not impractical: 67.8 s inference
+  (8.89x realtime) at ~9.0 GB peak RSS. It is recorded as a real baseline row.
+  The RSS is higher than segmented (~3.8 GB) because offline holds the full
+  10-minute encoder output and a single monolithic decode context resident,
+  whereas segmented processes ≤30 s windows; this is exactly the memory-vs-mode
+  signal the long gate exists to watch.
+- `streaming*` is **excluded from the accuracy gate**. At this HEAD `--stream`
+  truncates to exactly 32 tokens (the `--stream-max-new-tokens` default) for the
+  *whole* file — it emits only the first ~14 s / first utterance then stops, on
+  both `long-2min.wav` and the stock 28 s `bench/samples/audio.wav`. Its 0.9179
+  WER is that truncation, not a meaningful long-audio accuracy figure. It is kept
+  in the table for the record but is not a gate baseline; it is a pre-existing
+  binary behavior, not a tooling artifact.
+
+Gate for future long-audio experiments (F27/F28 and successors):
+- **Accuracy:** long-sample WER for the gated modes (offline, segmented `-S30`)
+  on both `long-2min` and `long-10min` must not regress beyond **+0.002
+  absolute** versus the corresponding baseline WER above. Because the transcript
+  is byte-deterministic, this is a strict per-mode/per-sample check on the median
+  (= every) run; no spread band is needed.
+- **Speed:** compared **back-to-back A/B** on the same host in the same session,
+  identical to the short gate — build baseline and candidate, run
+  `bench/long/run_long.sh` for each, compare median inference/wall/RTF and peak
+  RSS per sample × mode. Streaming is not part of the gate.
+
+Validation:
+- `bash -n bench/long/run_long.sh` passed; builder and scorer run under stdlib +
+  ffmpeg only.
+- Rebuild reproducibility confirmed: a second `build_long_samples.py` run
+  produced identical WAV md5s and identical manifests.
+- Baseline runner completed cleanly for all five sample × mode cells above.
+
+Decision: **Accepted as tooling.** No inference behavior changes; this closes the
+long-audio measurement gap that F28 explicitly flagged as a blocker ("needs a
+long-audio benchmark gate rather than the current single 28 s sample").
+
+
+---
+
 ## Autoresearch Program Baseline Experiments
 
 These experiments come from the initial `codex-auto-research` autoresearch program baseline (`programs.md`). They are structural buffer-reuse optimizations that predate the numbered round structure above.

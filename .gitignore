@@ -2,6 +2,8 @@
 /target
 /qwen3-asr-0.6b
 /bench/results/
+/bench/long/samples/
+/bench/long/results/
 /bench/compare-results/
 /bench/.venv-bench/
 /bench/.venv-mlx-audio/
