@@ -5136,6 +5136,40 @@ improve inference and still regressed wall/streaming. The current parallel BF16
 scratch conversion remains better than adding these resident f32 copies. The
 Rust code was fully reverted and only this log entry is kept.
 
+### R9-E: fused decoder prefill gate/up GEMM
+
+Change tested:
+- Used the already-owned `gate_up_fused_bf16` weights for normal ASR decoder
+  prefill, replacing the separate gate and up projection GEMMs with one
+  `2 * intermediate` output GEMM.
+- Added a helper to apply SwiGLU from the interleaved gate/up output into
+  `pref_gate`, then kept the existing down projection unchanged.
+- Forced-aligner layers, where `gate_up_fused_bf16` is empty, stayed on the
+  original separate gate/up path.
+
+Reason:
+- R9-A/R9-D showed f32 prepacking was not worthwhile, but the current ASR
+  decoder already owns interleaved BF16 gate/up weights for single-token decode.
+  Reusing them in prefill could reduce two GEMM calls and two BF16-scratch
+  conversions without adding another static weight copy.
+
+Baseline reference: `round8-thread-default-rerun` / `round9-profile-current`.
+
+| Mode | Current reference | R9-E |
+|------|------------------:|-----:|
+| offline | 776-780 ms | 769 ms |
+| segmented -S30 | 775-780 ms | 807 ms |
+| streaming | 754 ms | 762 ms |
+| overall average | ~768-771 ms | 779.3 ms |
+
+Speed-sample WER was unchanged (`0.0270` offline/segmented, `0.2973`
+streaming).
+
+Decision: **Rejected.** The fused gate/up prefill path improved offline but
+regressed segmented and streaming badly enough to lose overall. The larger
+single GEMM and interleaved post-processing are not a stable win across modes.
+The Rust code was fully reverted and only this log entry is kept.
+
 
 ---
 
