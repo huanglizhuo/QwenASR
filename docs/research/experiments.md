@@ -5039,6 +5039,40 @@ BF16 scratch conversion plus current cache/memory behavior appears better than
 paying the larger resident f32 copy cost. The Rust code was fully reverted and
 only this log entry is kept.
 
+### R9-B: skip zero-fill for reusable encoder and prefill workspaces
+
+Change tested:
+- Added local `resize_f32_uninit()` helpers in `encoder.rs` and `decoder.rs`.
+- Used them when growing large reusable buffers that are fully overwritten
+  before their active slices are read:
+  - encoder transformer and stem buffers (`x`, `x_norm`, `q/k/v`,
+    `attn_out`, `ffn_mid`, `chunk_mel`, `c1/c2/c3`, `reshaped`, `pe`);
+  - decoder prefill buffers (`pref_x`, `pref_x_norm`, `pref_q/k/v`,
+    `pref_attn_out`, `pref_proj_out`, `pref_ffn_out`, `pref_gate`, `pref_up`).
+
+Reason:
+- R8-B and R8-C showed that skipping zero-fill for top-level embedding and
+  im2col scratch did not win, but the first inference still grows several
+  persistent multi-megabyte workspaces inside the measured encode/decode path.
+  This probe tested the broader persistent workspace side without changing math.
+
+Baseline reference: `round8-thread-default-rerun` / `round9-profile-current`.
+
+| Mode | Current reference | R9-B |
+|------|------------------:|-----:|
+| offline | 776-780 ms | 777 ms |
+| segmented -S30 | 775-780 ms | 775 ms |
+| streaming | 754 ms | 756 ms |
+| overall average | ~768-771 ms | 769.3 ms |
+
+Speed-sample WER was unchanged (`0.0270` offline/segmented, `0.2973`
+streaming).
+
+Decision: **Rejected.** The wider workspace zero-fill removal was effectively
+baseline for offline/segmented and regressed streaming. The allocator/memset
+cost is not a meaningful current bottleneck. The Rust code was fully reverted
+and only this log entry is kept.
+
 
 ---
 
