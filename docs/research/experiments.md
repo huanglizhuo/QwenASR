@@ -4295,6 +4295,63 @@ Gate for future long-audio experiments (F27/F28 and successors):
   `bench/long/run_long.sh` for each, compare median inference/wall/RTF and peak
   RSS per sample × mode. Streaming is not part of the gate.
 
+### L2: segmented long-audio profile + parallel-decode headroom probe
+
+Analysis only, no code change. Purpose: decide whether the large F27
+shared-weights/session refactor (prerequisite for F28 parallel-segment decode)
+is justified, before building it, by measuring (a) where segmented long-audio
+time goes and (b) whether independent parallel decodes have real aggregate
+bandwidth headroom on this machine. Both were measured at HEAD `cfb202c` on
+`long-2min.wav`.
+
+Profile (`-S30 --profile`, single run):
+- Reported split: inference 4344 ms = **encoding 1253 ms (29%) + decoding
+  3091 ms (71%)** for 369 generated text tokens.
+- Kernel buckets: `sgemm` 1493 ms and `bf16_matvec` 1075 ms (encoder transformer
+  + decoder prefill, AMX/compute), `conv2d_op` 482 ms (encoder stem),
+  `attention_causal` 194 ms, `attention_bidir` 157 ms (encoder). The 3091 ms
+  autoregressive decode is dominated by the INT8 single-token matvecs, which
+  Round 5 (R5-F) established are **bandwidth-bound and already saturate the 5
+  performance cores** for one stream.
+- Implication: within a single stream, decode (71%) cannot be sped up by adding
+  cores; the only compute-bound headroom is the 29% encode. Naive same-stream
+  parallelism is therefore not the lever.
+
+Parallel-decode headroom (N independent OS processes, each transcribing the full
+`long-2min.wav` `-S30`; wall via `/usr/bin/time -p`; single-process baseline
+4.59 s). Independent processes have separate address spaces, so no shared
+thread-pool barriers — this is the R5-G question re-asked across *independent*
+sessions rather than within one decode:
+
+| N concurrent | Wall | Throughput vs serial (N×4.59/wall) |
+|-------------:|-----:|-----------------------------------:|
+| 1 | 4.59 s | 1.00x |
+| 2 | 6.16 s | 1.49x |
+| 3 | 8.00 s | **1.72x** |
+| 4 | 10.52 s | 1.74x (knee — 3→4 adds ~0) |
+| 5 | 48.86 s | 0.46x (collapse: 5×~3.8 GB model copies exceed RAM → swap) |
+
+Findings:
+- **There is real aggregate headroom.** Two/three independent decodes reach
+  1.49x/1.72x throughput — the idle E-cluster (and spare AMX/memory concurrency)
+  contributes when streams are independent and share no barriers. This does
+  **not** contradict R5-G (which added E-cores *inside* one decode's barrier'd
+  region and regressed); the difference is exactly the absence of cross-cluster
+  synchronization.
+- **The knee is ~3 streams (~1.72x);** the 4th adds nothing and the 5th collapses
+  because independent processes each hold a full ~3.8 GB weight copy. An
+  **in-process** F28 (one shared weight set + N lightweight `Session`s) is what
+  avoids that memory wall — which is the concrete argument for doing F27 first:
+  shared immutable weights make 3-way segment parallelism fit in ~4 GB instead of
+  ~11 GB.
+
+Decision: **Accepted as analysis — greenlights the F27→F28 track with a measured
+~1.7x ceiling on segmented long audio.** F27 (shared `Arc<ModelWeights>` +
+per-`Session` mutable state) is the next step; F28 (parallel segments, ~3-way)
+is the optimization on top, gated by L1. Expected target: segmented long-audio
+inference toward ~0.58x of baseline (1.72x), bounded by the decode bandwidth
+wall, not the hoped 2–2.5x. No code changed in L2.
+
 Validation:
 - `bash -n bench/long/run_long.sh` passed; builder and scorer run under stdlib +
   ffmpeg only.
