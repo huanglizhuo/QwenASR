@@ -12,6 +12,8 @@ This file collects the optimization experiment diaries.
 - [Speed Improvement Experiments — Round 4 (ggml-idea.md)](#speed-improvement-experiments--round-4-ggml-ideamd)
 - [Fable Ideas Experiments](#fable-ideas-experiments)
 - [Speed Improvement Experiments — Round 5 (decode-focused)](#speed-improvement-experiments--round-5-decode-focused)
+- [Long-Audio Track (Round 6)](#long-audio-track-round-6)
+- [Speed Improvement Experiments — Round 7](#speed-improvement-experiments--round-7)
 - [Autoresearch Program Baseline Experiments](#autoresearch-program-baseline-experiments)
 - [Historical Commit Ledger (perf-opt-1 branch)](#historical-commit-ledger-perf-opt-1-branch)
 - [Opportunity Backlog](#opportunity-backlog)
@@ -4496,6 +4498,128 @@ K=5 worker sessions, ~730 MB each), still below the offline mode's ~9 GB and far
 from L2's 5-process swap collapse — precisely the shared-weights win that
 motivated doing this in-process. The minimal approach succeeded; the full F27
 public refactor was **not** needed.
+
+
+---
+
+## Speed Improvement Experiments — Round 7
+
+Goal: continue small, local speed probes after Round 6 while preserving the
+current full-transcript behavior and the 100-file LibriSpeech offline corpus WER
+gate (`<= 0.04`). Machine: Apple M-series host. Model: `qwen3-asr-0.6b`. Speed
+via `bench/run.sh --runs 10`.
+
+### R7-A: thread-local SwiGLU gate/up scratch
+
+Change tested:
+- Replaced the per-call `Vec<f32>` allocation inside the fused SwiGLU paths with
+  a thread-local reusable scratch buffer:
+  - `linear_nobias_bf16_swiglu`
+  - aarch64 `int8_swiglu_range`
+- Math, row ranges, and output ownership were unchanged; the experiment only
+  changed allocation/reuse behavior.
+
+Baseline (`round7-scratch-baseline`, HEAD `0f6ba46`, runs=10):
+
+| Mode | Inference | Wall | Speed-sample WER |
+|------|----------:|-----:|-----------------:|
+| offline | 802.0 ms | 1063.4 ms | 0.0270 |
+| segmented -S30 | 784.5 ms | 1045.3 ms | 0.0270 |
+| streaming | 774.5 ms | 1037.4 ms | 0.2973 |
+| overall average | 787.0 ms | — | — |
+
+Results (`round7-swiglu-tls-scratch`, runs=10):
+
+| Mode | Inference | Wall | Speed-sample WER |
+|------|----------:|-----:|-----------------:|
+| offline | 801.5 ms | 1065.6 ms | 0.0270 |
+| segmented -S30 | 808.0 ms | 1072.6 ms | 0.0270 |
+| streaming | 774.5 ms | 1042.9 ms | 0.2973 |
+| overall average | 794.7 ms | — | — |
+
+Decision: **Rejected.** The change was WER-neutral on the speed sample but
+regressed the standard speed benchmark overall (`787.0 -> 794.7 ms`), driven by
+segmented mode (`784.5 -> 808.0 ms`). The likely cause is that the allocator
+already handles these small short-lived buffers cheaply, while TLS/`RefCell`
+access and retained scratch state add overhead or cache pressure in the fused
+decode region. The Rust code was fully reverted; only this log entry is kept.
+
+### R7-B: head-first prefill KV cache scatter
+
+Change tested:
+- Added a prefill-only `KvCache::write_kv_range_interleaved` helper that writes
+  the normalized/rotated interleaved K/V prefill buffers into the head-contiguous
+  KV cache by head first, instead of calling the existing per-position
+  `k_write_pos` and `v_write_pos` helpers in sequence order.
+- No math, cache layout, or attention code changed; this only changed the copy
+  loop order for decoder prefill K/V cache population.
+
+Baseline reused from R7-A (`round7-scratch-baseline`, HEAD `0f6ba46`, runs=10):
+
+| Mode | Inference | Wall | Speed-sample WER |
+|------|----------:|-----:|-----------------:|
+| offline | 802.0 ms | 1063.4 ms | 0.0270 |
+| segmented -S30 | 784.5 ms | 1045.3 ms | 0.0270 |
+| streaming | 774.5 ms | 1037.4 ms | 0.2973 |
+| overall average | 787.0 ms | — | — |
+
+Results (`round7-kv-headfirst-scatter`, runs=10):
+
+| Mode | Inference | Wall | Speed-sample WER |
+|------|----------:|-----:|-----------------:|
+| offline | 793.5 ms | 1052.2 ms | 0.0270 |
+| segmented -S30 | 794.0 ms | 1052.9 ms | 0.0270 |
+| streaming | 770.5 ms | 1029.9 ms | 0.2973 |
+| overall average | 786.0 ms | — | — |
+
+Decision: **Rejected.** Offline and streaming moved slightly faster, but
+segmented regressed (`784.5 -> 794.0 ms`) and the overall average changed by
+only `1.0 ms` (`0.13%`), well inside run-to-run noise. This did not meet the
+all-mode improvement bar, so the Rust code was fully reverted and only this log
+entry is kept.
+
+### R7-C: parallel convolution bias add
+
+Change tested:
+- Parallelized the post-GEMM convolution bias-add loop in `conv2d_impl` for
+  large convolution outputs (`c_out * spatial_out >= 4096`), splitting output
+  channels across the existing thread pool.
+- The convolution math, im2col layout, GEMM call, and bias values were
+  unchanged; this only changed the bias-add scheduling.
+
+Reason:
+- A current offline profile (`round7-profile-current`, runs=3) showed
+  `conv2d_op_ms = 102.5` out of `788 ms` total inference, so the conv stem is
+  still a measurable bucket after the Round 5/Round 6 work.
+
+Initial baseline reused from R7-A (`round7-scratch-baseline`, HEAD `0f6ba46`,
+runs=10):
+
+| Mode | Baseline | R7-C |
+|------|---------:|-----:|
+| offline | 802.0 ms | 783.5 ms |
+| segmented -S30 | 784.5 ms | 793.0 ms |
+| streaming | 774.5 ms | 759.5 ms |
+| overall average | 787.0 ms | 778.7 ms |
+
+Because that first comparison was mixed, the Rust code was reverted and a
+same-session baseline rerun was built and measured:
+
+| Mode | Baseline rerun | R7-C |
+|------|---------------:|-----:|
+| offline | 791.0 ms | 783.5 ms |
+| segmented -S30 | 793.0 ms | 793.0 ms |
+| streaming | 766.0 ms | 759.5 ms |
+| overall average | 783.3 ms | 778.7 ms |
+
+Speed-sample WER was unchanged in the measured modes (`0.0270` for offline and
+segmented, `0.2973` for streaming).
+
+Decision: **Rejected / too small to keep.** The same-session rerun suggests a
+possible `4.6 ms` overall improvement (`0.6%`), but segmented was flat and the
+effect is below the repo's usual ±1.5% noise band. The initial A/B also showed a
+segmented regression. Since this is not a clear, repeatable all-mode speedup,
+the Rust code was fully reverted and only this log entry is kept.
 
 
 ---
