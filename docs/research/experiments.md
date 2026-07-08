@@ -15,6 +15,7 @@ This file collects the optimization experiment diaries.
 - [Long-Audio Track (Round 6)](#long-audio-track-round-6)
 - [Speed Improvement Experiments — Round 7](#speed-improvement-experiments--round-7)
 - [Speed Improvement Experiments — Round 8](#speed-improvement-experiments--round-8)
+- [Speed Improvement Experiments — Round 9](#speed-improvement-experiments--round-9)
 - [Autoresearch Program Baseline Experiments](#autoresearch-program-baseline-experiments)
 - [Historical Commit Ledger (perf-opt-1 branch)](#historical-commit-ledger-perf-opt-1-branch)
 - [Opportunity Backlog](#opportunity-backlog)
@@ -4983,6 +4984,60 @@ Decision: **Rejected.** The vector helper did not improve the benchmark and
 regressed streaming. The scalar quantization loops are not the current decode
 bottleneck, or the vector path's lane-store overhead cancels the absmax win.
 The Rust code was fully reverted and only this log entry is kept.
+
+
+---
+
+## Speed Improvement Experiments — Round 9
+
+Goal: continue current-state speed work after Round 8's micro-probes, using a
+fresh profile to target larger remaining buckets while preserving transcript
+quality.
+
+Fresh profile reference (`round9-profile-current`, offline, `--runs 3
+--profile`): total `780 ms`, encode `265 ms`, decode `515 ms`; counters
+included `sgemm_ms = 338.4`, `bf16_matvec_ms = 234.8`,
+`conv2d_op_ms = 102.0`, `attention_causal_ms = 36.4`, and
+`attention_bidir_ms = 23.5`.
+
+### R9-A: prepack decoder prefill weights to f32
+
+Change tested:
+- Reintroduced a scoped version of the old exp-01 idea in the current decoder.
+- Added owned superpage-aligned f32 copies of the decoder prefill matrices
+  (`wq/wk/wv/wo/gate/up/down`) for non-aligner ASR layers at load time.
+- Routed multi-token decoder prefill projections through `kernels::linear_nobias`
+  when those f32 copies exist, keeping the existing BF16 scratch path as the
+  forced-aligner/fallback path. Single-token INT8 decode weights and BF16
+  pointers stayed intact.
+
+Reason:
+- The current code still calls `linear_nobias_bf16_scratch()` throughout
+  decoder prefill, and the fresh profile still reports a large
+  `bf16_matvec_ms` bucket. The historical autoresearch ledger recorded decoder
+  prefill prepack as a kept early win, but the current branch no longer has that
+  structure, so it was worth rechecking against today's kernels.
+
+Baseline reference: recent current-state short runs around
+`round8-thread-default-rerun` / `round9-profile-current` (runs=10/3).
+
+| Mode | Current reference | R9-A |
+|------|------------------:|-----:|
+| offline | 776-780 ms | 781 ms |
+| segmented -S30 | 775-780 ms | 780 ms |
+| streaming | 754 ms | 758 ms |
+| overall average | ~768-771 ms | 773.0 ms |
+
+Wall time also regressed (`~1030-1038 ms` current reference →
+`1062-1066 ms` offline/segmented, `1041 ms` streaming), consistent with the
+extra load/RSS pressure from the f32 copies. Speed-sample WER was unchanged
+(`0.0270` offline/segmented, `0.2973` streaming).
+
+Decision: **Rejected.** In the current branch, f32 prepacking decoder prefill
+weights no longer improves inference and increases wall time. R5-E's parallel
+BF16 scratch conversion plus current cache/memory behavior appears better than
+paying the larger resident f32 copy cost. The Rust code was fully reverted and
+only this log entry is kept.
 
 
 ---
