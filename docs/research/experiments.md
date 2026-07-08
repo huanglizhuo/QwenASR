@@ -5104,6 +5104,38 @@ Decision: **Rejected.** The extra `parallel_for` dispatches inside every decoder
 prefill layer dominate the small per-head norm work and regress all modes
 badly. The Rust code was fully reverted and only this log entry is kept.
 
+### R9-D: prepack only decoder prefill attention weights
+
+Change tested:
+- Added owned superpage-aligned f32 copies only for decoder prefill attention
+  matrices (`wq/wk/wv/wo`) on non-aligner ASR layers.
+- Routed only the Q/K/V/O multi-token prefill GEMMs through `kernels::linear_nobias`
+  when those f32 copies exist. The larger MLP prefill matrices (`gate/up/down`)
+  stayed on the existing BF16 scratch path.
+
+Reason:
+- R9-A showed that prepacking all decoder prefill weights regressed, likely from
+  RSS/cache pressure. This narrower variant tested whether the smaller
+  attention-side subset could remove some BF16 scratch conversion while avoiding
+  the larger MLP f32-copy penalty.
+
+Baseline reference: `round8-thread-default-rerun` / `round9-profile-current`.
+
+| Mode | Current reference | R9-D |
+|------|------------------:|-----:|
+| offline | 776-780 ms | 780 ms |
+| segmented -S30 | 775-780 ms | 782 ms |
+| streaming | 754 ms | 758 ms |
+| overall average | ~768-771 ms | 773.3 ms |
+
+Speed-sample WER was unchanged (`0.0270` offline/segmented, `0.2973`
+streaming).
+
+Decision: **Rejected.** Even the smaller attention-only f32 prepack did not
+improve inference and still regressed wall/streaming. The current parallel BF16
+scratch conversion remains better than adding these resident f32 copies. The
+Rust code was fully reverted and only this log entry is kept.
+
 
 ---
 
