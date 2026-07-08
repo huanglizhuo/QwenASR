@@ -4922,6 +4922,36 @@ A/B, but the improvement is only ~`1.3 ms` overall and streaming regresses by
 `1 ms`. That is below the threshold for changing a hardware-sensitive default.
 No Rust code change was made.
 
+### R8-E: inline lm-head argmax and next-position preparation
+
+Change tested:
+- Rechecked the earlier accepted B9 overlap in the current decoder state.
+- Replaced the per-token `std::thread::scope` that overlaps `lm_head` argmax
+  with `kv_cache.grow()` / `rope.ensure()` by running those steps inline.
+
+Reason:
+- B9 was accepted in an older state as a small offline/segmented win, but the
+  overlap still creates helper threads per generated token in the multi-threaded
+  serial path. After the long-segment worker changes, the single-threaded
+  segment path already runs this inline, so it was worth confirming whether the
+  serial short path still benefits from the helper scope.
+
+Baseline reference: `round8-thread-default-rerun` (runs=10).
+
+| Mode | Baseline | R8-E |
+|------|---------:|-----:|
+| offline | 776 ms | 776 ms |
+| segmented -S30 | 775 ms | 775 ms |
+| streaming | 754 ms | 754 ms |
+| overall average | 768.3 ms | 768.3 ms |
+
+Speed-sample WER was unchanged (`0.0270` offline/segmented, `0.2973`
+streaming).
+
+Decision: **Rejected/no-op.** Removing the overlap produced no measurable change
+on the short benchmark. The existing B9 code remains acceptable, and the Rust
+code was fully reverted.
+
 
 ---
 
