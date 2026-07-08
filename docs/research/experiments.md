@@ -5073,6 +5073,37 @@ baseline for offline/segmented and regressed streaming. The allocator/memset
 cost is not a meaningful current bottleneck. The Rust code was fully reverted
 and only this log entry is kept.
 
+### R9-C: parallel prefill per-head RMSNorm
+
+Change tested:
+- Added a thresholded parallel path to `kernels::rms_norm_per_head()` for large
+  multi-token calls (`seq_len * n_heads >= 512`).
+- Split independent `(sequence, head)` rows across the existing thread pool and
+  kept small/single-token calls on the original serial path, so the fused
+  single-token decode region was not nested inside another dispatch.
+
+Reason:
+- Decoder prefill applies Q/K per-head RMSNorm for every layer. The row kernel
+  is already NEON-accelerated, but the multi-token loop over sequence/head rows
+  was serial. This tested whether row-level parallelism could reduce prefill
+  latency without changing math.
+
+Baseline reference: `round8-thread-default-rerun` / `round9-profile-current`.
+
+| Mode | Current reference | R9-C |
+|------|------------------:|-----:|
+| offline | 776-780 ms | 809 ms |
+| segmented -S30 | 775-780 ms | 814 ms |
+| streaming | 754 ms | 793 ms |
+| overall average | ~768-771 ms | 805.3 ms |
+
+Speed-sample WER was unchanged (`0.0270` offline/segmented, `0.2973`
+streaming).
+
+Decision: **Rejected.** The extra `parallel_for` dispatches inside every decoder
+prefill layer dominate the small per-head norm work and regress all modes
+badly. The Rust code was fully reverted and only this log entry is kept.
+
 
 ---
 
