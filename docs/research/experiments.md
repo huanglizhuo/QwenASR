@@ -4952,6 +4952,38 @@ Decision: **Rejected/no-op.** Removing the overlap produced no measurable change
 on the short benchmark. The existing B9 code remains acceptable, and the Rust
 code was fully reverted.
 
+### R8-F: NEON activation quantization helper
+
+Change tested:
+- Added an aarch64 `neon::quantize_into()` implementation for activation
+  quantization.
+- Vectorized the absmax pass with NEON and used AArch64 ties-away conversion
+  for the f32-to-i32 rounding step before clamping to `[-127, 127]`.
+- Routed `kernels::quantize_into()` to the NEON helper on aarch64; non-aarch64
+  fallback stayed scalar.
+
+Reason:
+- The fused single-token decoder quantizes several activations per generated
+  token. Previous G1 showed reusable allocation scratch did not help, but the
+  scalar absmax and round/clamp loops had not been directly vectorized.
+
+Baseline reference: `round8-thread-default-rerun` (runs=10).
+
+| Mode | Baseline | R8-F |
+|------|---------:|-----:|
+| offline | 776 ms | 777 ms |
+| segmented -S30 | 775 ms | 775 ms |
+| streaming | 754 ms | 757 ms |
+| overall average | 768.3 ms | 769.7 ms |
+
+Speed-sample WER was unchanged (`0.0270` offline/segmented, `0.2973`
+streaming).
+
+Decision: **Rejected.** The vector helper did not improve the benchmark and
+regressed streaming. The scalar quantization loops are not the current decode
+bottleneck, or the vector path's lane-store overhead cancels the absmax win.
+The Rust code was fully reverted and only this log entry is kept.
+
 
 ---
 
