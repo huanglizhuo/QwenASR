@@ -4621,6 +4621,168 @@ effect is below the repo's usual ±1.5% noise band. The initial A/B also showed 
 segmented regression. Since this is not a clear, repeatable all-mode speedup,
 the Rust code was fully reverted and only this log entry is kept.
 
+### R7-D: parallel `c3 -> reshaped` encoder copy
+
+Change tested:
+- Parallelized the encoder stem reshape from `c3` layout `[channel][freq][time]`
+  to `reshaped` layout `[time][channel * freq]` before the `conv_out` projection.
+- The parallel version split complete time rows across the existing thread pool;
+  each worker wrote disjoint contiguous rows of `reshaped`. The output layout and
+  values were unchanged.
+
+Reason:
+- This is a small precursor to the backlog item "Eliminate
+  `conv3 -> reshaped -> conv_out` full reorder" without changing the GEMM layout
+  or projection weights.
+
+Pair 1 (`round7-reshape-baseline-p2` was not yet run; baseline is the R7-C
+same-session rerun):
+
+| Mode | Baseline | R7-D |
+|------|---------:|-----:|
+| offline | 791.0 ms | 790.0 ms |
+| segmented -S30 | 793.0 ms | 783.5 ms |
+| streaming | 766.0 ms | 760.0 ms |
+| overall average | 783.3 ms | 777.8 ms |
+
+Because the first result was only a small win and followed several noisy probes,
+a second interleaved A/B was run.
+
+Pair 2:
+
+| Mode | Baseline | R7-D |
+|------|---------:|-----:|
+| offline | 782.0 ms | 800.0 ms |
+| segmented -S30 | 786.0 ms | 801.0 ms |
+| streaming | 764.0 ms | 781.0 ms |
+| overall average | 777.3 ms | 794.0 ms |
+
+Speed-sample WER was unchanged in every measured mode (`0.0270` offline and
+segmented, `0.2973` streaming).
+
+Decision: **Rejected.** The second A/B reversed the initial small win and
+regressed every mode. The dispatch plus row-wise read pattern is not a stable
+improvement over the original serial copy, and the copy/reorder cost is too
+small relative to encoder GEMMs and convolution to justify this scheduling
+change. The Rust code was fully reverted and only this log entry is kept.
+
+### R7-E: release `panic = "abort"`
+
+Change tested:
+- Added `panic = "abort"` to the workspace release profile in `Cargo.toml`.
+- This is a codegen-only probe intended to remove unwind-path overhead from the
+  optimized binary; normal ASR output should be unchanged.
+
+Baseline reference: the nearest stable baseline rerun before this test
+(`round7-reshape-baseline-p2`, runs=10):
+
+| Mode | Baseline | R7-E |
+|------|---------:|-----:|
+| offline | 782.0 ms | 796.0 ms |
+| segmented -S30 | 786.0 ms | 792.0 ms |
+| streaming | 764.0 ms | 774.0 ms |
+| overall average | 777.3 ms | 787.3 ms |
+
+Speed-sample WER was unchanged (`0.0270` offline/segmented, `0.2973`
+streaming).
+
+Decision: **Rejected.** The release-profile change regressed every measured
+mode. Whatever binary-size or unwind-table benefit exists does not translate
+into the hot ASR path on this build. `Cargo.toml`/`Cargo.lock` were reverted and
+only this log entry is kept.
+
+### R7-F: direct conv1 1-channel 3x3 stride-2 kernel
+
+Change tested:
+- Added a specialized conv1 kernel for the exact encoder stem shape
+  `[1, 128, W] -> [480, 64, W/2]`, 3x3 stride-2 padding-1.
+- Conv1 bypassed the generic im2col + tiny-K SGEMM path; conv2/conv3 stayed on
+  the existing im2col + SGEMM implementation.
+
+Reason:
+- E7 rejected conv1 specialization by analysis because conv2/conv3 dominate.
+  After the current profile still showed `conv2d_op_ms = 102.5`, this probe
+  double-confirmed whether conv1 had any cheap measurable overhead left.
+
+Baseline reference: `round7-reshape-baseline-p2` (runs=10).
+
+| Mode | Baseline | R7-F |
+|------|---------:|-----:|
+| offline | 782.0 ms | 815.0 ms |
+| segmented -S30 | 786.0 ms | 814.0 ms |
+| streaming | 764.0 ms | 798.0 ms |
+| overall average | 777.3 ms | 809.0 ms |
+
+Speed-sample WER stayed unchanged (`0.0270` offline/segmented, `0.2973`
+streaming).
+
+Decision: **Rejected.** The direct scalar/threaded conv1 kernel regressed every
+mode by roughly `28-34 ms`. Accelerate's tiny-K GEMM path still beats the
+hand-written direct loop for this shape, and E7's original cost/benefit
+judgment is confirmed with code. The Rust code was fully reverted and only this
+log entry is kept.
+
+### R7-G: adaptive long-segment worker default
+
+Change:
+- Changed `segment_worker_count()` so the default independent-segment worker
+  count is the hot kernel thread count plus up to two spare CPUs, capped by the
+  number of segments.
+- `QWEN_ASR_SEG_WORKERS` remains an exact override.
+- This only affects segmented transcription when `past_text_conditioning ==
+  false` and there is more than one split. Single-segment short audio and
+  offline/streaming paths do not enter this path.
+
+Reason:
+- L3 chose K=5 as the conservative default, but its sweep showed K=7 was the
+  best point on this Apple M-series host (`long-10min -S30`: `21575 -> 10705 ms`
+  in the best-of-2 sweep) before higher K values regressed. The extra workers
+  are independent single-threaded sessions, so they avoid the cross-cluster
+  barriers that made R5-G all-core decode slower.
+
+Same-binary long segmented A/B (`bench/long/run_long.sh --runs 3 --modes
+segmented`). Baseline forced with `QWEN_ASR_SEG_WORKERS=5`; candidate uses the
+new default (5 hot threads + 2 spare workers on this host):
+
+| Sample | Metric | K=5 baseline | R7-G default | Delta |
+|--------|--------|-------------:|-------------:|------:|
+| long-10min | inference | 13369 ms | **11078 ms** | **1.21x** |
+| long-10min | wall | 13632 ms | **11353 ms** | **1.20x** |
+| long-10min | peak RSS | 6,778,928 KB | 7,880,704 KB | +1.05 GB |
+| long-10min | WER | 0.03244 | 0.03244 | unchanged |
+| long-2min | inference | 3286 ms | **3150 ms** | 1.04x |
+| long-2min | wall | 3580 ms | **3418 ms** | 1.05x |
+| long-2min | peak RSS | 6,580,224 KB | 6,575,296 KB | flat |
+| long-2min | WER | 0.042857 | 0.042857 | unchanged |
+
+Short standard speed smoke (`round7-seg-workers-plus2-short`, runs=10):
+
+| Mode | Inference | Speed-sample WER |
+|------|----------:|-----------------:|
+| offline | 778 ms | 0.0270 |
+| segmented -S30 | 782 ms | 0.0270 |
+| streaming | 753 ms | 0.2973 |
+
+WER gate (`round7-seg-workers-plus2-offline-100`, 100-file LibriSpeech offline):
+
+| Metric | Value |
+|--------|------:|
+| Corpus WER | 0.0357 |
+| Macro WER | 0.0397 |
+| Corpus CER | 0.0122 |
+
+Validation:
+- `RUSTFLAGS="-C target-cpu=native" cargo build --release`: passed.
+- `cargo test --release`: passed.
+
+Decision: **Accepted.** The change improves the relevant long segmented gate
+substantially on long-10min (`1.21x` inference/wall) with unchanged long WER and
+unchanged 100-file offline WER. The cost is about +1.05 GB peak RSS on the
+10-minute sample, still below the offline long-audio footprint recorded in L1
+and far below the multi-process memory collapse observed in L2. Short
+single-segment paths remain in the normal baseline range because they do not use
+the parallel segment path.
+
 
 ---
 

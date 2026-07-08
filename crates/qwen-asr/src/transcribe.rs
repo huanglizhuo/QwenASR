@@ -952,16 +952,20 @@ pub fn transcribe_audio(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
 }
 
 /// Number of concurrent single-threaded segment workers to use. Defaults to the
-/// configured kernel thread count (performance cores) capped at the number of
-/// segments; a `1` count means "stay serial". The `QWEN_ASR_SEG_WORKERS`
-/// environment variable overrides the default (internal tuning knob used for
-/// the K-sweep; not part of any public API).
+/// configured hot-kernel thread count plus up to two spare CPUs, capped at the
+/// number of segments; a `1` count means "stay serial". The
+/// `QWEN_ASR_SEG_WORKERS` environment variable overrides the default (internal
+/// tuning knob used for the K-sweep; not part of any public API).
 fn segment_worker_count(n_splits: usize) -> usize {
     let base = std::env::var("QWEN_ASR_SEG_WORKERS")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&n| n > 0)
-        .unwrap_or_else(kernels::get_num_threads);
+        .unwrap_or_else(|| {
+            let hot_threads = kernels::get_num_threads();
+            let spare_cpus = kernels::get_num_cpus().saturating_sub(hot_threads);
+            hot_threads + spare_cpus.min(2)
+        });
     base.clamp(1, n_splits.max(1))
 }
 
