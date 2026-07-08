@@ -206,6 +206,7 @@ mod pool;
 
 pub use pool::{get_num_cpus, get_num_perf_cpus, get_num_threads, set_threads};
 pub(crate) use pool::parallel_for;
+pub(crate) use pool::set_thread_override;
 #[cfg(target_arch = "aarch64")]
 pub(crate) use pool::{range_for, MAX_THREADS};
 #[cfg(target_arch = "aarch64")]

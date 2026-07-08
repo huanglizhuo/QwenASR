@@ -1,6 +1,7 @@
 //! Persistent thread pool (mutex+condvar, matching the C reference approach)
 //! and the barrier-synchronized parallel region used by the fused decode loop.
 
+use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread;
@@ -114,7 +115,30 @@ pub fn set_threads(n: usize) {
     }
 }
 
+thread_local! {
+    /// Per-thread override of the effective kernel thread count. `0` means "no
+    /// override" (fall back to the global pool count). Set to `1` by the
+    /// parallel-segment decode workers so each concurrent segment runs its
+    /// kernels single-threaded — `parallel_for`/`parallel_region` then take the
+    /// inline `nt == 1` path and never touch the shared global pool, so `K`
+    /// segment workers occupy `K` cores without contending on the one pool's
+    /// dispatch/barrier machinery (the in-process analogue of L2's independent
+    /// processes).
+    static THREAD_OVERRIDE: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Override the effective kernel thread count for the *current* thread only.
+/// Pass `0` to clear. Internal knob for the parallel-segment path; not part of
+/// any public API.
+pub(crate) fn set_thread_override(n: usize) {
+    THREAD_OVERRIDE.with(|c| c.set(n));
+}
+
 pub fn get_num_threads() -> usize {
+    let ov = THREAD_OVERRIDE.with(|c| c.get());
+    if ov != 0 {
+        return ov;
+    }
     THREAD_POOL_THREADS.load(Ordering::Relaxed)
 }
 

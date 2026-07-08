@@ -4,7 +4,8 @@ use crate::align;
 use crate::audio;
 use crate::config::*;
 use crate::context::QwenCtx;
-use crate::decoder::{self, tok_embed_bf16_to_f32};
+use crate::decoder::{self, tok_embed_bf16_to_f32, Decoder, DecoderBuffers, KvCache, RopeCache};
+use crate::encoder::{Encoder, EncoderBuffers};
 use crate::kernels;
 use crate::output::{SegmentResult, TranscriptionResult, WordTimestamp};
 use crate::subtitle::{format_vtt, group_words_to_cues, segment_to_cue, Cue};
@@ -132,14 +133,74 @@ fn load_tokenizer(model_dir: &str) -> Option<QwenTokenizer> {
     QwenTokenizer::load(&vocab_path)
 }
 
-/// Transcribe a single segment. Returns (text, n_text_tokens).
-fn transcribe_segment(
-    ctx: &mut QwenCtx,
-    samples: &[f32],
+/// Immutable, thread-shareable model weights plus the prepared prompt token
+/// state needed to decode one segment. Every field is read-only during decode,
+/// so a single `SegWeights` can be shared by `&` across concurrent segment
+/// workers (see [`transcribe_audio`]'s parallel path).
+struct SegWeights<'a> {
+    cfg: &'a QwenConfig,
+    encoder: &'a Encoder,
+    decoder: &'a Decoder,
+    prompt_tokens: Option<&'a [i32]>,
+    force_prompt_tokens: Option<&'a [i32]>,
+    has_prefilled_asr_text: bool,
+}
+
+/// Per-segment mutable session buffers. Each concurrent worker owns its own set
+/// so no cross-thread synchronization is needed inside a decode.
+struct SegSession {
+    kv_cache: KvCache,
+    rope_cache: RopeCache,
+    dec_bufs: DecoderBuffers,
+    enc_bufs: EncoderBuffers,
+}
+
+impl SegSession {
+    fn new(cfg: &QwenConfig) -> Self {
+        SegSession {
+            kv_cache: KvCache::new(cfg.dec_layers, 2048, cfg.dec_kv_heads, cfg.dec_head_dim),
+            rope_cache: RopeCache::new(),
+            dec_bufs: DecoderBuffers::new(cfg),
+            enc_bufs: EncoderBuffers::new(),
+        }
+    }
+}
+
+/// Output of decoding one segment, with the ctx-side side effects deferred so
+/// the core is a pure function of `(weights, session, samples)`.
+struct SegCore {
+    /// Whitespace-trimmed transcript text for this segment.
+    text: String,
+    /// Raw header bytes (pre-`<asr_text>` tokens) for language detection.
+    header_bytes: Vec<u8>,
+    n_text_tokens: i32,
+    /// Mel + encoder time (ms).
+    encode_ms: f64,
+    /// Prefill + autoregressive decode time (ms).
+    decode_ms: f64,
+    /// Wall time of the whole segment decode (ms).
+    total_ms: f64,
+}
+
+/// Decode a single segment against shared `weights` using a worker-owned
+/// `session`. `on_piece` receives the raw bytes of each decoded *text* token as
+/// it is produced (the serial path streams these through `token_cb`; the
+/// parallel path captures them for ordered replay). This function touches no
+/// [`QwenCtx`] state, so it is safe to run on many threads concurrently as long
+/// as each call has its own `session`.
+#[allow(clippy::too_many_arguments)]
+fn decode_segment_core(
+    weights: &SegWeights,
+    kv_cache: &mut KvCache,
+    rope_cache: &mut RopeCache,
+    dec_bufs: &mut DecoderBuffers,
+    enc_bufs: &mut EncoderBuffers,
     tokenizer: &QwenTokenizer,
+    samples: &[f32],
     past_tokens: Option<&[i32]>,
-) -> Option<(String, i32)> {
-    let cfg = &ctx.config.clone();
+    on_piece: &mut dyn FnMut(&[u8]),
+) -> Option<SegCore> {
+    let cfg = weights.cfg;
     let dim = cfg.dec_hidden;
     let seg_t0 = get_time_ms();
     let mut n_text_tokens = 0i32;
@@ -159,21 +220,18 @@ fn transcribe_segment(
     // Encoder
     let t0 = get_time_ms();
     let (enc_output, enc_seq_len) =
-        ctx.encoder
-            .forward(cfg, &mel, mel_frames, Some(&mut ctx.enc_bufs))?;
+        weights
+            .encoder
+            .forward(cfg, &mel, mel_frames, Some(enc_bufs))?;
     let enc_ms = elapsed_ms(t0);
 
     if kernels::verbose() >= 2 {
         eprintln!("  Encoder: {} tokens ({:.0} ms)", enc_seq_len, enc_ms);
     }
 
-    if !ctx.prepare_prompt_tokens(tokenizer) {
-        return None;
-    }
-
     // Build input embeddings
-    let n_prompt_tokens = ctx.prompt_tokens.as_ref().map_or(0, |t| t.len());
-    let n_force_prompt_tokens = ctx.force_prompt_tokens.as_ref().map_or(0, |t| t.len());
+    let n_prompt_tokens = weights.prompt_tokens.map_or(0, |t| t.len());
+    let n_force_prompt_tokens = weights.force_prompt_tokens.map_or(0, |t| t.len());
     let n_past = past_tokens.map_or(0, |t| t.len());
     let n_past_prompt_tokens = if n_past > 0 { n_past + 1 } else { 0 }; // +1 for <asr_text>
 
@@ -182,7 +240,7 @@ fn transcribe_segment(
     let total_seq = prefix_len + enc_seq_len + suffix_len + n_past_prompt_tokens;
 
     let mut input_embeds = vec![0.0f32; total_seq * dim];
-    let tok_emb = ctx.decoder.tok_embeddings_bf16;
+    let tok_emb = weights.decoder.tok_embeddings_bf16;
 
     // Embed prefix head
     let mut off = 0;
@@ -199,7 +257,7 @@ fn transcribe_segment(
     }
 
     // Optional prompt
-    if let Some(ref ptoks) = ctx.prompt_tokens {
+    if let Some(ptoks) = weights.prompt_tokens {
         for &tok in ptoks {
             unsafe {
                 tok_embed_bf16_to_f32(
@@ -246,7 +304,7 @@ fn transcribe_segment(
     }
 
     // Force language tokens
-    if let Some(ref ftoks) = ctx.force_prompt_tokens {
+    if let Some(ftoks) = weights.force_prompt_tokens {
         for (i, &tok) in ftoks.iter().enumerate() {
             unsafe {
                 tok_embed_bf16_to_f32(
@@ -286,14 +344,14 @@ fn transcribe_segment(
 
     // Decoder prefill
     let t0 = get_time_ms();
-    ctx.kv_cache.len = 0;
+    kv_cache.len = 0;
     let prefill_len = total_seq - 1;
     decoder::decoder_prefill(
-        &ctx.decoder,
+        weights.decoder,
         cfg,
-        &mut ctx.kv_cache,
-        &mut ctx.rope_cache,
-        &mut ctx.dec_bufs,
+        kv_cache,
+        rope_cache,
+        dec_bufs,
         &input_embeds,
         prefill_len,
     );
@@ -301,11 +359,11 @@ fn transcribe_segment(
     // First token from last prefill position
     let last_embed = &input_embeds[prefill_len * dim..(prefill_len + 1) * dim];
     let mut token = decoder::decoder_forward(
-        &ctx.decoder,
+        weights.decoder,
         cfg,
-        &mut ctx.kv_cache,
-        &mut ctx.rope_cache,
-        &mut ctx.dec_bufs,
+        kv_cache,
+        rope_cache,
+        dec_bufs,
         last_embed,
     );
 
@@ -318,7 +376,7 @@ fn transcribe_segment(
     let t0 = get_time_ms();
     let max_tokens = 2048;
     let mut n_generated = 0;
-    let mut past_asr_text = has_prefilled_asr_text(ctx) || n_past > 0;
+    let mut past_asr_text = weights.has_prefilled_asr_text || n_past > 0;
 
     let mut text_bytes: Vec<u8> = Vec::new();
     let mut header_bytes: Vec<u8> = Vec::new();
@@ -337,11 +395,7 @@ fn transcribe_segment(
             let piece_bytes = tokenizer.decode_bytes(token);
             text_bytes.extend_from_slice(piece_bytes);
             n_text_tokens += 1;
-
-            if let Some(ref cb) = ctx.token_cb {
-                // For the callback, provide lossy UTF-8 for display purposes
-                cb(&String::from_utf8_lossy(piece_bytes));
-            }
+            on_piece(piece_bytes);
         } else if token < 151643 {
             let piece_bytes = tokenizer.decode_bytes(token);
             header_bytes.extend_from_slice(piece_bytes);
@@ -349,11 +403,11 @@ fn transcribe_segment(
 
         unsafe { tok_embed_bf16_to_f32(&mut tmp_embed, tok_emb, token, dim) };
         token = decoder::decoder_forward(
-            &ctx.decoder,
+            weights.decoder,
             cfg,
-            &mut ctx.kv_cache,
-            &mut ctx.rope_cache,
-            &mut ctx.dec_bufs,
+            kv_cache,
+            rope_cache,
+            dec_bufs,
             &tmp_embed,
         );
     }
@@ -372,22 +426,80 @@ fn transcribe_segment(
         );
     }
 
-    // Trim whitespace — convert accumulated bytes to UTF-8 first
-    if ctx.force_language.is_none() {
-        if let Some(language) = parse_language_header(&String::from_utf8_lossy(&header_bytes)) {
-            ctx.detected_language = Some(language);
-        }
-    }
-
     let text = String::from_utf8_lossy(&text_bytes);
     let trimmed = text.trim().to_string();
 
-    ctx.perf_total_ms += elapsed_ms(seg_t0);
-    ctx.perf_text_tokens += n_text_tokens;
-    ctx.perf_encode_ms += mel_ms + enc_ms;
-    ctx.perf_decode_ms += prefill_ms + decode_ms;
+    Some(SegCore {
+        text: trimmed,
+        header_bytes,
+        n_text_tokens,
+        encode_ms: mel_ms + enc_ms,
+        decode_ms: prefill_ms + decode_ms,
+        total_ms: elapsed_ms(seg_t0),
+    })
+}
 
-    Some((trimmed, n_text_tokens))
+/// Fold a decoded [`SegCore`] back into `ctx`: language detection from the
+/// header and perf-counter accumulation. Shared by the serial and parallel
+/// segment paths so both update `ctx` identically.
+fn apply_seg_core(ctx: &mut QwenCtx, core: &SegCore) {
+    if ctx.force_language.is_none() {
+        if let Some(language) = parse_language_header(&String::from_utf8_lossy(&core.header_bytes)) {
+            ctx.detected_language = Some(language);
+        }
+    }
+    ctx.perf_text_tokens += core.n_text_tokens;
+    ctx.perf_encode_ms += core.encode_ms;
+    ctx.perf_decode_ms += core.decode_ms;
+}
+
+/// Transcribe a single segment against `ctx`, streaming text tokens through
+/// `ctx.token_cb` as they are produced. Returns (text, n_text_tokens).
+fn transcribe_segment(
+    ctx: &mut QwenCtx,
+    samples: &[f32],
+    tokenizer: &QwenTokenizer,
+    past_tokens: Option<&[i32]>,
+) -> Option<(String, i32)> {
+    if !ctx.prepare_prompt_tokens(tokenizer) {
+        return None;
+    }
+
+    let cfg = ctx.config.clone();
+    let weights = SegWeights {
+        cfg: &cfg,
+        encoder: &ctx.encoder,
+        decoder: &ctx.decoder,
+        prompt_tokens: ctx.prompt_tokens.as_deref(),
+        force_prompt_tokens: ctx.force_prompt_tokens.as_deref(),
+        has_prefilled_asr_text: has_prefilled_asr_text(ctx),
+    };
+
+    // Disjoint field borrows: `token_cb` (shared) is a different field from the
+    // four mutable session buffers, so the closure and the `&mut` args coexist.
+    let token_cb = ctx.token_cb.as_ref();
+    let mut on_piece = |bytes: &[u8]| {
+        if let Some(cb) = token_cb {
+            // For the callback, provide lossy UTF-8 for display purposes
+            cb(&String::from_utf8_lossy(bytes));
+        }
+    };
+
+    let core = decode_segment_core(
+        &weights,
+        &mut ctx.kv_cache,
+        &mut ctx.rope_cache,
+        &mut ctx.dec_bufs,
+        &mut ctx.enc_bufs,
+        tokenizer,
+        samples,
+        past_tokens,
+        &mut on_piece,
+    )?;
+
+    apply_seg_core(ctx, &core);
+    ctx.perf_total_ms += core.total_ms;
+    Some((core.text, core.n_text_tokens))
 }
 
 fn parse_language_header(header: &str) -> Option<String> {
@@ -749,6 +861,19 @@ pub fn transcribe_audio(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
     let min_samples = SAMPLE_RATE as usize / 2;
     let use_past_text = ctx.past_text_conditioning;
 
+    // Parallel fast path: when segments are independent (no past-text
+    // conditioning) and there is more than one, decode them concurrently across
+    // K single-threaded workers (see `transcribe_splits_parallel`). Each
+    // segment's decode is bit-identical to the serial path, so the assembled
+    // transcript is byte-identical. Past-text conditioning creates a serial
+    // dependency (segment N's prompt = segment N-1's text) and stays serial.
+    if !use_past_text && n_splits > 1 {
+        let k = segment_worker_count(n_splits);
+        if k >= 2 {
+            return transcribe_splits_parallel(ctx, &audio_samples, &splits, &tokenizer, k);
+        }
+    }
+
     for s in 0..n_splits {
         let core_start = splits[s];
         let core_end = if s + 1 < n_splits {
@@ -823,6 +948,186 @@ pub fn transcribe_audio(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         result.push_str(&seg_text);
     }
 
+    Some(result)
+}
+
+/// Number of concurrent single-threaded segment workers to use. Defaults to the
+/// configured kernel thread count (performance cores) capped at the number of
+/// segments; a `1` count means "stay serial". The `QWEN_ASR_SEG_WORKERS`
+/// environment variable overrides the default (internal tuning knob used for
+/// the K-sweep; not part of any public API).
+fn segment_worker_count(n_splits: usize) -> usize {
+    let base = std::env::var("QWEN_ASR_SEG_WORKERS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or_else(kernels::get_num_threads);
+    base.clamp(1, n_splits.max(1))
+}
+
+/// Decode independent segments concurrently. Each of `k` workers runs its
+/// kernels single-threaded (`set_thread_override(1)`) and owns its session
+/// buffers, so `k` segments occupy `k` cores with no shared thread-pool
+/// barriers — the in-process analogue of L2's independent processes, but
+/// sharing one immutable weight set. Segments are assigned round-robin for load
+/// balance; results are reassembled in segment order so the transcript (and the
+/// streamed `token_cb` byte order) is identical to the serial path.
+fn transcribe_splits_parallel(
+    ctx: &mut QwenCtx,
+    audio_samples: &[f32],
+    splits: &[usize],
+    tokenizer: &QwenTokenizer,
+    k: usize,
+) -> Option<String> {
+    let n_splits = splits.len();
+    let min_samples = SAMPLE_RATE as usize / 2;
+
+    // Per-segment owned sample buffers (mirrors the serial short-segment
+    // zero-padding). Owned so each worker can borrow its input across the scope.
+    let mut seg_inputs: Vec<Vec<f32>> = Vec::with_capacity(n_splits);
+    for s in 0..n_splits {
+        let seg_start = splits[s];
+        let seg_end = if s + 1 < n_splits {
+            splits[s + 1]
+        } else {
+            audio_samples.len()
+        };
+        let seg_samples = seg_end - seg_start;
+        let buf = if seg_samples < min_samples {
+            let mut b = vec![0.0f32; min_samples];
+            b[..seg_samples].copy_from_slice(&audio_samples[seg_start..seg_end]);
+            b
+        } else {
+            audio_samples[seg_start..seg_end].to_vec()
+        };
+        seg_inputs.push(buf);
+    }
+
+    if kernels::verbose() >= 2 {
+        eprintln!(
+            "Parallel segments: {} segments across {} single-threaded workers",
+            n_splits, k
+        );
+    }
+
+    let cfg = ctx.config.clone();
+    let weights = SegWeights {
+        cfg: &cfg,
+        encoder: &ctx.encoder,
+        decoder: &ctx.decoder,
+        prompt_tokens: ctx.prompt_tokens.as_deref(),
+        force_prompt_tokens: ctx.force_prompt_tokens.as_deref(),
+        has_prefilled_asr_text: has_prefilled_asr_text(ctx),
+    };
+
+    struct SegOut {
+        core: SegCore,
+        streamed: String,
+    }
+
+    let weights_ref = &weights;
+    let seg_inputs_ref = &seg_inputs;
+
+    let region_t0 = get_time_ms();
+    let collected: Vec<(usize, SegOut)> = std::thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(k);
+        for w in 0..k {
+            let indices: Vec<usize> = (w..n_splits).step_by(k).collect();
+            let handle = scope.spawn(move || {
+                // Force every kernel this worker invokes onto the inline
+                // single-thread path so the K workers don't oversubscribe or
+                // barrier-share the one global pool.
+                kernels::set_thread_override(1);
+                let mut session = SegSession::new(weights_ref.cfg);
+                let mut out: Vec<(usize, SegOut)> = Vec::with_capacity(indices.len());
+                for idx in indices {
+                    let mut streamed = String::new();
+                    let mut on_piece = |bytes: &[u8]| {
+                        streamed.push_str(&String::from_utf8_lossy(bytes));
+                    };
+                    let core = decode_segment_core(
+                        weights_ref,
+                        &mut session.kv_cache,
+                        &mut session.rope_cache,
+                        &mut session.dec_bufs,
+                        &mut session.enc_bufs,
+                        tokenizer,
+                        &seg_inputs_ref[idx],
+                        None,
+                        &mut on_piece,
+                    );
+                    if let Some(core) = core {
+                        out.push((idx, SegOut { core, streamed }));
+                    }
+                }
+                kernels::set_thread_override(0);
+                out
+            });
+            handles.push(handle);
+        }
+        let mut all: Vec<(usize, SegOut)> = Vec::with_capacity(n_splits);
+        for handle in handles {
+            match handle.join() {
+                Ok(mut v) => all.append(&mut v),
+                Err(e) => std::panic::resume_unwind(e),
+            }
+        }
+        all
+    });
+    let region_ms = elapsed_ms(region_t0);
+
+    // Reassemble into segment-indexed slots (None = segment returned nothing).
+    let mut slots: Vec<Option<SegOut>> = (0..n_splits).map(|_| None).collect();
+    for (idx, out) in collected {
+        slots[idx] = Some(out);
+    }
+
+    // Ordered assembly — byte-for-byte equivalent to the serial loop. The
+    // streamed pieces (step 1) are what the serial path emits live through
+    // `token_cb` during each segment's decode; replaying them in segment order
+    // reproduces the exact stdout byte stream.
+    let mut result = String::new();
+    for slot in slots.into_iter() {
+        let out = match slot {
+            Some(o) => o,
+            None => continue,
+        };
+        if !out.streamed.is_empty() {
+            if let Some(ref cb) = ctx.token_cb {
+                cb(&out.streamed);
+            }
+        }
+        apply_seg_core(ctx, &out.core);
+
+        let seg_text = out.core.text;
+        if seg_text.is_empty() {
+            continue;
+        }
+        let need_space = if !result.is_empty() {
+            let prev = *result.as_bytes().last().unwrap_or(&0);
+            let next = *seg_text.as_bytes().first().unwrap_or(&0);
+            should_insert_boundary_space(prev, next)
+        } else {
+            false
+        };
+        if need_space {
+            result.push(' ');
+            if let Some(ref cb) = ctx.token_cb {
+                cb(" ");
+            }
+        }
+        if let Some(ref cb) = ctx.token_cb {
+            if ctx.past_text_conditioning {
+                cb(&seg_text);
+            }
+        }
+        result.push_str(&seg_text);
+    }
+
+    // Report the parallel region's wall time as the inference time: the honest
+    // latency of decoding all segments (per-segment `encode_ms`/`decode_ms`
+    // remain component sums and now overlap in wall time).
+    ctx.perf_total_ms += region_ms;
     Some(result)
 }
 

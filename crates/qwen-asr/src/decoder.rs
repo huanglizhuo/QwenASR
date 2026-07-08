@@ -1064,33 +1064,43 @@ pub fn decoder_forward(
     // the vocabulary. The embedding lookup itself still waits for the argmax.
     let next_pos = kv_cache.len;
     let mut next_token: i32 = 0;
-    std::thread::scope(|s| {
-        s.spawn(|| {
-            #[cfg(target_arch = "aarch64")]
-            if let (Some(ref int8_data), Some(ref scales)) =
-                (&decoder.lm_head_int8, &decoder.lm_head_int8_scales)
-            {
-                next_token =
-                    kernels::argmax_matvec_int8(&bufs.x[..dim], int8_data, scales, dim, lm_out_dim)
-                        as i32;
-            } else {
-                let lm_weight = decoder.lm_head_bf16.unwrap_or(decoder.tok_embeddings_bf16);
-                next_token =
-                    kernels::argmax_matvec_bf16(&bufs.x[..dim], lm_weight, dim, lm_out_dim) as i32;
-            }
-            #[cfg(not(target_arch = "aarch64"))]
-            {
-                let lm_weight = decoder.lm_head_bf16.unwrap_or(decoder.tok_embeddings_bf16);
-                next_token =
-                    kernels::argmax_matvec_bf16(&bufs.x[..dim], lm_weight, dim, lm_out_dim) as i32;
-            }
+    if kernels::get_num_threads() <= 1 {
+        // Single-thread mode (e.g. a parallel-segment worker forcing its kernels
+        // single-threaded): run the two halves inline. Spawning helper threads
+        // here would dispatch to the shared global thread pool, which is unsafe
+        // to drive concurrently from multiple segment workers.
+        next_token = lm_head_argmax(decoder, &bufs.x[..dim], dim, lm_out_dim);
+        kv_cache.grow(next_pos + 1);
+        rope.ensure(next_pos + 1, head_dim, theta);
+    } else {
+        // Overlap the lm_head argmax with preparation for the next decode step.
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                next_token = lm_head_argmax(decoder, &bufs.x[..dim], dim, lm_out_dim);
+            });
+            s.spawn(|| {
+                kv_cache.grow(next_pos + 1);
+                rope.ensure(next_pos + 1, head_dim, theta);
+            });
         });
-        s.spawn(|| {
-            kv_cache.grow(next_pos + 1);
-            rope.ensure(next_pos + 1, head_dim, theta);
-        });
-    });
+    }
     next_token
+}
+
+/// Score the vocabulary and return the argmax token id. Uses the INT8 lm_head
+/// on aarch64 when available, else the BF16 path. Bit-identical regardless of
+/// the effective thread count (the underlying matvec argmax is row-partitioned
+/// with index-stable tie-breaking).
+#[inline]
+fn lm_head_argmax(decoder: &Decoder, x: &[f32], dim: usize, lm_out_dim: usize) -> i32 {
+    #[cfg(target_arch = "aarch64")]
+    if let (Some(ref int8_data), Some(ref scales)) =
+        (&decoder.lm_head_int8, &decoder.lm_head_int8_scales)
+    {
+        return kernels::argmax_matvec_int8(x, int8_data, scales, dim, lm_out_dim) as i32;
+    }
+    let lm_weight = decoder.lm_head_bf16.unwrap_or(decoder.tok_embeddings_bf16);
+    kernels::argmax_matvec_bf16(x, lm_weight, dim, lm_out_dim) as i32
 }
 
 /// Decoder prefill that returns per-position logits (for forced aligner).

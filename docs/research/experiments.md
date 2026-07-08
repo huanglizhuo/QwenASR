@@ -4363,6 +4363,140 @@ Decision: **Accepted as tooling.** No inference behavior changes; this closes th
 long-audio measurement gap that F28 explicitly flagged as a blocker ("needs a
 long-audio benchmark gate rather than the current single 28 s sample").
 
+### L3: in-process parallel-segment decode
+
+The minimal F28: parallelize independent segment decodes **inside** the
+segmented long-audio path, sharing one immutable weight set, WITHOUT the full
+F27 `Arc<ModelWeights>`+`Session` public refactor. `QwenCtx`'s public API and all
+CLI/C-API/JNI/aligner signatures are unchanged.
+
+Feasibility (the F27 question, re-answered): `Decoder` already carries
+`unsafe impl Send + Sync` (raw mmap `*const u16`), and `Encoder`/`QwenConfig` are
+auto-`Sync` (owned `Vec<f32>` + primitives). So `&ctx.encoder`/`&ctx.decoder`/
+`&ctx.config` can be shared `&` across a `std::thread::scope` while each worker
+holds its own session buffers — **no public refactor was required.** The internal
+`transcribe_segment` was split into a pure `decode_segment_core(&SegWeights,
+&mut {KvCache,RopeCache,DecoderBuffers,EncoderBuffers}, …, on_piece)` plus a thin
+ctx wrapper; the serial path is byte-for-byte unchanged (proven below).
+
+Change:
+- `decode_segment_core` — the per-segment numeric body (mel → encoder → embed →
+  prefill → autoregressive decode) as a free function over borrowed read-only
+  weights + a worker-owned session-buffer set, emitting each text token's raw
+  bytes through an `on_piece` callback (serial streams them live via `token_cb`;
+  parallel captures them for ordered replay). Touches no `QwenCtx` state, so it
+  runs on many threads concurrently given disjoint sessions.
+- `transcribe_splits_parallel` (used by `transcribe_audio`'s segmented path when
+  `past_text_conditioning == false` and `n_splits > 1`): decodes segments across
+  `K` `thread::scope` workers, each running its kernels **single-threaded** via a
+  new per-thread override, `kernels::set_thread_override(1)` (a `thread_local`
+  read first by `get_num_threads()`). With the override, `parallel_for`/
+  `parallel_region` take the inline `nt==1` path and never touch the one global
+  pool — so `K` workers occupy `K` cores with no shared dispatch/barrier (the
+  in-process analogue of L2's independent processes, but one shared weight set).
+  Segments are assigned round-robin; results are reassembled in segment order so
+  the transcript AND the streamed `token_cb` byte order match serial exactly.
+- `decoder_forward` fix (the crux): the single-token path spawned an inner
+  `thread::scope` **per token** to overlap the lm_head argmax with KV-cache
+  growth — helper threads that carry no override and therefore dispatch to the
+  shared global pool. Under `K` concurrent segment workers this clobbered the
+  pool's single dispatch slot and SIGSEGV'd. Fixed by running that overlap inline
+  (no helper threads) whenever `get_num_threads() <= 1`; the multi-threaded
+  serial path is untouched. Argmax extracted to `lm_head_argmax`.
+
+Thread strategy: **(A)** — single-thread-per-segment, `K` workers. Chosen over
+(B) because decode is bandwidth-bound (R5-F) and barely thread-scales, so many
+1-thread streams beat a few multi-thread ones, and (A) needs no partitioning of
+the barrier'd global pool. Default `K = get_num_threads()` (performance-core
+count, 5 here); an internal `QWEN_ASR_SEG_WORKERS` env knob overrides it for the
+sweep (no public API change).
+
+K-sweep (long-10min `-S30`, best-of-2 inference ms; host = M5 Pro, 5 P + 10 E =
+15 cores; baseline serial = 21575 ms):
+
+| K | inference | vs serial | note |
+|--:|----------:|----------:|------|
+| 1 | 21657 ms | 1.00x | (parallel path, one worker) |
+| 3 | 17379 ms | 1.24x | |
+| 4 | 14641 ms | 1.47x | |
+| 5 | 13222 ms | 1.63x | **default** (P-cores) |
+| 6 | 13747 ms | 1.57x | noisy |
+| 7 | 10705 ms | 2.02x | best (spills onto E-cores) |
+| 8 | 11472–11812 ms | ~1.85x | |
+| 10 | 13388 ms | 1.61x | oversubscription regresses |
+| 12 | 12930 ms | 1.67x | |
+| 16 | 13818 ms | 1.56x | |
+
+The knee is broad (K≈5–8, 1.6–2.0x); past K=10 memory-bus contention regresses
+it. K=5 (P-cores) is the reproducible, memory-moderate default; K=7–8 reaches
+~2x via the env knob but leans on E-cores and pushes RSS toward the offline
+level. Notably single-thread-per-segment × many segments **beats L2's 1.72x
+independent-process ceiling** (K=7 = 2.02x) because each stream uses less
+bandwidth, so more streams fit before saturation — exactly the effect L2/R5-F
+predicted.
+
+past_text handling: the L1 `run_long.sh` segmented run invokes `qwen-asr … -S 30`
+with no `--past-text`; the CLI leaves `past_text_mode = -1` (auto) and, since it
+is not stream mode, `ctx.past_text_conditioning` stays at its library default
+**`false`**. So the gated baseline is past-text-OFF → segments are independent →
+each parallel segment's decode is compared against the SAME past-text-OFF serial
+baseline (apples-to-apples). The past-text-ON case keeps the original serial loop
+(segment N's prompt depends on N-1's text — a serial dependency that is NOT
+parallelized).
+
+Results (back-to-back A/B, same session; median of 3 via `run_long.sh`;
+`l3-baseline` = HEAD 3c2767d, `l3-parallel` = this change):
+
+| Sample | Metric | Baseline (serial) | Parallel (K=5) | Δ |
+|--------|--------|------------------:|---------------:|---|
+| long-2min | inference ms | 4359 | 3315 | **1.31x** |
+| long-2min | RTF | 27.69x | 36.41x | |
+| long-2min | peak RSS | 3.78 GB | 6.57 GB | +2.79 GB |
+| long-2min | WER | 0.042857 | 0.042857 | **0.0 (byte-identical)** |
+| long-10min | inference ms | 21575 | 14017 | **1.54x** |
+| long-10min | RTF | 27.93x | 42.98x | |
+| long-10min | peak RSS | 3.85 GB | 6.77 GB | +2.92 GB |
+| long-10min | WER | 0.03385 | 0.03244 | **−0.0014 (improved, within gate)** |
+
+Byte-exactness proof (default-verbosity stdout md5, exactly as `run_long.sh`
+invokes it):
+- long-2min segmented: baseline `4799ffc6…` = parallel `4799ffc6…` →
+  **BYTE-IDENTICAL** (matches L1's recorded `4799ffc6…`).
+- long-10min segmented: baseline `de1dc8bf…` vs parallel `80b4039c…` → a handful
+  of token flips across ~20 segments (e.g. `throne`→`throne,`, `Brieun`→
+  `Brienne`, `to the side`→`aside`). Cause: the single-threaded matvec-argmax
+  breaks near-ties differently from the 5-threaded serial argmax (FP
+  summation/reduction order), not a logic difference. It nets **lower** WER
+  (0.03244 < 0.03385), well inside the +0.002 gate. The new binary in FORCED
+  SERIAL mode (`QWEN_ASR_SEG_WORKERS=1`) reproduces the baseline `de1dc8bf…`
+  exactly, confirming the `decoder_forward` refactor left the serial path
+  bit-identical; the divergence is purely the 1-thread-vs-5-thread argmax.
+
+Neutrality (short paths, untouched — single-segment audio never enters the
+parallel path):
+- Short gate (`bench/run.sh --runs 10`): offline 770→794 ms, segmented 764→784 ms
+  (within run-to-run noise), WER 0.0270 unchanged in both.
+- Short 100-file WER (`librispeech_wer.py --limit 100 --mode offline`,
+  dev-clean-2): 0.0357 / 0.0397 / 0.0122 — **unchanged** to the digit (this
+  100-file offline run also re-proves the `decoder_forward` overlap-vs-inline
+  change is byte-identical on the offline decode path).
+
+Validation: `RUSTFLAGS=-C target-cpu=native cargo build --release` zero warnings;
+`cargo clippy --release -p qwen-asr` clean (0/0); `cargo test --release` all pass
+(12+4+9+9+9+5+3).
+
+Decision: **ACCEPTED.** Segmented long-audio inference improves clearly —
+**1.54x** on long-10min and **1.31x** on long-2min at the K=5 default (long-2min
+has only ~4 segments, so K caps at 4 and the fixed encode share weighs more),
+reaching ~90% of L2's 1.72x process-ceiling at the default and **beating it**
+(2.02x at K=7) with the env knob. WER is within the +0.002 gate on both samples
+(byte-identical on long-2min; −0.0014, i.e. improved, on long-10min), and the
+short gate + short WER are unchanged. The one cost is peak RSS (+~2.9 GB for the
+K=5 worker sessions, ~730 MB each), still below the offline mode's ~9 GB and far
+from L2's 5-process swap collapse — precisely the shared-weights win that
+motivated doing this in-process. The minimal approach succeeded; the full F27
+public refactor was **not** needed.
+
 
 ---
 
