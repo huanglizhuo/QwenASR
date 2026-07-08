@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.8.0](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.7.5...qwen-asr-v0.8.0) (2026-07-08)
+
+
+### Features
+
+* add structured subtitle outputs ([14c39c0](https://github.com/huanglizhuo/QwenASR/commit/14c39c05103be978b8d0e374520b9965d8eaf6ee))
+
+
+### Bug Fixes
+
+* restore default decode preamble and correct cue-grouping rules ([757647c](https://github.com/huanglizhuo/QwenASR/commit/757647c211172df4a063a8af9abbdc8b792c4b31))
+
+
+### Performance Improvements
+
+* fuse single-token decoder layer stages into one parallel region ([307016b](https://github.com/huanglizhuo/QwenASR/commit/307016b07112144a93f5ff4b11097398ac8eef0c))
+* load encoder weights via pread to keep bf16 pages nonresident ([620751e](https://github.com/huanglizhuo/QwenASR/commit/620751ecf6120a8626d21d0c07951008b239d1ee))
+* pair GQA query heads in single-token attention KV scan ([31713a9](https://github.com/huanglizhuo/QwenASR/commit/31713a93413c54af8e92171f4a4acd4ffcee4ddf))
+* parallelize bf16 weight scratch conversion in prefill GEMMs ([522c5cb](https://github.com/huanglizhuo/QwenASR/commit/522c5cbb1d3f79eac8c24e5dbb86e5a6c00a9f16))
+* parallelize independent segment decode for long audio ([aea0cc2](https://github.com/huanglizhuo/QwenASR/commit/aea0cc27cb2771cb23a66c195d1ce9ca690d85ef))
+* prepack encoder transformer weights to f32 at load ([9141b78](https://github.com/huanglizhuo/QwenASR/commit/9141b788bab0cee1836617d73af7e23fada3658b))
+
 ## [0.7.5](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.7.4...qwen-asr-v0.7.5) (2026-07-03)
 
 

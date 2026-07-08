@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.8.0](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-cli-v0.7.4...qwen-asr-cli-v0.8.0) (2026-07-08)
+
+
+### Features
+
+* add structured subtitle outputs ([14c39c0](https://github.com/huanglizhuo/QwenASR/commit/14c39c05103be978b8d0e374520b9965d8eaf6ee))
+
+
+### Bug Fixes
+
+* restore default decode preamble and correct cue-grouping rules ([757647c](https://github.com/huanglizhuo/QwenASR/commit/757647c211172df4a063a8af9abbdc8b792c4b31))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * qwen-asr bumped from 0.7.5 to 0.8.0
+
 ## [0.7.4](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-cli-v0.7.3...qwen-asr-cli-v0.7.4) (2026-07-03)
 
 
