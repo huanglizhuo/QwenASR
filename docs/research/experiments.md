@@ -14,6 +14,7 @@ This file collects the optimization experiment diaries.
 - [Speed Improvement Experiments — Round 5 (decode-focused)](#speed-improvement-experiments--round-5-decode-focused)
 - [Long-Audio Track (Round 6)](#long-audio-track-round-6)
 - [Speed Improvement Experiments — Round 7](#speed-improvement-experiments--round-7)
+- [Speed Improvement Experiments — Round 8](#speed-improvement-experiments--round-8)
 - [Autoresearch Program Baseline Experiments](#autoresearch-program-baseline-experiments)
 - [Historical Commit Ledger (perf-opt-1 branch)](#historical-commit-ledger-perf-opt-1-branch)
 - [Opportunity Backlog](#opportunity-backlog)
@@ -4782,6 +4783,144 @@ unchanged 100-file offline WER. The cost is about +1.05 GB peak RSS on the
 and far below the multi-process memory collapse observed in L2. Short
 single-segment paths remain in the normal baseline range because they do not use
 the parallel segment path.
+
+
+---
+
+## Speed Improvement Experiments — Round 8
+
+Goal: continue short-audio speed work after R7-G's long-audio worker win, while
+keeping full-transcript behavior and the 100-file LibriSpeech offline WER gate.
+
+### R8-A: cache encoder sinusoidal positional embeddings
+
+Change tested:
+- Added cached positional-embedding dimensions to `EncoderBuffers`.
+- Recomputed `sinusoidal_pe(pe, w3, d_model)` only when the current encoder
+  chunk's `(w3, d_model)` differed from the cached table; otherwise reused the
+  existing deterministic PE table and still added it to the projected encoder
+  output exactly as before.
+
+Reason:
+- The encoder currently regenerates the same per-chunk sinusoidal PE table on
+  every chunk and every transcription. This is a small exact precursor to
+  encoder front-end workspace cleanup without changing convolution, projection,
+  or transformer math.
+
+Baseline reference: `round7-seg-workers-plus2-short` (runs=10).
+
+| Mode | Baseline | R8-A |
+|------|---------:|-----:|
+| offline | 777.5 ms | 776.5 ms |
+| segmented -S30 | 782.5 ms | 779.5 ms |
+| streaming | 753.0 ms | 755.0 ms |
+| overall average | 771.0 ms | 770.3 ms |
+
+Speed-sample WER was unchanged (`0.0270` offline/segmented, `0.2973`
+streaming).
+
+Decision: **Rejected.** The measured overall movement was only `0.7 ms` and
+streaming regressed slightly. The effect is far below the noise floor and does
+not meet the all-mode improvement bar. The Rust code was fully reverted and
+only this log entry is kept.
+
+### R8-B: skip zero-fill for fully overwritten embedding buffers
+
+Change tested:
+- Added a local helper in `transcribe.rs` that allocated `Vec<f32>` with
+  capacity and set its length without zero-filling.
+- Used it for `input_embeds` and `tmp_embed` buffers in offline and streaming
+  transcription paths where every element is overwritten by token embeddings or
+  encoder output before decoder use.
+
+Reason:
+- Prefill embedding assembly is inside the measured segment timer and allocates
+  a full `total_seq * dim` f32 matrix. Skipping the initial memset should be
+  transcript-neutral if all rows are initialized before the decoder sees the
+  buffer.
+
+Baseline reference: `round7-seg-workers-plus2-short` (runs=10).
+
+| Mode | Baseline | R8-B |
+|------|---------:|-----:|
+| offline | 777.5 ms | 778 ms |
+| segmented -S30 | 782.5 ms | 783 ms |
+| streaming | 753.0 ms | 756 ms |
+| overall average | 771.0 ms | 772.3 ms |
+
+Speed-sample WER was unchanged (`0.0270` offline/segmented, `0.2973`
+streaming).
+
+Decision: **Rejected.** The change slightly regressed every mode, including the
+streaming path where repeated chunk allocations made it most plausible. The
+Rust code was fully reverted and only this log entry is kept.
+
+### R8-C: skip zero-fill for convolution im2col workspace
+
+Change tested:
+- Replaced `cols.resize(cols_len, 0.0)` in `conv2d_with_cols()` with a capacity
+  check plus `set_len(cols_len)`.
+- Left `im2col` and the following GEMM unchanged; `im2col` still writes every
+  workspace element, including explicit zeros for padded positions, before the
+  GEMM reads it.
+
+Reason:
+- The encoder stem reuses one `conv_cols` buffer across conv1/conv2/conv3. The
+  buffer shrinks and then regrows for every chunk, so `Vec::resize(..., 0.0)`
+  can repeatedly memset a large im2col workspace even though the next im2col
+  pass overwrites it completely.
+
+Baseline reference: `round7-seg-workers-plus2-short` (runs=10).
+
+| Mode | Baseline | R8-C |
+|------|---------:|-----:|
+| offline | 777.5 ms | 777 ms |
+| segmented -S30 | 782.5 ms | 778 ms |
+| streaming | 753.0 ms | 758 ms |
+| overall average | 771.0 ms | 771.0 ms |
+
+Speed-sample WER was unchanged (`0.0270` offline/segmented, `0.2973`
+streaming).
+
+Decision: **Rejected.** The small offline/segmented movement was offset by a
+streaming regression, leaving no clear overall win. The Rust code was fully
+reverted and only this log entry is kept.
+
+### R8-D: revisit default kernel thread count
+
+Change tested:
+- No code change initially. Swept CLI `--threads` values on the current binary
+  to test whether the performance-core default (`5` threads on this machine)
+  was still best after the recent decoder and long-segment changes.
+
+Reason:
+- Earlier work accepted the performance-core default because all-core decode
+  regressed, but the current short benchmark is close enough to the target that
+  a small scheduling shift could matter.
+
+Coarse 5-run sweep:
+
+| Threads | offline | segmented -S30 | streaming | overall average |
+|--------:|--------:|---------------:|----------:|----------------:|
+| 3 | 830 ms | 852 ms | 816 ms | 832.7 ms |
+| 4 | 771 ms | 773 ms | 755 ms | 766.3 ms |
+| 5 | 784 ms | 775 ms | 755 ms | 771.3 ms |
+| 6 | 771 ms | 772 ms | 759 ms | 767.3 ms |
+
+Follow-up 10-run A/B:
+
+| Threads | offline | segmented -S30 | streaming | overall average |
+|--------:|--------:|---------------:|----------:|----------------:|
+| default / 5 | 776 ms | 775 ms | 754 ms | 768.3 ms |
+| 4 | 773 ms | 773 ms | 755 ms | 767.0 ms |
+
+Speed-sample WER was unchanged (`0.0270` offline/segmented, `0.2973`
+streaming).
+
+Decision: **Rejected/deferred.** Four threads is slightly faster in the 10-run
+A/B, but the improvement is only ~`1.3 ms` overall and streaming regresses by
+`1 ms`. That is below the threshold for changing a hardware-sensitive default.
+No Rust code change was made.
 
 
 ---
