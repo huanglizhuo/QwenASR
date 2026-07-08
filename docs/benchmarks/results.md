@@ -9,13 +9,11 @@ Latest results for the standard speed sample and LibriSpeech WER.
 
 ## Speed Benchmark
 
-## Speed Benchmark
-
 Speed benchmark for the standard 28.2 s mono WAV sample (`bench/samples/audio.wav`).
 
 ### Methodology
 
-- Machine: Apple M5 Pro (5 performance + 10 efficiency cores), 32 GB RAM
+- Machine: Apple M5 Pro (15 cores), 48 GB RAM
 - Model: `qwen3-asr-0.6b`
 - Audio: `bench/samples/audio.wav` (28.2 s)
 - Binary: `target/release/qwen-asr` built with `RUSTFLAGS="-C target-cpu=native"`
@@ -37,28 +35,28 @@ Results are written to `bench/results/current/`.
 
 ### Latest Results
 
-> Generated on: 2026-06-13
-> Commit: `7934c1b`
-> Hardware: Apple M5 Pro, 32 GB RAM
-> Threads: default CLI thread policy; `bench/run.sh` reports the system CPU count (15) for metadata
+> Generated on: 2026-07-08
+> Commit: `aea0cc2`
+> Hardware: Apple M5 Pro, 48 GB RAM
+> Threads: default CLI thread policy
 
 | Mode | Median inference ms | Mean ms | Best ms | Realtime factor | WER (sample) |
 |---|---:|---:|---:|---:|---:|
-| offline | 437 | 442.5 | 435 | 64.53× | 0.9189 |
-| segmented | 326 | 327.3 | 323 | 86.50× | 0.9189 |
-| streaming | 338 | 339.6 | 333 | 83.43× | 0.9189 |
+| offline | 800 | 810.1 | 784 | 35.25× | 0.0270 |
+| segmented | 794 | 799.1 | 783 | 35.52× | 0.0270 |
+| streaming | 773 | 772.9 | 759 | 36.48× | 0.2973 |
 
 #### Wall-clock timing
 
 | Mode | Median wall ms | Mean ms | Best ms | Wall realtime factor |
 |---|---:|---:|---:|---:|
-| offline | 705.7 | 760.9 | 703.2 | 39.96× |
-| segmented | 596.6 | 597.5 | 590.2 | 47.25× |
-| streaming | 607.1 | 612.3 | 600.7 | 46.45× |
+| offline | 1052.4 | 1108.4 | 1038.9 | 26.80× |
+| segmented | 1045.6 | 1052.9 | 1033.7 | 26.97× |
+| streaming | 1025.6 | 1025.2 | 1012.4 | 27.50× |
 
 #### Note on sample WER
 
-The speed sample WER is high (0.9189) because the current default configuration applies a long-audio token cap to the 28.2 s benchmark clip. This is an explicit speed/quality tradeoff: short utterances (including the 100-file LibriSpeech gate) use the quality path, while long files favor latency. See [`experiments.md`](../research/experiments.md) (Round 1, S37) for the rationale.
+Offline and segmented now emit the full 46-token transcript for the bundled 28.2 s clip (`WER=0.0270`). Earlier speed rows around `437-656 ms` used truncating paths, including a punctuation/token-count early stop or long-audio cap, and are not comparable as full-transcript results. Streaming still uses a lower-latency partial path on this sample (`WER=0.2973`).
 
 #### Kernel profile (offline)
 
@@ -66,14 +64,12 @@ When run with `--profile`, the offline run reports per-kernel timings. The lates
 
 ### Historical context
 
-- Initial Rust port (`bf52daf`): 1,612 ms offline / 17.49× RTF (cross-implementation run, `--threads 15`)
-- Current implementation (`7934c1b`): 437 ms offline / 64.53× RTF (dedicated speed benchmark)
+- Initial Rust port (`bf52daf`): 1,670 ms offline / 16.88× RTF (latest cross-implementation run, `--threads 15`)
+- Current implementation (`aea0cc2`): 800 ms offline / 35.25× RTF (dedicated speed benchmark), 878 ms offline / 32.10× RTF (latest cross-implementation run, `--threads 15`)
 
 See [`comparison.md`](./comparison.md) for the latest cross-implementation numbers and [`experiments.md`](../research/experiments.md) for the full optimization diaries.
 
 ---
-
-## WER Benchmark
 
 ## WER Benchmark
 
@@ -130,18 +126,20 @@ python3 librispeech-wer-bench/librispeech_wer.py \
 
 ### Latest Results
 
-> Generated on: 2026-06-13
-> Commit: `7934c1b`
+> Generated on: 2026-07-07
 > Dataset: LibriSpeech `dev-clean-2`
 > Items evaluated: 100
 > Mode: offline
+> Artifact: `bench/wer-results/20260707T144417Z/summary.json`
+
+The later `aea0cc2` long-audio parallel decode work recorded this 100-file gate as unchanged in `docs/research/experiments.md`.
 
 | Metric | Value |
 |---|---:|
-| Corpus WER | 0.0379 |
-| Macro WER | 0.0418 |
-| Corpus CER | 0.0152 |
-| Macro CER | 0.0155 |
+| Corpus WER | 0.0357 |
+| Macro WER | 0.0397 |
+| Corpus CER | 0.0122 |
+| Macro CER | 0.0133 |
 | Failed utterances | 0 / 100 |
 
 ### Historical context

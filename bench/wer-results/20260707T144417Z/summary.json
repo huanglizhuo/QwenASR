@@ -1,0 +1,18 @@
+{
+  "label": "20260707T144417Z",
+  "dataset": "librispeech-wer-bench/dev-clean-2",
+  "mode": "offline",
+  "items": 100,
+  "ok": 100,
+  "failed": 0,
+  "corpus_wer": 0.03574033552151714,
+  "macro_wer": 0.0396983511058963,
+  "word_edits": 49,
+  "ref_words": 1371,
+  "corpus_cer": 0.012172442941673712,
+  "macro_cer": 0.013301897978253619,
+  "char_edits": 72,
+  "ref_chars": 5915,
+  "results_jsonl": "bench/wer-results/20260707T144417Z/results.jsonl",
+  "failures": []
+}

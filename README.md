@@ -8,22 +8,22 @@ Supports 0.6B and 1.7B models with offline, segmented, streaming, live capture, 
 
 ## Performance
 
-On an Apple M5 Pro, qwen-asr transcribes a 28-second audio clip in **576 ms** — about **49× faster than realtime** in the dedicated local benchmark. It's faster than the upstream C implementation and the measured MLX GPU baselines.
+On an Apple M5 Pro, qwen-asr transcribes the standard 28.2-second benchmark clip in **800 ms** in the dedicated local benchmark, about **35× faster than realtime**, while producing the full transcript. In the latest full cross-implementation comparison, qwen-asr is faster than the upstream C implementation and the second-state MLX GPU baseline; `mlx-audio` is faster on median inference time in this run.
 
 | Implementation | Median inference | Realtime factor |
 |---|---:|---:|
-| qwen-asr (latest, dedicated) | 576 ms | 48.92× |
-| mlx-audio Python MLX | 683 ms | 41.23× |
-| second-state/qwen3_asr_rs MLX GPU | 1,367 ms | 20.59× |
-| pure C upstream | 1,648 ms | 17.09× |
-| qwen-asr (first Rust port) | 1,687 ms | 16.72× |
+| mlx-audio Python MLX | 693 ms | 40.66× |
+| qwen-asr (latest) | 878 ms | 32.10× |
+| second-state/qwen3_asr_rs MLX GPU | 1,397 ms | 20.16× |
+| pure C upstream | 1,660 ms | 16.97× |
+| qwen-asr (first Rust port) | 1,670 ms | 16.88× |
 
 <p float="left">
   <img src="docs/benchmarks/charts/benchmark-unified-latency.png" width="48%" alt="Latency comparison" />
   <img src="docs/benchmarks/charts/benchmark-unified-rtf.png" width="48%" alt="Realtime factor comparison" />
 </p>
 
-> Benchmarked on the same 28.2 s sample with 10 runs each. The qwen-asr latest row is the current dedicated benchmark at `a7470a2`; external baseline rows come from the latest full cross-implementation run (`20260702T054646Z`). See [`docs/benchmarks/comparison.md`](docs/benchmarks/comparison.md) for full details and reproduction steps.
+> Benchmarked on the same 28.2 s sample with 10 runs each. The table shows the latest full cross-implementation run (`bench/compare-results/20260708T055239Z`) at qwen-asr `aea0cc2`. Earlier `a7470a2` comparison rows were faster because they stopped after 27 tokens and did not produce the full transcript. See [`docs/benchmarks/comparison.md`](docs/benchmarks/comparison.md) for full details and reproduction steps.
 
 ## Documentation
 

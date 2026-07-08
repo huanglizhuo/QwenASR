@@ -31,9 +31,17 @@ Output: `bench/compare-results/<timestamp>/` with `report.md`, `summary.json`, c
 
 ## Current qwen-asr HEAD
 
-> Generated on: 2026-07-02
-> Commit: `a7470a2`
+> Generated on: 2026-07-08
+> Commit: `aea0cc2`
 > Runs: 10
+
+| Mode | Median inference ms | Mean ms | Best ms | Realtime factor |
+|---|---:|---:|---:|---:|
+| offline | 800 | 810.1 | 784 | 35.25× |
+| segmented | 794 | 799.1 | 783 | 35.52× |
+| streaming | 773 | 772.9 | 759 | 36.48× |
+
+Previous dedicated benchmark (`a7470a2`, full-transcript fix not yet applied in the saved run):
 
 | Mode | Median inference ms | Mean ms | Best ms | Realtime factor |
 |---|---:|---:|---:|---:|
@@ -41,23 +49,15 @@ Output: `bench/compare-results/<timestamp>/` with `report.md`, `summary.json`, c
 | segmented | 448 | 448.0 | 434 | 62.88× |
 | streaming | 496 | 496.0 | 480 | 56.91× |
 
-Previous `main` before merge (`cd65501`, corrected detached-worktree run):
+The current numbers are slower because the decoder now emits the full transcript. The saved `a7470a2` cross-implementation result stopped after 27 tokens (`WER=0.4324` on the speed sample); the current offline and segmented runs emit 46 tokens and score `WER=0.0270` on the same sample.
 
-| Mode | Median inference ms | Mean ms | Best ms | Realtime factor |
-|---|---:|---:|---:|---:|
-| offline | 461 | 463.8 | 450 | 61.17× |
-| segmented | 347 | 346.5 | 336 | 81.27× |
-| streaming | 351 | 357.5 | 345 | 80.34× |
-
-Changes vs `cd65501`: +126 ms (+27.3%) offline, +109 ms (+31.4%) segmented, +152 ms (+43.3%) streaming inference; 100-file LibriSpeech offline WER unchanged at **0.0379**.
-
-> Note: the `f28145c` run removes the `LONG_AUDIO_FAST` 6-token cap that was present in `7934c1b`, so these numbers reflect full transcription rather than truncated output and are not directly comparable to the `7934c1b` row above.
+> Note: the `1d677db` fix removed the remaining punctuation/token-count early stop, so post-fix speed numbers are not directly comparable to earlier truncated rows.
 
 See [`results.md`](./results.md) for the full speed-benchmark page.
 
 ## Latest Cross-Implementation Results
 
-> Generated on: 2026-07-02 from `bench/compare-results/20260702T054646Z/`
+> Generated on: 2026-07-08 from `bench/compare-results/20260708T055239Z/`
 > Runs per target: 10
 > Hardware: Apple M5 Pro, 15 cores, 48 GB RAM, macOS 26.4
 > Versions: upstream C `main`, second-state `v0.2.0` (`0226270`), mlx-audio `v0.4.4`
@@ -65,23 +65,23 @@ See [`results.md`](./results.md) for the full speed-benchmark page.
 
 | Implementation | Commit / Version | Median inference ms | Mean ms | Best ms | RTF |
 |---|---:|---:|---:|---:|---:|
-| qwen-asr (latest full comparison) | `a7470a2` | 656 | 657 | 640 | 42.99× |
-| mlx-audio Python MLX | `0.4.4` | 683 | 714 | 675 | 41.23× |
-| second-state MLX GPU | `0226270` (v0.2.0) | 1,367 | 1,386 | 1,358 | 20.59× |
-| pure C upstream | `b00b789` | 1,648 | 1,654 | 1,632 | 17.09× |
-| qwen-asr (first) | `bf52daf` | 1,687 | 1,693 | 1,631 | 16.72× |
+| mlx-audio Python MLX | `0.4.4` | 693 | 753 | 679 | 40.66× |
+| qwen-asr (latest full comparison) | `aea0cc2` | 878 | 1,475 | 846 | 32.10× |
+| second-state MLX GPU | `0226270` (v0.2.0) | 1,397 | 1,515 | 1,377 | 20.16× |
+| pure C upstream | `b00b789` | 1,660 | 1,668 | 1,645 | 16.97× |
+| qwen-asr (first) | `bf52daf` | 1,670 | 1,783 | 1,656 | 16.88× |
 
-> **Note:** the cross-implementation run passes `--threads 15` to every implementation, while the dedicated speed benchmark uses the binary's default (performance cores only, 5 threads on this machine). The dedicated benchmark therefore reports lower latency for qwen-asr latest (`576 ms` / `48.92×`) than the cross-implementation run (`656 ms` / `42.99×`). Both runs now use the same `a7470a2` commit.
+> **Note:** the cross-implementation run passes `--threads 15` to every implementation, while the dedicated speed benchmark uses the binary default. The dedicated benchmark reports `800 ms` / `35.25×` for qwen-asr latest offline; the full comparison reports `878 ms` / `32.10×`. Both current runs use `aea0cc2` and produce the full transcript.
 
 ### Wall-clock timing
 
 | Implementation | Commit / Version | Median wall-clock ms | Mean ms | Best ms | Wall-clock RTF |
 |---|---:|---:|---:|---:|---:|
-| qwen-asr (latest full comparison) | `a7470a2` | 906 | 933 | 883 | 31.12× |
-| mlx-audio Python MLX | `0.4.4` | 1,717 | 1,794 | 1,697 | 16.40× |
-| second-state MLX GPU | `0226270` (v0.2.0) | 1,576 | 1,670 | 1,558 | 17.87× |
-| pure C upstream | `b00b789` | 1,912 | 1,920 | 1,901 | 14.73× |
-| qwen-asr (first) | `bf52daf` | 2,043 | 2,081 | 1,968 | 13.81× |
+| mlx-audio Python MLX | `0.4.4` | 1,745 | 1,859 | 1,698 | 16.14× |
+| qwen-asr (latest full comparison) | `aea0cc2` | 1,175 | 1,774 | 1,106 | 24.01× |
+| second-state MLX GPU | `0226270` (v0.2.0) | 1,599 | 1,779 | 1,576 | 17.61× |
+| pure C upstream | `b00b789` | 1,938 | 1,950 | 1,922 | 14.53× |
+| qwen-asr (first) | `bf52daf` | 2,020 | 2,354 | 2,004 | 13.96× |
 
 <p float="left">
   <img src="charts/benchmark-unified-latency.png" width="48%" alt="Unified latency" />
@@ -90,17 +90,17 @@ See [`results.md`](./results.md) for the full speed-benchmark page.
 
 ### Findings
 
-- In the latest full cross-implementation run, qwen-asr `a7470a2` is **2.57×** faster than the initial Rust port `bf52daf`.
-- In the latest full cross-implementation run, qwen-asr `a7470a2` is **2.51×** faster than the upstream pure C implementation.
-- In the latest full cross-implementation run, qwen-asr `a7470a2` is **2.08×** faster than second-state MLX GPU (v0.2.0) by inference latency.
-- In the latest full cross-implementation run, qwen-asr `a7470a2` is **1.04×** faster than mlx-audio Python MLX (v0.4.4) by inference latency.
+- In the latest full cross-implementation run, qwen-asr `aea0cc2` is **1.90×** faster than the initial Rust port `bf52daf`.
+- In the latest full cross-implementation run, qwen-asr `aea0cc2` is **1.89×** faster than the upstream pure C implementation.
+- In the latest full cross-implementation run, qwen-asr `aea0cc2` is **1.59×** faster than second-state MLX GPU (v0.2.0) by inference latency.
+- In the latest full cross-implementation run, qwen-asr `aea0cc2` is **0.79×** as fast as mlx-audio Python MLX (v0.4.4) by inference latency.
 
-## Why does pure CPU Rust beat GPU baselines?
+## Why is pure CPU Rust competitive with GPU baselines?
 
 1. **Hand-optimized NEON kernels** — custom `vDSP`/`Accelerate`, hand-written `neon_dotprod` matmul, and fused fast-attention tuned for the 0.6B model and Apple Silicon cache hierarchy.
 2. **Zero framework overhead** — no tensor dispatch, memory pools, or FFI bridging; 100% Rust end-to-end.
-3. **Model too small for GPU** — a 0.6B model cannot saturate the Metal GPU; kernel launch overhead and CPU↔GPU copies dominate.
-4. **mlx-audio 8-bit overhead** — quantization saves memory but dequantization during compute adds extra work.
+3. **Small-model overheads matter** — a 0.6B model does not always saturate the GPU enough to dominate CPU launch, synchronization, and framework overheads.
+4. **Result depends on implementation details** — in the latest run, qwen-asr CPU beats upstream C and second-state MLX, while `mlx-audio` is faster on median inference time.
 
 ## Perf-round2 vs. previous implementation
 
