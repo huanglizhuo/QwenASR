@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.1](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-cli-v0.8.0...qwen-asr-cli-v0.8.1) (2026-07-09)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * qwen-asr bumped from 0.8.0 to 0.8.1
+
 ## [0.8.0](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-cli-v0.7.4...qwen-asr-cli-v0.8.0) (2026-07-08)
 
 

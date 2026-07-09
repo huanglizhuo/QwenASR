@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.8.0...qwen-asr-v0.8.1) (2026-07-09)
+
+
+### Performance Improvements
+
+* use spare CPUs for long segment workers ([43e4626](https://github.com/huanglizhuo/QwenASR/commit/43e4626bcd3115fdbdc919e2231d8e7c66b3c311))
+
 ## [0.8.0](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.7.5...qwen-asr-v0.8.0) (2026-07-08)
 
 
