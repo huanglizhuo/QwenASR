@@ -5237,6 +5237,37 @@ changed buffer lifetime/order; allocating the larger decoder prefill embedding
 buffer before encoder execution likely worsened cache/memory behavior. The
 Rust code was fully reverted and only this log entry is kept.
 
+### R9-H: contiguous encoder-output copy into prefill embeddings
+
+Change tested:
+- Replaced the row-by-row encoder-output copy in `decode_segment_core()` with
+  one contiguous `copy_from_slice()` over the same
+  `enc_seq_len * dec_hidden` f32 range.
+- Kept the existing encoder output allocation and buffer lifetime unchanged,
+  unlike R9-G.
+
+Reason:
+- The encoder output rows are already contiguous and are copied into a
+  contiguous region of `input_embeds`. A single bulk copy should reduce slice
+  arithmetic and per-row copy-call overhead without changing data layout or
+  math.
+
+Baseline reference: `round8-thread-default-rerun` / current Round 9 references.
+
+| Mode | Current reference | R9-H |
+|------|------------------:|-----:|
+| offline | 776-780 ms | 786 ms |
+| segmented -S30 | 775-780 ms | 782 ms |
+| streaming | 754 ms | 795 ms |
+| overall average | ~768-771 ms | 787.7 ms |
+
+Speed-sample WER was unchanged (`0.0270` offline/segmented, `0.2973`
+streaming).
+
+Decision: **Rejected.** The row-copy loop is not a bottleneck, and the measured
+candidate regressed overall. The Rust code was fully reverted and only this log
+entry is kept.
+
 
 ---
 
