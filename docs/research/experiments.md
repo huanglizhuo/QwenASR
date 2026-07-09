@@ -5202,6 +5202,41 @@ Decision: **Rejected.** The row-key hash scan is not a material bottleneck on
 the current benchmark, and the measured candidate regressed every mode. The
 Rust code was fully reverted and only this log entry is kept.
 
+### R9-G: write encoder output directly into prefill embeddings
+
+Change tested:
+- Added an `Encoder::forward_into()` variant that writes the final encoder
+  projection into a caller-provided `&mut [f32]` while preserving the existing
+  `Encoder::forward()` API for aligner and streaming callers.
+- Routed `decode_segment_core()` through this direct-output path by allocating
+  the decoder `input_embeds` buffer before encoder execution and passing the
+  encoder-row slice into `forward_into()`.
+- Removed the intermediate `enc_output` allocation and the subsequent row copy
+  into `input_embeds` for offline/segmented segment decoding.
+
+Reason:
+- The segment path previously allocated `enc_output`, then copied the same
+  `enc_seq_len * dim` rows into the decoder prefill embedding matrix. Writing
+  the final encoder projection directly into the prefill buffer should remove
+  that allocation/copy without changing encoder or decoder math.
+
+Baseline reference: `round8-thread-default-rerun` / current Round 9 references.
+
+| Mode | Current reference | R9-G |
+|------|------------------:|-----:|
+| offline | 776-780 ms | 790 ms |
+| segmented -S30 | 775-780 ms | 788 ms |
+| streaming | 754 ms | 768 ms |
+| overall average | ~768-771 ms | 782.0 ms |
+
+Speed-sample WER was unchanged (`0.0270` offline/segmented, `0.2973`
+streaming).
+
+Decision: **Rejected.** Removing the intermediate copy did not pay for the
+changed buffer lifetime/order; allocating the larger decoder prefill embedding
+buffer before encoder execution likely worsened cache/memory behavior. The
+Rust code was fully reverted and only this log entry is kept.
+
 
 ---
 
