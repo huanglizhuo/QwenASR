@@ -5170,6 +5170,38 @@ regressed segmented and streaming badly enough to lose overall. The larger
 single GEMM and interleaved post-processing are not a stable win across modes.
 The Rust code was fully reverted and only this log entry is kept.
 
+### R9-F: deterministic streaming encoder row keys
+
+Change tested:
+- Replaced streaming `PrefillRowKey` generation for encoder rows with
+  deterministic keys derived from the encoder source span
+  `(start_sample, end_sample, row_index, seq_len)`.
+- Removed the previous f32-row hash scan from both callback streaming and
+  incremental `StreamState` paths. Token prompt/text keys and decoder inputs
+  stayed unchanged.
+
+Reason:
+- Streaming LCP reuse only needs stable equality for append-only cached encoder
+  windows and partial tails. Source-position keys should preserve those reuse
+  decisions while avoiding a full scan over every f32 encoder row after each
+  window encode.
+
+Baseline reference: `round8-thread-default-rerun` / current Round 9 references.
+
+| Mode | Current reference | R9-F |
+|------|------------------:|-----:|
+| offline | 776-780 ms | 782 ms |
+| segmented -S30 | 775-780 ms | 782 ms |
+| streaming | 754 ms | 760 ms |
+| overall average | ~768-771 ms | 774.7 ms |
+
+Speed-sample WER was unchanged (`0.0270` offline/segmented, `0.2973`
+streaming).
+
+Decision: **Rejected.** The row-key hash scan is not a material bottleneck on
+the current benchmark, and the measured candidate regressed every mode. The
+Rust code was fully reverted and only this log entry is kept.
+
 
 ---
 
