@@ -5510,6 +5510,74 @@ this log entry is kept.
 
 ---
 
+### R11-C: dynamic (work-stealing) chunk scheduling for heterogeneous cores — KEPT
+
+Motivation: since round 10 the default thread count is 10 (5P + 5E) and the
+multi-token GEMM phase is pool-parallel, but **every** parallel work split in the
+codebase was a *static even split* (`chunk = total.div_ceil(nt)`, or `range_for`
+in `pool.rs`). On the M5 Pro's heterogeneous cores each parallel op's wall time
+equals the slowest (E-core) slice while the P-cores finish early and spin-wait —
+the same effect that made `-t 12/15` regress in earlier sweeps.
+
+Change (phase 1): added `parallel_for_dynamic(n_items, f)` to
+`kernels/pool.rs` — a shared stack `AtomicUsize` counter that every pool thread
+drains via `fetch_add(1, Relaxed)` until `i >= n_items`, running `f(i)` on
+**fixed-size** work items whose boundaries depend only on the problem size, never
+on the thread count or schedule. Converted these hot static even splits in
+`kernels/mod.rs` to dynamic items:
+
+- `sgemm_nt_pooled` (pooled linear GEMM): fixed 128-column items (was
+  `nt.min(out_dim/128)` slices, so the item boundaries — and thus the BLAS column
+  grouping — now differ slightly from HEAD; hence the LibriSpeech gate below).
+- `conv2d_impl`: fixed 32-channel `c_out` GEMM items and fixed 32-row im2col items.
+- `bf16_to_f32_buf_parallel`: fixed 32K-element items (bit-identical, element-wise).
+- `bf16_matvec_threaded` and `linear_nobias_bf16_swiglu`: fixed 256-output-row
+  items (bit-identical, each row a full-K dot product).
+- threaded `gelu` / `swiglu`: fixed 4096-element items (bit-identical).
+- bidirectional attention: one item per head (bit-identical).
+
+Item sizes chosen so a typical call yields several items per thread while each
+item stays well above ~50µs of work.
+
+Phase 1 benchmark (`bench/run.sh --runs 5`, back-to-back base/candidate pairs,
+median inference ms; base = HEAD binary):
+
+| Mode | Pair-1 base | Pair-1 cand | Pair-2 base | Pair-2 cand |
+|------|-------------|-------------|-------------|-------------|
+| offline   | 635 | 605 | 665 | 627 |
+| segmented | 637 | 598 | 672 | 637 |
+| streaming | 604 | 572 | 676 | 602 |
+
+3-mode average: pair-1 625.3 → 591.7 (**−5.4%**), pair-2 667.7 → 622.0
+(**−6.8%**). Per-mode minima all improve (offline −4.7%, segmented −6.1%,
+streaming −5.3%). Both pairs clear the +1.5% threshold comfortably.
+
+Thread re-sweep (candidate, offline, runs=5): `-t 10` (default) 642ms, `-t 12`
+634ms (within the ±3% noise floor), `-t 15` 927ms (oversubscription regresses
+hard). Higher core counts still do **not** clearly win, so the default heuristic
+(`P + min(E, P) = 10`) is unchanged.
+
+Phase 2 (dynamic chunk-grabbing inside the fused single-token decode
+`parallel_region`): **skipped** as too risky for the payoff. That region's stages
+are microsecond-scale at `dim = 1024` (the code comment already notes this), so
+per-stage dynamic chunking would add atomic-counter contention and a
+reset-publish barrier dance on work too small to amortize it, while the
+per-stage barrier still waits on whichever thread grabs the last chunk. Phase 1
+already parallelizes the encoder/prefill GEMM phase that dominates all three
+modes (including streaming, which re-encodes chunks), so the decode region is a
+smaller fraction and the correctness risk outweighs the upside.
+
+Quality gates: 51 tests pass, zero warnings. Bench WER lines `0.0270 / 0.0270 /
+0.2973` in every run. LibriSpeech dev-clean-2 (100 files, offline): corpus WER
+`0.0350` — identical to HEAD's `0.0350`, well under the `0.0358` gate.
+Transcript spot check on `bench/samples/audio.wav`: **bit-identical** to the base
+binary in all three modes (offline/segmented/streaming).
+
+Decision: **KEPT.** ~5–7% faster on the 3-mode average across both pairs, WER
+unchanged, transcripts identical.
+
+---
+
 ## Autoresearch Program Baseline Experiments
 
 These experiments come from the initial `codex-auto-research` autoresearch program baseline (`programs.md`). They are structural buffer-reuse optimizations that predate the numbered round structure above.

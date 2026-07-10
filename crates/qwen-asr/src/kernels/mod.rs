@@ -206,6 +206,7 @@ mod pool;
 
 pub use pool::{get_default_threads, get_num_cpus, get_num_threads, set_threads};
 pub(crate) use pool::parallel_for;
+pub(crate) use pool::parallel_for_dynamic;
 pub(crate) use pool::set_thread_override;
 #[cfg(target_arch = "aarch64")]
 pub(crate) use pool::{range_for, MAX_THREADS};
@@ -255,12 +256,15 @@ pub fn bf16_to_f32_buf_parallel(dst: &mut [f32], src: &[u16]) {
     let dst_send = dst.as_mut_ptr() as usize;
     let src_send = src.as_ptr() as usize;
 
-    parallel_for(|tid, nt| {
-        // Round the per-worker span up to a multiple of 64 elements.
-        let chunk = n.div_ceil(nt).div_ceil(64) * 64;
-        let start = (tid * chunk).min(n);
-        let end = (start + chunk).min(n);
-        if start >= end { return; }
+    // Fixed 32K-element items (multiple of 64, so each item is a whole
+    // vector-width-friendly span with no per-item tail), grabbed dynamically so
+    // faster cores convert more spans. Conversion is element-wise, so the result
+    // is bit-identical regardless of which core converts which item.
+    const ITEM: usize = 1 << 15; // 32768 elements
+    let n_items = n.div_ceil(ITEM);
+    parallel_for_dynamic(n_items, |item| {
+        let start = item * ITEM;
+        let end = (start + ITEM).min(n);
         let len = end - start;
         let dst_local = unsafe { std::slice::from_raw_parts_mut((dst_send as *mut f32).add(start), len) };
         let src_local = unsafe { std::slice::from_raw_parts((src_send as *const u16).add(start), len) };
@@ -445,13 +449,15 @@ fn sgemm_nt_pooled(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>,
     let x_send = x.as_ptr() as usize;
     let w_send = w.as_ptr() as usize;
     let b_send = b.map(|b| b.as_ptr() as usize);
-    parallel_for(|tid, nt| {
-        let slices = nt.min(out_dim / MIN_COLS).max(1);
-        let chunk = out_dim.div_ceil(slices);
-        let start = (tid * chunk).min(out_dim);
-        let end = (start + chunk).min(out_dim);
-        if start >= end { return; }
-        // SAFETY: threads write disjoint column ranges [start, end) of y.
+    // Fixed-size 128-column work items, grabbed dynamically so P-cores take more
+    // blocks than E-cores. Item boundaries depend only on `out_dim`, never on the
+    // thread count, so the column grouping (and thus the BLAS accumulation) is
+    // deterministic across runs.
+    let n_items = out_dim.div_ceil(MIN_COLS);
+    parallel_for_dynamic(n_items, |item| {
+        let start = item * MIN_COLS;
+        let end = (start + MIN_COLS).min(out_dim);
+        // SAFETY: items write disjoint column ranges [start, end) of y.
         unsafe {
             cblas_sgemm(
                 CBLAS_ROW_MAJOR, CBLAS_NO_TRANS, CBLAS_TRANS,
@@ -587,10 +593,14 @@ fn bf16_matvec_threaded(y: &mut [f32], x: &[f32], w_bf16: *const u16, bias: Opti
     let w_send = w_ptr as usize;
     let bias_send = bias_ptr.map(|p| p as usize);
 
-    parallel_for(|tid, nt| {
-        let chunk = out_dim.div_ceil(nt);
-        let start = tid * chunk;
-        let end = (start + chunk).min(out_dim);
+    // Fixed 256-row output blocks, grabbed dynamically. Each output row is a
+    // full-K dot product independent of the block split, so the result is
+    // bit-identical regardless of scheduling.
+    const ROWS: usize = 256;
+    let n_items = out_dim.div_ceil(ROWS);
+    parallel_for_dynamic(n_items, |item| {
+        let start = item * ROWS;
+        let end = (start + ROWS).min(out_dim);
         if start >= end { return; }
 
         let y_local = unsafe { std::slice::from_raw_parts_mut((y_send as *mut f32).add(start), end - start) };
@@ -665,10 +675,14 @@ pub fn linear_nobias_bf16_swiglu(
     let w_ptr = gate_up_bf16 as usize;
     let ffn_ptr = ffn_out.as_mut_ptr() as usize;
 
-    parallel_for(|tid, nt| {
-        let chunk = intermediate.div_ceil(nt);
-        let start = tid * chunk;
-        let end = (start + chunk).min(intermediate);
+    // Fixed 256-row intermediate blocks, grabbed dynamically. Each row is an
+    // independent gate/up dot product + SwiGLU, so the result is bit-identical
+    // regardless of the block split.
+    const ROWS: usize = 256;
+    let n_items = intermediate.div_ceil(ROWS);
+    parallel_for_dynamic(n_items, |item| {
+        let start = item * ROWS;
+        let end = (start + ROWS).min(intermediate);
         if start >= end { return; }
         let n_rows = end - start;
 
@@ -851,10 +865,13 @@ fn conv2d_impl(out: &mut [f32], input: &[f32], weight: &[f32], bias: Option<&[f3
     if n_threads > 1 && patch_size >= 16 {
         let input_ptr = input.as_ptr() as usize;
         let cols_ptr = cols.as_mut_ptr() as usize;
-        parallel_for(|tid, nt| {
-            let chunk = patch_size.div_ceil(nt);
-            let start = tid * chunk;
-            let end = (start + chunk).min(patch_size);
+        // Fixed 32-row (patch-row) blocks grabbed dynamically; each col_row is an
+        // independent im2col scatter.
+        const PROW: usize = 32;
+        let n_items = patch_size.div_ceil(PROW);
+        parallel_for_dynamic(n_items, |item| {
+            let start = item * PROW;
+            let end = (start + PROW).min(patch_size);
             if start >= end { return; }
             for col_row in start..end {
                 let ic = col_row / (kh * kw);
@@ -891,12 +908,15 @@ fn conv2d_impl(out: &mut [f32], input: &[f32], weight: &[f32], bias: Option<&[f3
             let w_send = weight.as_ptr() as usize;
             let cols_send = cols.as_ptr() as usize;
             let bias_send = bias.map(|b| b.as_ptr() as usize);
-            parallel_for(|tid, nt| {
-                let chunk = c_out.div_ceil(nt);
-                let start = (tid * chunk).min(c_out);
-                let end = (start + chunk).min(c_out);
+            // Fixed 32-channel output blocks grabbed dynamically; item boundaries
+            // depend only on `c_out`, so BLAS grouping is deterministic.
+            const COUT: usize = 32;
+            let n_items = c_out.div_ceil(COUT);
+            parallel_for_dynamic(n_items, |item| {
+                let start = item * COUT;
+                let end = (start + COUT).min(c_out);
                 if start >= end { return; }
-                // SAFETY: threads write disjoint row ranges [start, end) of out.
+                // SAFETY: items write disjoint row ranges [start, end) of out.
                 cblas_sgemm(
                     CBLAS_ROW_MAJOR, CBLAS_NO_TRANS, CBLAS_NO_TRANS,
                     (end - start) as i32, spatial_out as i32, patch_size as i32,
@@ -1049,10 +1069,13 @@ pub fn gelu(x: &mut [f32], n: usize) {
     // Thread GELU for large buffers (encoder FFN: ~320K floats)
     if n_threads > 1 && n > 4096 {
         let x_ptr = x.as_mut_ptr() as usize;
-        parallel_for(|tid, nt| {
-            let chunk = n.div_ceil(nt);
-            let start = tid * chunk;
-            let end = (start + chunk).min(n);
+        // Fixed 4096-element blocks grabbed dynamically; GELU is element-wise so
+        // the result is bit-identical regardless of the block split.
+        const ITEM: usize = 4096;
+        let n_items = n.div_ceil(ITEM);
+        parallel_for_dynamic(n_items, |item| {
+            let start = item * ITEM;
+            let end = (start + ITEM).min(n);
             if start >= end { return; }
             let x_local = unsafe { std::slice::from_raw_parts_mut((x_ptr as *mut f32).add(start), end - start) };
             #[cfg(target_arch = "aarch64")]
@@ -1094,10 +1117,13 @@ pub fn swiglu_separate_inplace(gate: &mut [f32], up: &[f32], seq_len: usize, int
     if n_threads > 1 && total > 4096 {
         let gate_ptr = gate.as_mut_ptr() as usize;
         let up_ptr = up.as_ptr() as usize;
-        parallel_for(|tid, nt| {
-            let chunk = total.div_ceil(nt);
-            let start = tid * chunk;
-            let end = (start + chunk).min(total);
+        // Fixed 4096-element blocks grabbed dynamically; SwiGLU is element-wise so
+        // the result is bit-identical regardless of the block split.
+        const ITEM: usize = 4096;
+        let n_items = total.div_ceil(ITEM);
+        parallel_for_dynamic(n_items, |item| {
+            let start = item * ITEM;
+            let end = (start + ITEM).min(total);
             if start >= end { return; }
             let g = unsafe { std::slice::from_raw_parts_mut((gate_ptr as *mut f32).add(start), end - start) };
             let u = unsafe { std::slice::from_raw_parts((up_ptr as *const f32).add(start), end - start) };
@@ -1222,12 +1248,10 @@ pub fn bidirectional_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
         let v_ptr = v.as_ptr() as usize;
         let ws_ptr = window_starts.as_ptr() as usize;
 
-        parallel_for(|tid, nt| {
-            let chunk = n_heads.div_ceil(nt);
-            let h0 = tid * chunk;
-            let h1 = (h0 + chunk).min(n_heads);
-            if h0 >= h1 { return; }
-
+        // One work item per attention head, grabbed dynamically. Each head is an
+        // independent softmax over the same K/V, so per-head results are
+        // bit-identical regardless of which core runs which head.
+        parallel_for_dynamic(n_heads, |h| {
             let out_local = unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut f32, seq * hidden) };
             let q_local = unsafe { std::slice::from_raw_parts(q_ptr as *const f32, seq * hidden) };
             let k_local = unsafe { std::slice::from_raw_parts(k_ptr as *const f32, seq * hidden) };
@@ -1236,7 +1260,7 @@ pub fn bidirectional_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
 
             bidirectional_attention_heads(out_local, q_local, k_local, v_local,
                                          n_heads, head_dim, scale,
-                                         ws_local, n_windows, h0, h1);
+                                         ws_local, n_windows, h, h + 1);
         });
         return;
     }

@@ -246,6 +246,40 @@ pub(crate) fn parallel_for<F: Fn(usize, usize) + Send + Sync>(f: F) {
     }
 }
 
+/// Dynamic (work-stealing) parallel loop over `n_items` fixed-size work items.
+/// Every participating pool thread repeatedly grabs the next item index from a
+/// shared atomic counter and runs `f(item)`, so faster cores (P-cores) process
+/// more items than slower ones (E-cores) instead of each thread owning a fixed
+/// even slice and the whole op stalling on the slowest slice. On a heterogeneous
+/// P/E-core machine this removes the E-core straggler tax that a static even
+/// split pays on every parallel op.
+///
+/// Work items are FIXED-SIZE and their boundaries do NOT depend on the thread
+/// count or on which thread runs which item, so any deterministic per-item
+/// computation yields results independent of scheduling. Callers pick the item
+/// granularity so there are several items per thread (to allow stealing to
+/// balance) while each item is still large enough to amortize one atomic RMW.
+///
+/// The counter lives on the caller's stack and is captured by the dispatched
+/// closure — the same borrow pattern as [`parallel_for`]'s trampoline.
+pub(crate) fn parallel_for_dynamic<F: Fn(usize) + Send + Sync>(n_items: usize, f: F) {
+    let n_threads = get_num_threads();
+    if n_threads <= 1 || n_items <= 1 {
+        for i in 0..n_items {
+            f(i);
+        }
+        return;
+    }
+    let counter = AtomicUsize::new(0);
+    parallel_for(|_tid, _nt| loop {
+        let i = counter.fetch_add(1, Ordering::Relaxed);
+        if i >= n_items {
+            break;
+        }
+        f(i);
+    });
+}
+
 /// Cache-line-padded wrapper to keep two atomics on separate cache lines and
 /// avoid false sharing between the arrival counter and the generation counter.
 #[cfg(target_arch = "aarch64")]
