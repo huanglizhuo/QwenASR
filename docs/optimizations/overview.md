@@ -28,6 +28,8 @@ This document catalogs the performance optimizations implemented in the pure-Rus
 ## 4. Threading & Concurrency
 
 - **Lock-Free Thread Pool Fast Path**: Work scheduling uses atomics and spin-waiting before falling back to mutex/condvar sleep, reducing OS context-switch latency for micro-jobs.
+- **Default Thread Heuristic**: With no `-t N` override, the thread count defaults to `P + min(E, P)` on Apple Silicon (all performance cores plus up to an equal number of efficiency cores), clamped to 16; non-macOS/Intel falls back to the total CPU count. Once the multi-token GEMM phase became pool-parallel, the efficiency cores have real work to share, so including a bounded number of them beats the old P-cores-only default (M5 Pro 5P/10E → 10 threads: offline/segmented/streaming all ~14–19% faster, WER unchanged). Capping E-core use at `P` avoids the over-subscription that regresses when all cores are used.
+- **Pool-Parallel GEMM Slices**: A lone Accelerate `cblas_sgemm` call runs almost entirely on the calling thread, so multi-token GEMMs (`linear`, `linear_accumulate`, conv2d) split their output columns/channels across the persistent thread pool with one BLAS call per slice. Each output element remains a single full-K dot product, keeping results numerically stable; gated by size thresholds so single-token decode is untouched.
 - **Threaded Non-Matmul Operations**: Parallelized operations beyond GEMMs:
   - `im2col` packing for encoder convolutions.
   - `gelu` and `swiglu` activations over large FFN buffers.

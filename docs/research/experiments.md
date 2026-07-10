@@ -16,6 +16,7 @@ This file collects the optimization experiment diaries.
 - [Speed Improvement Experiments — Round 7](#speed-improvement-experiments--round-7)
 - [Speed Improvement Experiments — Round 8](#speed-improvement-experiments--round-8)
 - [Speed Improvement Experiments — Round 9](#speed-improvement-experiments--round-9)
+- [Speed Improvement Experiments — Round 10](#speed-improvement-experiments--round-10)
 - [Autoresearch Program Baseline Experiments](#autoresearch-program-baseline-experiments)
 - [Historical Commit Ledger (perf-opt-1 branch)](#historical-commit-ledger-perf-opt-1-branch)
 - [Opportunity Backlog](#opportunity-backlog)
@@ -5268,6 +5269,109 @@ Decision: **Rejected.** The row-copy loop is not a bottleneck, and the measured
 candidate regressed overall. The Rust code was fully reverted and only this log
 entry is kept.
 
+
+---
+
+## Speed Improvement Experiments — Round 10
+
+Goal: revisit the GEMM phase with an external sampling profiler instead of only
+the built-in counters.
+
+Profiling method: `samply record` on an offline run (M5 Pro, 5P+10E), analyzed
+per-thread over time. Finding: during the ~600 ms encoder/prefill GEMM window
+the main thread was ~100% busy inside `libBLAS`, while all four pool workers
+sat ~90% idle in condvar wait. Accelerate's own dispatch threads accounted for
+only ~5% of the window's samples, so a single `cblas_sgemm` call is effectively
+serial on the calling thread — contradicting the earlier assumption (Round 3
+notes) that "the GEMM is Accelerate-threaded".
+
+### R10-A: pool-parallel multi-token GEMM slices — KEPT
+
+Change:
+- Added `sgemm_nt_pooled()` in `kernels/mod.rs`: for multi-token
+  `linear`/`linear_accumulate`, split the output columns across the persistent
+  thread pool, one `cblas_sgemm` call per slice (each output element is still a
+  single full-K dot product inside one BLAS call). Gated on `seq_len >= 2`,
+  `out_dim >= 256`, `seq*in*out >= 4M` MACs; slices sized to keep >= 128
+  columns each.
+- Same treatment for the conv2d GEMM: output channels split across the pool,
+  with the bias add folded into each slice.
+- Single-token decode, the INT8 matvec path, and the attention sgemms are
+  untouched. Parallel-segment workers are safe via the existing
+  `THREAD_OVERRIDE == 1` inline path.
+
+Benchmarks (`bench/run.sh --runs 5`, default threads = 5 P-cores, M5 Pro):
+
+| Mode | Baseline (`round10-baseline`) | R10-A (`round10-parallel-gemm`) | delta |
+|------|------------------------------:|--------------------------------:|------:|
+| offline | 904 ms | 780 ms | −13.7% |
+| segmented -S30 | 829 ms | 784 ms | −5.4% |
+| streaming | 797 ms | 714 ms | −10.4% |
+
+Profile buckets (offline): encode `283 → 235 ms`, decode `621 → 544 ms`,
+`sgemm 380 → 332 ms`, `bf16_matvec 278 → 248 ms`, `conv2d 110 → 93 ms`.
+
+Quality checks:
+- Speed-sample WER unchanged: `0.0270` offline/segmented, `0.2973` streaming.
+- Segmented, streaming, and offline transcripts on the bench sample are
+  byte-identical to the baseline binary.
+- LibriSpeech dev-clean-2 (100 utterances, offline, same machine/params):
+  corpus WER `0.03574` (base) → `0.03501` (R10-A), macro `0.0397 → 0.0387`.
+  8/100 transcripts differ at punctuation level from BLAS float reordering;
+  net edits 49 → 48. No regression.
+- Full test suite passes (51 tests), zero warnings.
+
+Decision: **Kept.**
+
+### R10-B: default thread count including E-cores — KEPT
+
+Once R10-A made the multi-token encoder/prefill GEMM phase pool-parallel, the
+old default of "P-cores only" leaves the efficiency cores idle during the phase
+that now has real GEMM work to share. The historical `get_num_perf_cpus()`
+doc claim that "E-cores always hurt" no longer holds on M5 Pro.
+
+Thread sweep with the R10-A working tree (`bench/run.sh --runs 5 --threads N`,
+M5 Pro 5P/10E, median inference ms):
+
+| Mode | `-t 8` | `-t 10` | `-t 12` |
+|------|-------:|--------:|--------:|
+| offline | 643 | **633** | 712 |
+| segmented -S30 | 650 | **641** | 656 |
+| streaming | 621 | **617** | 643 |
+
+`-t 10` wins every mode; `-t 12` regresses (over-subscribed, especially
+offline), `-t 8` is a touch behind `-t 10`. WER unchanged at every point
+(`0.0270` offline/segmented, `0.2973` streaming).
+
+Change:
+- Replaced `get_num_perf_cpus()` with `get_default_threads()` in
+  `kernels/pool.rs`. On Apple Silicon it reads both `hw.perflevel0.physicalcpu`
+  (P) and `hw.perflevel1.physicalcpu` (E) and returns `P + min(E, P)` clamped to
+  `MAX_THREADS` (16). On M5 Pro that is `5 + min(10, 5) = 10`. Capping the
+  E-core contribution at `P` keeps us short of the over-subscribed regime that
+  regressed in the sweep.
+- Non-macOS / Intel Macs (no perflevel sysctls) fall back to the total CPU
+  count, exactly as before. `-t N` explicit override is unchanged.
+- The CLI (`qwen-asr-cli/src/main.rs`) resolves its default via the renamed
+  function; `-t` help text updated.
+
+Final default run (`bench/run.sh --runs 5 --label round10-default-threads`, no
+`--threads`, so the binary picks 10 on its own):
+
+| Mode | R10-A default (5 P-cores) | R10-B default (`P+min(E,P)=10`) | delta |
+|------|--------------------------:|--------------------------------:|------:|
+| offline | 780 ms | 636 ms | −18.5% |
+| segmented -S30 | 784 ms | 659 ms | −15.9% |
+| streaming | 714 ms | 613 ms | −14.1% |
+
+Quality checks:
+- Bench WER unchanged: `0.0270` offline/segmented, `0.2973` streaming.
+- Thread count does not affect output; LibriSpeech dev-clean-2 (100 utterances,
+  offline) corpus WER `0.0350`, macro `0.0387` — identical to R10-A, under the
+  `0.0358` ceiling.
+- Full test suite passes (51 tests), zero warnings.
+
+Decision: **Kept.**
 
 ---
 
