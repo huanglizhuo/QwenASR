@@ -148,32 +148,54 @@ pub fn get_num_cpus() -> usize {
         .unwrap_or(1)
 }
 
-/// Number of high-performance physical cores. On Apple Silicon this is
-/// `hw.perflevel0.physicalcpu` (P-cores). With the batched-attention decode
-/// path, both the encoder and (especially) the bandwidth-bound single-token
-/// decode run faster on the P-cores alone — adding efficiency cores increases
-/// dispatch and memory-bus contention and slows every measured mode. Falls back
-/// to total CPU count on other platforms / on failure.
-pub fn get_num_perf_cpus() -> usize {
+#[cfg(target_os = "macos")]
+fn sysctl_uint(name: &[u8]) -> Option<usize> {
+    debug_assert!(name.last() == Some(&0), "sysctl name must be NUL-terminated");
+    let mut out: i32 = 0;
+    let mut size = std::mem::size_of::<i32>();
+    let rc = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr() as *const libc::c_char,
+            &mut out as *mut i32 as *mut libc::c_void,
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc == 0 && out > 0 {
+        Some(out as usize)
+    } else {
+        None
+    }
+}
+
+/// Default kernel thread count when the user passes no `-t N`.
+///
+/// On Apple Silicon this reads the P-core count (`hw.perflevel0.physicalcpu`)
+/// and E-core count (`hw.perflevel1.physicalcpu`) and returns `P + min(E, P)`:
+/// all performance cores plus up to an equal number of efficiency cores.
+///
+/// Historically this returned P-cores only, on the assumption that efficiency
+/// cores always hurt (extra dispatch + memory-bus contention). That is no
+/// longer true: once the multi-token encoder/prefill GEMM phase became
+/// pool-parallel (round-10 `sgemm_nt_pooled`), the extra cores have real GEMM
+/// work to do, and on M5 Pro (5P/10E) `P + min(E, P) = 10` threads beats the
+/// 5-P-core default across offline/segmented/streaming with WER unchanged.
+/// Capping the E-core contribution at `P` keeps us short of the over-subscribed
+/// regime (all cores) that regressed in the same sweep.
+///
+/// Falls back to the total CPU count on non-macOS or when the perflevel
+/// sysctls are unavailable (e.g. Intel Macs), matching the previous behavior.
+/// Clamped to [`MAX_THREADS`].
+pub fn get_default_threads() -> usize {
     #[cfg(target_os = "macos")]
     {
-        let mut out: i32 = 0;
-        let mut size = std::mem::size_of::<i32>();
-        let name = b"hw.perflevel0.physicalcpu\0";
-        let rc = unsafe {
-            libc::sysctlbyname(
-                name.as_ptr() as *const libc::c_char,
-                &mut out as *mut i32 as *mut libc::c_void,
-                &mut size,
-                std::ptr::null_mut(),
-                0,
-            )
-        };
-        if rc == 0 && out > 0 {
-            return out as usize;
+        if let Some(p) = sysctl_uint(b"hw.perflevel0.physicalcpu\0") {
+            let e = sysctl_uint(b"hw.perflevel1.physicalcpu\0").unwrap_or(0);
+            return (p + e.min(p)).clamp(1, MAX_THREADS);
         }
     }
-    get_num_cpus()
+    get_num_cpus().clamp(1, MAX_THREADS)
 }
 
 /// Run a closure in parallel using the persistent thread pool.

@@ -204,7 +204,7 @@ pub fn verbose() -> i32 {
 
 mod pool;
 
-pub use pool::{get_num_cpus, get_num_perf_cpus, get_num_threads, set_threads};
+pub use pool::{get_default_threads, get_num_cpus, get_num_threads, set_threads};
 pub(crate) use pool::parallel_for;
 pub(crate) use pool::set_thread_override;
 #[cfg(target_arch = "aarch64")]
@@ -422,11 +422,66 @@ pub fn matmul_t(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: usiz
     }
 }
 
+/// Pool-parallel `y[seq,out] = x @ W^T + beta*y (+ b)`: splits the output
+/// columns across the persistent thread pool, one BLAS call per slice. Each
+/// output element is still a single full-K dot product inside one sgemm call.
+/// A lone Accelerate sgemm call runs mostly on the calling thread, leaving the
+/// pool workers idle for the whole encoder/prefill GEMM phase; per-thread
+/// slices let every pool thread feed the matrix hardware concurrently.
+/// Returns false when the problem is too small to win over one direct call.
+#[cfg(feature = "blas")]
+fn sgemm_nt_pooled(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>,
+                   seq_len: usize, in_dim: usize, out_dim: usize, beta: f32) -> bool {
+    let nt = get_num_threads();
+    // Each slice needs enough columns for an efficient BLAS kernel, and the
+    // whole product enough MACs to amortize the pool dispatch.
+    const MIN_COLS: usize = 128;
+    const MIN_MACS: usize = 1 << 22;
+    if nt <= 1 || seq_len < 2 || out_dim < 2 * MIN_COLS
+        || seq_len * in_dim * out_dim < MIN_MACS {
+        return false;
+    }
+    let y_send = y.as_mut_ptr() as usize;
+    let x_send = x.as_ptr() as usize;
+    let w_send = w.as_ptr() as usize;
+    let b_send = b.map(|b| b.as_ptr() as usize);
+    parallel_for(|tid, nt| {
+        let slices = nt.min(out_dim / MIN_COLS).max(1);
+        let chunk = out_dim.div_ceil(slices);
+        let start = (tid * chunk).min(out_dim);
+        let end = (start + chunk).min(out_dim);
+        if start >= end { return; }
+        // SAFETY: threads write disjoint column ranges [start, end) of y.
+        unsafe {
+            cblas_sgemm(
+                CBLAS_ROW_MAJOR, CBLAS_NO_TRANS, CBLAS_TRANS,
+                seq_len as i32, (end - start) as i32, in_dim as i32,
+                1.0, x_send as *const f32, in_dim as i32,
+                (w_send as *const f32).add(start * in_dim), in_dim as i32,
+                beta, (y_send as *mut f32).add(start), out_dim as i32,
+            );
+            if let Some(bp) = b_send {
+                let bp = bp as *const f32;
+                for s in 0..seq_len {
+                    let row = (y_send as *mut f32).add(s * out_dim);
+                    for o in start..end {
+                        *row.add(o) += *bp.add(o);
+                    }
+                }
+            }
+        }
+    });
+    true
+}
+
 /// y = x @ W^T + b: `x[seq,in]`, `W[out,in]`, `b[out]`, `y[seq,out]`
 pub fn linear(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>, seq_len: usize, in_dim: usize, out_dim: usize) {
     let _pg = ProfileGuard::new(&PROF.sgemm);
     #[cfg(feature = "blas")]
     unsafe {
+        if sgemm_nt_pooled(y, x, w, b, seq_len, in_dim, out_dim, 0.0) {
+            return;
+        }
         cblas_sgemm(
             CBLAS_ROW_MAJOR, CBLAS_NO_TRANS, CBLAS_TRANS,
             seq_len as i32, out_dim as i32, in_dim as i32,
@@ -468,6 +523,9 @@ pub fn linear_accumulate(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>,
     let _pg = ProfileGuard::new(&PROF.sgemm);
     #[cfg(feature = "blas")]
     unsafe {
+        if sgemm_nt_pooled(y, x, w, b, seq_len, in_dim, out_dim, 1.0) {
+            return;
+        }
         // Add bias to y first (y already has residual)
         if let Some(b) = b {
             for s in 0..seq_len {
@@ -822,8 +880,43 @@ fn conv2d_impl(out: &mut [f32], input: &[f32], weight: &[f32], bias: Option<&[f3
     }
 
     // GEMM: weight[c_out, patch_size] @ cols[patch_size, spatial_out] = out[c_out, spatial_out]
+    // Split output channels across the pool (one sgemm slice per thread) so
+    // the workers that just finished im2col also share the GEMM instead of
+    // idling behind a single main-thread BLAS call.
     #[cfg(feature = "blas")]
     unsafe {
+        if n_threads > 1 && c_out >= 2 * n_threads
+            && c_out * patch_size * spatial_out >= (1 << 22) {
+            let out_send = out.as_mut_ptr() as usize;
+            let w_send = weight.as_ptr() as usize;
+            let cols_send = cols.as_ptr() as usize;
+            let bias_send = bias.map(|b| b.as_ptr() as usize);
+            parallel_for(|tid, nt| {
+                let chunk = c_out.div_ceil(nt);
+                let start = (tid * chunk).min(c_out);
+                let end = (start + chunk).min(c_out);
+                if start >= end { return; }
+                // SAFETY: threads write disjoint row ranges [start, end) of out.
+                cblas_sgemm(
+                    CBLAS_ROW_MAJOR, CBLAS_NO_TRANS, CBLAS_NO_TRANS,
+                    (end - start) as i32, spatial_out as i32, patch_size as i32,
+                    1.0, (w_send as *const f32).add(start * patch_size), patch_size as i32,
+                    cols_send as *const f32, spatial_out as i32,
+                    0.0, (out_send as *mut f32).add(start * spatial_out), spatial_out as i32,
+                );
+                if let Some(bp) = bias_send {
+                    let bp = bp as *const f32;
+                    for oc in start..end {
+                        let b = *bp.add(oc);
+                        let row = (out_send as *mut f32).add(oc * spatial_out);
+                        for s in 0..spatial_out {
+                            *row.add(s) += b;
+                        }
+                    }
+                }
+            });
+            return;
+        }
         cblas_sgemm(
             CBLAS_ROW_MAJOR, CBLAS_NO_TRANS, CBLAS_NO_TRANS,
             c_out as i32, spatial_out as i32, patch_size as i32,
