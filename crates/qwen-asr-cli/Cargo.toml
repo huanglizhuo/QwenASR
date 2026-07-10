@@ -1,6 +1,6 @@
 [package]
 name = "qwen-asr-cli"
-version = "0.8.0"
+version = "0.8.1"
 edition.workspace = true
 license.workspace = true
 description = "CLI for qwen-asr: Qwen3-ASR speech-to-text"
@@ -15,7 +15,7 @@ name = "qwen-asr"
 path = "src/main.rs"
 
 [dependencies]
-qwen-asr = { version = "0.8.0", path = "../qwen-asr" }
+qwen-asr = { version = "0.8.1", path = "../qwen-asr" }
 ureq = "2"
 ctrlc = "3"
 
