@@ -5448,6 +5448,68 @@ this log entry is kept.
 
 ---
 
+### R11-B: fuse bf16→f32 weight conversion into pooled GEMM slices — Rejected
+
+Change tested:
+- `linear_nobias_bf16_scratch` (decoder/encoder multi-token prefill) runs two
+  pool dispatches per linear today: (1) `bf16_to_f32_buf_parallel` widens the
+  *whole* weight matrix into `scratch`, then (2) `linear_nobias` →
+  `sgemm_nt_pooled` splits the converted scratch into per-thread output-column
+  slices for BLAS. Added `fused_convert_sgemm_pooled`, which — when the pooled
+  GEMM would fire anyway (same eligibility: `nt > 1`, `seq_len >= 2`,
+  `out_dim >= 256`, `>= 4M` MACs; same `slices = nt.min(out_dim/128).max(1)`
+  chunk math) — does it in **one** `parallel_for`: each thread widens only its
+  own output-row range `w_bf16[start*in_dim .. end*in_dim]` into the same
+  disjoint scratch region, then immediately `cblas_sgemm`s that freshly
+  converted, cache-warm region. The two-phase path stays as the fallback for
+  the non-pooled case (single-token, small problems, `nt == 1`).
+
+Reason:
+- The converted f32 weight matrix (4-12 MB) is written by phase 1 and re-read by
+  phase 2, and the two phases are separate pool wake/join cycles. Fusing removes
+  one dispatch per linear (7 linears × 28 layers per prefill) and lets each
+  thread consume its slice while it is still hot in cache instead of round-
+  tripping through RAM.
+
+MIN_COLS slice-granularity sweep (offline, `bench/run.sh --runs 5`, fused build):
+`64 → 676 ms`, `128 → 686 ms`, `256 → 713 ms`. A back-to-back re-measure of 128
+alone spanned `675–686 ms`, so the 64 reading sits inside 128's own noise band —
+no reliable win — and 256 was clearly worse. Kept `MIN_COLS = 128`, which also
+preserves bit-identical output (unchanged slice boundaries → unchanged BLAS
+summation grouping).
+
+Baseline reference: `round11b-base` binary built from HEAD, re-measured
+back-to-back against the fused build to control for thermal/scheduler drift on a
+noisy machine (several runs showed 900–1489 ms OS-interference outliers, so the
+cleanest signal is the per-mode minimum across all pairs).
+
+| Mode | Baseline (min) | R11-B fused (min) |
+|------|---------------:|------------------:|
+| offline | 676 ms | 674 ms |
+| segmented -S30 | 670 ms | 675 ms |
+| streaming | 631 ms | 640 ms |
+| overall average | ~659 ms | ~663 ms |
+
+The first back-to-back pair looked like a ~2.3 % fused win (703/697/669 vs
+714/718/687 ms) but it did not reproduce: a second pair and the min-of-all-pairs
+aggregate above land on parity (fused ~0.6 % slower on the min average, i.e.
+dead even). WER unchanged (`0.0270` offline/segmented, `0.2973` streaming); the
+fused build's offline/segmented/streaming transcripts on the bench sample were
+verified **byte-identical** to the `round11b-base` binary in all three modes
+(the per-slice conversion is element-wise identical and slice boundaries are
+unchanged, so every sgemm input and output is bit-exact). LibriSpeech was
+therefore not re-run — bit-identical output guarantees corpus WER stays at
+HEAD's `0.0350`. Full suite passes (51 tests), zero warnings.
+
+Decision: **Rejected.** Round 10 already made both the conversion and the GEMM
+fully pool-parallel, so the fused path only saves one pool dispatch and a RAM
+round-trip whose slices (~0.8–1.7 MB each) are too large to stay resident in
+per-core cache — leaving the prefill memory-bandwidth-bound either way. No
+measurable win beyond the noise floor. The Rust code was fully reverted and only
+this log entry is kept.
+
+---
+
 ## Autoresearch Program Baseline Experiments
 
 These experiments come from the initial `codex-auto-research` autoresearch program baseline (`programs.md`). They are structural buffer-reuse optimizations that predate the numbered round structure above.
