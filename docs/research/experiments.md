@@ -17,6 +17,7 @@ This file collects the optimization experiment diaries.
 - [Speed Improvement Experiments — Round 8](#speed-improvement-experiments--round-8)
 - [Speed Improvement Experiments — Round 9](#speed-improvement-experiments--round-9)
 - [Speed Improvement Experiments — Round 10](#speed-improvement-experiments--round-10)
+- [Speed Improvement Experiments — Round 11](#speed-improvement-experiments--round-11)
 - [Autoresearch Program Baseline Experiments](#autoresearch-program-baseline-experiments)
 - [Historical Commit Ledger (perf-opt-1 branch)](#historical-commit-ledger-perf-opt-1-branch)
 - [Opportunity Backlog](#opportunity-backlog)
@@ -5372,6 +5373,78 @@ Quality checks:
 - Full test suite passes (51 tests), zero warnings.
 
 Decision: **Kept.**
+
+---
+
+## Speed Improvement Experiments — Round 11
+
+Goal: after Round 10 made the multi-token GEMM phase pool-parallel and raised
+the default thread count to 10 (P + min(E, P) on M5 Pro), revisit the encoder
+conv-stem — the one remaining multi-token phase that is parallelized *inside*
+each kernel rather than across its independent units of work.
+
+Baseline reference (`round11-baseline`, M5 Pro 5P/10E, default 10 threads):
+offline `639 ms`, segmented -S30 `637 ms`, streaming `600 ms`; profile buckets
+encode `194 ms`, `conv2d_op 72.8 ms`. Bench WER `0.0270` offline/segmented,
+`0.2973` streaming.
+
+### R11-A: parallelize encoder conv-stem chunks — Rejected
+
+Change tested:
+- `Encoder::forward` processes the mel in ~19 independent chunks (per chunk:
+  extract chunk_mel, three `conv2d_with_cols` + gelu, reshape, projection
+  `linear`, sinusoidal PE), each writing a disjoint `token_offset` range of the
+  main `x` buffer. Extracted the per-chunk body into `Encoder::process_chunk_stem`
+  and distributed the chunk loop across the persistent thread pool
+  (`kernels::parallel_for`), striding chunks by `par_width = min(n_chunks, nt)`.
+- Each worker set `kernels::set_thread_override(1)` so its inner kernels take the
+  serial inline path (the pool has a single dispatch slot; a nested
+  `parallel_for` from a worker would corrupt it), reset to `0` before returning.
+- Replaced the single shared stem scratch on `EncoderBuffers` with a lazily-grown
+  per-worker `stem_pool: Vec<StemScratch>` (chunk_mel/c1/c2/c3/reshaped/pe/
+  conv_cols, ~23 MB each, conv_cols dominant), reused across `forward` calls.
+- Serial fallback preserved for `par_width <= 1` (nt == 1, single chunk, or
+  callers already under a thread override such as the parallel-segment decode
+  workers).
+
+Reason:
+- The conv-stem's `conv2d_op` bucket is ~73 ms and is currently parallelized
+  *within* each conv (pool-split im2col + GEMM). The chunks are fully
+  independent, so distributing whole chunks across the pool — each conv then
+  single-threaded — was worth checking as a lower-overhead alternative to the
+  per-conv fan-out/join.
+
+Baseline reference: `round11-baseline`, re-measured back-to-back on the same
+machine state (`round11a-basecheck`) to control for thermal drift.
+
+| Mode | Baseline (re-measured) | R11-A |
+|------|-----------------------:|------:|
+| offline | 660 ms | 671 ms |
+| segmented -S30 | 670 ms | 664 ms |
+| streaming | 638 ms | 657 ms |
+| overall average | ~656 ms | ~664 ms |
+
+Profile (offline, `--profile`): `conv2d_op` summed time went `76.1 ms`
+(0.88 ms/call, all-thread parallel per conv) → `696 ms` (8.00 ms/call, single
+thread per conv, summed across the concurrent workers) for the same 87 calls —
+i.e. each conv is now ~9× slower on its own thread and the chunk-level
+concurrency only just recovers it, netting no encode-wall win.
+
+Speed-sample WER unchanged (`0.0270` offline/segmented, `0.2973` streaming);
+offline/segmented/streaming transcripts on the bench sample were verified
+byte-identical to the `round11-baseline` binary in all three modes (each chunk's
+float math is unchanged and its output range is disjoint, so parallelizing the
+loop is numerically exact). LibriSpeech was therefore not re-run — bit-identical
+output guarantees the corpus WER stays at HEAD's `0.0350`. Full suite passes
+(51 tests), zero warnings.
+
+Decision: **Rejected.** Round 10's per-conv pool split already extracts the
+available parallelism from the stem; moving to chunk-level parallelism just
+reshuffles the same work with slightly worse efficiency (single-threaded conv
+per chunk, load imbalance across ~2 waves of 10 workers on 19 chunks, and
+per-worker scratch RSS). Overall average was ~1.2 % slower — inside the noise
+floor and on the wrong side of it. The Rust code was fully reverted and only
+this log entry is kept.
 
 ---
 
