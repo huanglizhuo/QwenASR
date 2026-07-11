@@ -11,6 +11,11 @@ Apples-to-apples comparison of qwen-asr against the upstream pure C implementati
 - qwen-asr and pure C use internal inference timers; MLX-based implementations are timed after model load with explicit GPU synchronization
 - Wall-clock time is retained as a secondary metric
 - Default runs: 10
+- **Thread policy: out-of-the-box defaults.** No thread flag is passed to any implementation; each one uses its own default configuration (qwen-asr picks `P + min(E, P + (E−P)/2)` = 12 threads on M5 Pro, upstream C picks its own default, the MLX implementations run on the GPU and are insensitive to CPU thread flags). `--threads N` can still be passed to force a uniform count for every CPU implementation.
+
+### Note on the thread-policy change (2026-07-12)
+
+Runs up to and including `20260711T145612Z` forced `--threads 15` (`min(system CPUs, 16)`) onto every CPU implementation for uniformity. That policy predates qwen-asr's tuned thread default: after Round 11's dynamic work-stealing scheduler, qwen-asr's optimum on M5 Pro is 12 threads, and 15 threads sits in a measured oversubscription regime (~660-690 ms offline vs ~563 ms at the default — see `experiments.md` R11-G for the t5..t15 sweep). The forced-15 policy therefore reported qwen-asr at 658 ms while the dedicated speed benchmark (binary default) reported 563 ms on the same commit. Comparing each implementation at its own default configuration is the fairer "as-shipped" comparison and is now the default; the GPU baselines are unaffected by this change.
 
 ## Reproduce
 
@@ -57,31 +62,32 @@ See [`results.md`](./results.md) for the full speed-benchmark page.
 
 ## Latest Cross-Implementation Results
 
-> Generated on: 2026-07-11 from `bench/compare-results/20260711T145612Z/`
+> Generated on: 2026-07-12 from `bench/compare-results/20260711T235106Z/`
 > Runs per target: 10
 > Hardware: Apple M5 Pro, 15 cores, 48 GB RAM, macOS 26.4
 > Versions: upstream C `main` (`b00b789`), second-state `v0.2.0` (`0226270`), mlx-audio `v0.4.5`
+> Thread policy: out-of-the-box defaults (no thread flag passed; qwen-asr auto-picks 12 threads on this machine)
 > Results are sorted by median inference latency (fastest first).
 
 | Implementation | Commit / Version | Median inference ms | Mean ms | Best ms | RTF |
 |---|---:|---:|---:|---:|---:|
-| qwen-asr (latest) | `d241af9b` | 658 | 668 | 629 | 42.86× |
-| mlx-audio Python MLX | `0.4.5` | 687 | 750 | 682 | 40.97× |
-| second-state MLX GPU | `0226270` (v0.2.0) | 1,388 | 1,466 | 1,378 | 20.29× |
-| qwen-asr (first) | `bf52daf` | 1,649 | 1,651 | 1,630 | 17.10× |
-| pure C upstream | `b00b789` | 1,662 | 1,661 | 1,637 | 16.94× |
+| qwen-asr (latest) | `50c84d45` | 595 | 597 | 582 | 47.44× |
+| mlx-audio Python MLX | `0.4.5` | 730 | 790 | 721 | 38.56× |
+| second-state MLX GPU | `0226270` (v0.2.0) | 1,446 | 1,513 | 1,437 | 19.47× |
+| qwen-asr (first) | `bf52daf` | 1,722 | 1,834 | 1,710 | 16.38× |
+| pure C upstream | `b00b789` | 1,732 | 1,734 | 1,703 | 16.26× |
 
-> **Note:** the cross-implementation run passes `--threads 15` to every implementation, while the dedicated speed benchmark uses the binary default (12 on this machine). The dedicated benchmark reports `563 ms` / `50.09×` for qwen-asr latest offline; the full comparison reports `658 ms` / `42.86×`. Both current runs use `d241af9b` and produce the full transcript.
+> **Note:** with the out-of-the-box thread policy the comparison and the dedicated speed benchmark now use the same qwen-asr configuration; the residual difference (595 ms here vs 563 ms in the dedicated run) is ordinary run-to-run machine variance. The previous run (`20260711T145612Z`, forced `--threads 15`) reported qwen-asr at 658 ms — see the thread-policy note above.
 
 ### Wall-clock timing
 
 | Implementation | Commit / Version | Median wall-clock ms | Mean ms | Best ms | Wall-clock RTF |
 |---|---:|---:|---:|---:|---:|
-| qwen-asr (latest) | `d241af9b` | 932 | 976 | 901 | 30.25× |
-| second-state MLX GPU | `0226270` (v0.2.0) | 1,593 | 1,736 | 1,579 | 17.67× |
-| mlx-audio Python MLX | `0.4.5` | 1,718 | 1,829 | 1,701 | 16.39× |
-| pure C upstream | `b00b789` | 1,941 | 1,942 | 1,915 | 14.51× |
-| qwen-asr (first) | `bf52daf` | 2,005 | 2,040 | 1,985 | 14.06× |
+| qwen-asr (latest) | `50c84d45` | 877 | 931 | 864 | 32.17× |
+| second-state MLX GPU | `0226270` (v0.2.0) | 1,666 | 1,800 | 1,652 | 16.90× |
+| mlx-audio Python MLX | `0.4.5` | 1,828 | 1,930 | 1,801 | 15.41× |
+| pure C upstream | `b00b789` | 2,033 | 2,035 | 2,008 | 13.85× |
+| qwen-asr (first) | `bf52daf` | 2,093 | 2,423 | 2,081 | 13.47× |
 
 <p float="left">
   <img src="charts/benchmark-unified-latency.png" width="48%" alt="Unified latency" />
@@ -90,11 +96,11 @@ See [`results.md`](./results.md) for the full speed-benchmark page.
 
 ### Findings
 
-- In the latest full cross-implementation run, qwen-asr `d241af9b` is the **fastest implementation overall** — the first run where the pure-CPU Rust engine beats every GPU baseline on median inference latency.
-- qwen-asr `d241af9b` is **2.51×** faster than the initial Rust port `bf52daf`.
-- qwen-asr `d241af9b` is **2.53×** faster than the upstream pure C implementation.
-- qwen-asr `d241af9b` is **2.11×** faster than second-state MLX GPU (v0.2.0) by inference latency.
-- qwen-asr `d241af9b` is **1.04×** faster than mlx-audio Python MLX (v0.4.5) by median inference latency (658 vs 687 ms), and **1.84×** faster on wall clock (932 vs 1,718 ms).
+- With every implementation at its own default configuration, qwen-asr `50c84d45` is the **fastest implementation overall** — the pure-CPU Rust engine beats every GPU baseline on median inference latency.
+- qwen-asr is **2.90×** faster than the initial Rust port `bf52daf`.
+- qwen-asr is **2.91×** faster than the upstream pure C implementation.
+- qwen-asr is **2.43×** faster than second-state MLX GPU (v0.2.0) by inference latency.
+- qwen-asr is **1.23×** faster than mlx-audio Python MLX (v0.4.5) by median inference latency (595 vs 730 ms), and **2.08×** faster on wall clock (877 vs 1,828 ms).
 
 ## Why is pure CPU Rust competitive with GPU baselines?
 

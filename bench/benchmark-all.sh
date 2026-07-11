@@ -31,7 +31,7 @@ Usage: $0 [options]
   --input FILE                Input WAV file (default: ./samples/audio.wav)
   --runs N                    Number of standalone runs per target/mode (default: 10; report uses median)
   --modes LIST                Comma-separated modes (default: offline)
-  --threads N                 Thread count for every implementation (default: min(system CPUs, 16))
+  --threads N                 Force thread count for every CPU implementation (default: none — each implementation uses its own default, "out-of-the-box" methodology)
   --tmp-dir DIR               Temp/worktree directory (default: ../tmp/benchmark-all)
   --report-dir DIR            Output report directory (default: ./compare-results/<timestamp>)
   --charts-dir DIR            Stable chart output directory (default: ./charts)
@@ -85,14 +85,6 @@ with wave.open(sys.argv[1], "rb") as w:
     frames = w.getnframes()
     rate = w.getframerate()
 print(frames / rate if rate else 0.0)
-PY
-}
-
-default_thread_count() {
-    python3 <<'PY'
-import os
-n = os.cpu_count() or 1
-print(max(1, min(n, 16)))
 PY
 }
 
@@ -167,9 +159,9 @@ mkdir -p "$SUMMARY_DIR" "$RAW_DIR" "$TMP_DIR" "$CHARTS_DIR"
 
 IFS=',' read -r -a MODE_LIST <<< "$MODES"
 AUDIO_DURATION_S="$(wav_duration_seconds "$INPUT_FILE")"
-if [[ -z "$THREADS" ]]; then
-    THREADS="$(default_thread_count)"
-fi
+# THREADS empty = out-of-the-box methodology: no thread flag is passed and
+# each implementation picks its own default (the historical behavior forced
+# min(system CPUs, 16) onto every CPU implementation).
 BASELINE_SHORT="$(git -C "$PROJECT_DIR" rev-parse --short "$BASELINE_REF")"
 CURRENT_SHORT="$(git -C "$PROJECT_DIR" rev-parse --short "$CURRENT_REF")"
 
@@ -463,7 +455,9 @@ run_c_once() {
     python3 - "$binary" "$MODEL_DIR" "$INPUT_FILE" "$mode" "$stdout_file" "$stderr_file" <<'PY'
 import os, subprocess, sys
 binary, model_dir, input_file, mode, stdout_file, stderr_file = sys.argv[1:]
-cmd = [binary, "-d", model_dir, "-i", input_file, "-t", os.environ["BENCH_THREADS"]]
+cmd = [binary, "-d", model_dir, "-i", input_file]
+if os.environ.get("BENCH_THREADS"):
+    cmd += ["-t", os.environ["BENCH_THREADS"]]
 if mode == "segmented":
     cmd += ["-S", "30"]
 elif mode == "streaming":
@@ -514,6 +508,10 @@ benchmark_rust_target() {
         return
     fi
 
+    local thread_args=()
+    if [[ -n "$THREADS" ]]; then
+        thread_args=(--threads "$THREADS")
+    fi
     log "Running $label"
     if ! "$SCRIPT_DIR/run.sh" \
         --binary "$worktree/target/release/qwen-asr" \
@@ -522,7 +520,7 @@ benchmark_rust_target() {
         --output-dir "$output_root" \
         --label "$label" \
         --modes "$MODES" \
-        --threads "$THREADS" \
+        ${thread_args[@]+"${thread_args[@]}"} \
         --runs "$RUNS" >"$RAW_DIR/$label/run.log" 2>&1; then
         for mode in "${MODE_LIST[@]}"; do
             write_result_json "$SUMMARY_DIR/$label-$mode.json" "$impl" true "$mode" true false true null null "" "Rust benchmark failed; see $RAW_DIR/$label/run.log" "$RAW_DIR/$label/run.log" "$commit_ref" "$TIMESTAMP" false
@@ -823,7 +821,11 @@ generate_report_and_charts() {
 
 ensure_python_env
 export BENCH_THREADS="$THREADS"
-log "Using $THREADS threads for all implementations"
+if [[ -n "$THREADS" ]]; then
+    log "Forcing $THREADS threads for all CPU implementations"
+else
+    log "Out-of-the-box thread policy: each implementation uses its own default"
+fi
 
 log "Preparing worktrees"
 ensure_worktree "$TMP_DIR/baseline-rust" "$BASELINE_REF"
