@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.2](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.8.1...qwen-asr-v0.8.2) (2026-07-11)
+
+
+### Performance Improvements
+
+* dynamic chunk scheduling across P/E cores ([cc7f49d](https://github.com/huanglizhuo/QwenASR/commit/cc7f49d48a5a9361070438dc004e90d5910a06fb))
+* INT4 group-quantized decode weights (tier 1) ([6ed3952](https://github.com/huanglizhuo/QwenASR/commit/6ed3952646ba0d9e710a63305952a1f1405c3dd3))
+* pool-parallel GEMM slices and E-core-aware default threads ([9a0c19e](https://github.com/huanglizhuo/QwenASR/commit/9a0c19ea26c94a8989e77ecf7f32219055911335))
+* raise default thread count for dynamic-scheduling era ([963a404](https://github.com/huanglizhuo/QwenASR/commit/963a404106730a334a25556b75c924313bdfe3ce))
+
 ## [0.8.1](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.8.0...qwen-asr-v0.8.1) (2026-07-09)
 
 
