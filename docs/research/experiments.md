@@ -5870,6 +5870,48 @@ oversubscribes.
 
 ---
 
+### R11-H1: pooled-GEMM item-size retune — Rejected
+
+Motivation: `sgemm_nt_pooled` uses fixed 128-column dynamic work items (R11-C).
+For a typical prefill linear (seq≈350, in=1024, out=1024) that is 8 items, and
+every item re-reads the full x panel (350×1024×4 ≈ 1.4 MB), so x re-read traffic
+(≈11 MB) dominates the weight traffic (4 MB); larger items would cut the
+re-reads. R11-B's earlier MIN_COLS sweep (64/128/256, where 256 lost 713 vs
+686 ms) predates dynamic scheduling, so the 256 loss was plausibly static-split
+load imbalance that R11-C's work-stealing has since fixed — worth re-sweeping in
+the dynamic era with the new 12-thread default (R11-G).
+
+Sweep (offline, `bench/run.sh --runs 5`, median inference ms, one build per
+`MIN_COLS` value):
+
+| MIN_COLS | offline ms | items @ out_dim=1024 |
+|----------|-----------|----------------------|
+| 64  | 580 | 16 |
+| 96  | 578 | 11 |
+| **128 (current)** | **585** | 8 |
+| 192 | 608 | 6 |
+| 256 | 619 | 4 |
+| 384 | 637 | 3 |
+
+Larger items regress monotonically (192 +3.9%, 256 +5.8%, 384 +8.9% vs 128) —
+the opposite of the x-re-read hypothesis. With 12 work-stealing threads,
+out_dim=1024 yields too few items past 128 columns (6/4/3 items) to feed the
+pool: most threads idle through the whole GEMM, and the lost parallelism dwarfs
+the saved x panel traffic. The dominant encoder/decoder linears simply don't
+have enough output columns for coarser items. Smaller items (96/64: 578/580 ms)
+sit ~1.2% below 128 — inside the established ±1.5% noise floor and not a
+reliable win, while doubling the per-GEMM dispatch count.
+
+Decision: **Rejected.** `MIN_COLS = 128` stays. No candidate beats it beyond the
+1.5% threshold; the R11-B conclusion holds even after dynamic scheduling, and
+the mechanism is now understood as item-count starvation at out_dim≈1024 rather
+than static-split imbalance. No code change (the constant was swept and restored
+in place), so output remains bit-identical to HEAD and no LibriSpeech re-run is
+needed. The conv2d GEMM 32-channel item size was not touched (no signal it
+matters: c_out=480 yields 15 items, comfortably feeding 12 threads).
+
+---
+
 ## Autoresearch Program Baseline Experiments
 
 These experiments come from the initial `codex-auto-research` autoresearch program baseline (`programs.md`). They are structural buffer-reuse optimizations that predate the numbered round structure above.
