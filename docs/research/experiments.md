@@ -5910,6 +5910,33 @@ in place), so output remains bit-identical to HEAD and no LibriSpeech re-run is
 needed. The conv2d GEMM 32-channel item size was not touched (no signal it
 matters: c_out=480 yields 15 items, comfortably feeding 12 threads).
 
+### R11-H2: direct NEON stem conv1 — Rejected
+
+Change tested:
+- Added a direct NEON conv2d specialization for the encoder stem's first
+  convolution (`c_in=1`, 3×3, stride 2, pad 1): per output-row dynamic items
+  via `parallel_for_dynamic`, FMA over the 9 taps with the weights held in
+  registers per channel block, dispatched from `conv2d_impl` when the shape
+  matches. conv2 and conv3 (`c_in=480`, K=4320) stayed on im2col + BLAS.
+
+Reason:
+- The conv1 GEMM has K = patch_size = 9, which is severely ALU-starved for
+  AMX, and im2col inflates input traffic ~9×. A direct conv avoids both.
+
+Correctness: a temporary randomized test against the im2col+BLAS path passed
+with max abs diff ≤ 1e-5 across shapes (reordering-level float differences
+only), so the kernel itself was sound.
+
+Result: encode wall was unchanged — candidate `169-171 ms` encoding vs base
+`168-169 ms` on back-to-back offline spot runs (decode flat, as expected).
+conv1 is too small a share of the ~68 ms `conv2d_op` bucket (conv2/conv3 with
+K=4320 dominate it), so even eliminating conv1's GEMM inefficiency moves
+nothing at the wall. A full 3-mode pair was not run: with encode identical,
+the >1.5% overall threshold is unreachable.
+
+Decision: **Rejected.** The Rust code was fully reverted and only this log
+entry is kept.
+
 ---
 
 ## Autoresearch Program Baseline Experiments
