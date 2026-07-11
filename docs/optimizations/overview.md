@@ -4,7 +4,7 @@ This document catalogs the performance optimizations implemented in the pure-Rus
 
 ## 1. Memory Traffic & Allocation Reduction
 
-- **INT8 Quantization for Decoder**: Decoder weights (`QKV`, `O`-projection, `FFN` gate/up/down, `lm_head`) are quantized to INT8 with per-row scales at load time. This cuts memory traffic by ~4x compared to FP32 and avoids BF16-to-F32 conversion overhead. Implemented via NEON INT8 matvec/argmax kernels.
+- **INT8 + INT4 Quantization for Decoder**: Decoder attention weights (`QKV`, `O`-projection) and `lm_head` are quantized to INT8 with per-row scales at load time; the decode-path FFN weights (interleaved `gate_up` + `down`, ~75% of the per-layer stream) are further group-quantized to INT4 (G=32 packed nibbles + per-group BF16 scales, R11-I). This cuts single-token decode weight traffic ~20% below all-INT8 (~4-8x below FP32) at a measured LibriSpeech WER cost of 0.0350 → 0.0357. Implemented via NEON SDOT INT8 matvec/argmax and INT4 group-matvec kernels.
 - **Reusable Workspaces**: Eliminated transient heap allocations in hot paths.
   - **Encoder**: `EncoderBuffers` persists scratch spaces for `chunk_mel`, convolution variables, and `im2col`. The main activation buffer (`x`) and `window_starts` metadata are reused across calls.
   - **Decoder**: `DecoderBuffers` provides pre-allocated scratch for BF16-to-F32 conversions, removing ~140 allocations per prefill pass.

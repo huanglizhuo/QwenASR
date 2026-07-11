@@ -5937,6 +5937,88 @@ the >1.5% overall threshold is unreachable.
 Decision: **Rejected.** The Rust code was fully reverted and only this log
 entry is kept.
 
+### R11-I: INT4 group-quantized decode FFN weights — KEPT
+
+Motivation: R11-D established the single-token decode phase is DRAM-bandwidth
+bound (~575 MB of INT8 weights streamed per token at ~115 GB/s) — only reading
+fewer bytes can win. R11-F's INT4 *screening* of the lm_head failed because the
+soundness-bound machinery made the pass ALU-bound; this probe instead applies
+plain (approximate, no bounds, no second pass) INT4 group quantization to the
+per-layer decode **FFN** matvecs — gate_up (6144×1024 interleaved) + down
+(1024×3072) are ~9.4 MB/layer, 75% of the per-layer weight stream. Approximate
+quantization changes outputs, so LibriSpeech corpus WER was a hard go/no-go
+gate (≤ 0.0358 vs HEAD ref 0.0350).
+
+Change (Tier 1 — FFN only; attention Q/K/V/O and lm_head stay INT8):
+- Load time (`decoder.rs`, `kernels::quantize_bf16_weights_to_int4`): G=32
+  group quantization from the **original BF16** weights (the interleaved
+  gate_up fusion is a BF16 copy, so single-rounded — never re-quantized from
+  INT8). Symmetric codes `[-7, 7]` (group scale = absmax/7, mirroring INT8's
+  absmax/127), stored offset-by-8 as packed nibbles — byte `j` of a group's 16
+  bytes holds weight `j` (low) and `j+16` (high) — plus a round-to-nearest
+  **BF16** scale per group (codes are fitted against the rounded scale).
+  `gate_up_q4`/`down_q4` replace `gate_up_int8`/`down_int8` (INT8 FFN buffers
+  are no longer built → RSS *drops* ~116 MB); codes live in superpage memory
+  like the INT8 buffers they replace.
+- Kernel (`kernels/neon.rs`, `matvec_int4_g32`): llama.cpp-Q4_0-style NEON —
+  per group, unpack nibbles (`and 0x0F` / `shr #4`, one `vsub` of the 8-offset
+  each), two SDOTs against the existing INT8-quantized activations, then a
+  `vpaddq_s32` pairwise tree collapses 4 groups' dots into one `int32x4` that
+  is converted and FMA'd against 4 BF16→F32 group scales — the f32 group
+  accumulator never leaves the vector unit until the row-end reduce. Two rows
+  per pass share the activation loads (same pairing as the INT8 kernel).
+  `int4_swiglu_range`/`int4_matvec_range` slot into the fused decode region's
+  existing stage/barrier structure (fused SwiGLU with interleaved gate/up rows
+  preserved); prefill, encoder, and the aligner path are untouched.
+- Traffic math: FFN 9.44 MB/layer INT8 → 4.72 MB codes + 0.59 MB BF16 group
+  scales = 5.31 MB/layer (−44%); per token over 28 layers 264 → 149 MB, i.e.
+  ~116 MB (~20%) off the ~575 MB/token total stream.
+
+Benchmark (`bench/run.sh --runs 5`, three back-to-back base/candidate pairs,
+median inference ms; base = HEAD binary):
+
+| Mode | P1 base | P1 int4 | P2 base | P2 int4 | P3 base | P3 int4 |
+|------|---------|---------|---------|---------|---------|---------|
+| offline   | 581 | 576 | 594 | 566 | 586 | 576 |
+| segmented | 588 | 580 | 587 | 572 | 587 | 568 |
+| streaming | 552 | 553 | 557 | 547 | 561 | 548 |
+
+3-mode averages: pair-1 573.7 → 569.7 (**−0.70%**), pair-2 579.3 → 561.7
+(**−3.05%**), pair-3 578.0 → 564.0 (**−2.42%**); aggregate 577.0 → 565.1
+(**−2.06%**), clearing the +1.5% bar in 2 of 3 pairs and on aggregate. The
+phase actually touched moves consistently in all 9 mode-pairs: offline
+`decode_ms` 410/417/415 → 402/393/402, segmented 417/416/416 → 405/401/393,
+streaming 346/351/350 → 345/342/342 (~−4% offline/segmented decode). The
+realized win is well short of the ~20% traffic cut — the INT4 pass runs ~2×
+the instructions per byte (unpack + per-group scale FMA), so part of the freed
+bandwidth is spent on ALU, and lm_head/attention still stream INT8 — but
+unlike R11-F there is no second pass and no bound arithmetic, so it stays net
+positive.
+
+Quality gates (approximate quantization — outputs *changed*):
+- 53 tests pass (incl. a new INT4 pack/dequant/matvec-vs-reference test), zero
+  warnings.
+- Bench sample WER lines moved 0.0270 / 0.0270 / 0.2973 → **0.0000 / 0.0000 /
+  0.2973**: the only transcript change on `bench/samples/audio.wav` (all three
+  modes) is one spurious comma after "and you know" that the base emitted and
+  the reference lacks — offline/segmented now match the reference exactly;
+  streaming byte-identical to base. Punctuation-level change, accepted.
+- LibriSpeech dev-clean-2 (100 files, offline): corpus WER **0.0357** vs HEAD
+  ref 0.0350, gate ≤ 0.0358 — **pass**, margin 0.0001 (macro WER 0.0388,
+  corpus CER 0.0142).
+
+Tier 2 (also INT4-quantizing Q/K/V/O, a further ~72 MB/token) was **not
+attempted**: the protocol required Tier 1 to pass both gates *with margin*,
+and the WER gate passed with essentially none — the remaining WER budget does
+not cover quantizing the attention projections.
+
+Decision: **KEPT** (Tier 1, FFN only). Decode weights per layer are now INT8
+attention (Q/K/V/O, per-row scales) + INT4 FFN (G=32, BF16 group scales);
+~20% less per-token weight traffic, ~116 MB less RSS, −2.06% aggregate
+3-mode inference, LibriSpeech WER 0.0350 → 0.0357 (within gate). Future INT4
+work on this path should buy WER headroom first (e.g. MSE-optimal group
+scales) before touching the attention projections.
+
 ---
 
 ## Autoresearch Program Baseline Experiments

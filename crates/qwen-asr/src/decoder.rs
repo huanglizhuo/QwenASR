@@ -22,6 +22,23 @@ fn quantize_to_superpage(
     (sp, scales)
 }
 
+/// Quantize a BF16 weight matrix into packed INT4 (G=32 groups, BF16 group
+/// scales) and store the code buffer in superpage-aligned memory. Used for
+/// the decode-path FFN weights (R11-I) — the largest per-token weight stream.
+fn quantize_to_superpage_int4(
+    w_bf16: *const u16,
+    out_dim: usize,
+    in_dim: usize,
+) -> (Vec<u8>, Vec<u16>) {
+    // Safety: callers pass tensor pointers that cover at least
+    // out_dim * in_dim BF16 values and outlive this call.
+    let (q4, scales) =
+        unsafe { kernels::quantize_bf16_weights_to_int4(w_bf16, out_dim, in_dim) };
+    let mut sp = superpage_vec::<u8>(q4.len());
+    sp.copy_from_slice(&q4);
+    (sp, scales)
+}
+
 pub struct DecLayer {
     pub wq_weight_bf16: *const u16,
     pub wk_weight_bf16: *const u16,
@@ -48,10 +65,15 @@ pub struct DecLayer {
     pub wv_int8_scales: Vec<f32>,
     pub wo_int8: Vec<i8>,
     pub wo_int8_scales: Vec<f32>,
-    pub gate_up_int8: Vec<i8>,
-    pub gate_up_int8_scales: Vec<f32>,
-    pub down_int8: Vec<i8>,
-    pub down_int8_scales: Vec<f32>,
+    /// INT4 group-quantized FFN weights (G=32 packed nibbles + BF16 group
+    /// scales) — the FFN matvecs are ~75% of the per-layer decode weight
+    /// stream, so they get the narrower encoding (R11-I). Quantized from the
+    /// original BF16 weights. Empty for aligner. Attention projections stay
+    /// INT8 (per-row scales) above.
+    pub gate_up_q4: Vec<u8>,
+    pub gate_up_q4_scales: Vec<u16>,
+    pub down_q4: Vec<u8>,
+    pub down_q4_scales: Vec<u16>,
 }
 
 unsafe impl Send for DecLayer {}
@@ -119,7 +141,7 @@ fn load_dec_layer(ms: &MultiSafetensors, cfg: &QwenConfig, i: usize) -> Option<D
     // Aligner: leave them empty (saves ~700 MB across the model).
     let (gate_up_fused_bf16, wq_int8, wq_int8_scales, wk_int8, wk_int8_scales,
          wv_int8, wv_int8_scales, wo_int8, wo_int8_scales,
-         gate_up_int8, gate_up_int8_scales, down_int8, down_int8_scales) = if is_aligner {
+         gate_up_q4, gate_up_q4_scales, down_q4, down_q4_scales) = if is_aligner {
         (Vec::new(),
          Vec::new(), Vec::new(), Vec::new(), Vec::new(),
          Vec::new(), Vec::new(), Vec::new(), Vec::new(),
@@ -142,14 +164,17 @@ fn load_dec_layer(ms: &MultiSafetensors, cfg: &QwenConfig, i: usize) -> Option<D
         let (wk_int8, wk_int8_scales) = quantize_to_superpage(wk, kv_dim, hidden);
         let (wv_int8, wv_int8_scales) = quantize_to_superpage(wv, kv_dim, hidden);
         let (wo_int8, wo_int8_scales) = quantize_to_superpage(wo, hidden, q_dim);
-        let (gate_up_int8, gate_up_int8_scales) =
-            quantize_to_superpage(gate_up_fused.as_ptr(), 2 * inter, hidden);
-        let (down_int8, down_int8_scales) = quantize_to_superpage(down_bf16, hidden, inter);
+        // FFN weights are INT4 group-quantized (R11-I) from the original BF16
+        // values (the interleaved fusion is a copy of the BF16 rows, so this
+        // is single-rounded — never re-quantized from INT8).
+        let (gate_up_q4, gate_up_q4_scales) =
+            quantize_to_superpage_int4(gate_up_fused.as_ptr(), 2 * inter, hidden);
+        let (down_q4, down_q4_scales) = quantize_to_superpage_int4(down_bf16, hidden, inter);
 
         (gate_up_fused,
          wq_int8, wq_int8_scales, wk_int8, wk_int8_scales,
          wv_int8, wv_int8_scales, wo_int8, wo_int8_scales,
-         gate_up_int8, gate_up_int8_scales, down_int8, down_int8_scales)
+         gate_up_q4, gate_up_q4_scales, down_q4, down_q4_scales)
     };
 
     Some(DecLayer {
@@ -173,10 +198,10 @@ fn load_dec_layer(ms: &MultiSafetensors, cfg: &QwenConfig, i: usize) -> Option<D
         wv_int8_scales,
         wo_int8,
         wo_int8_scales,
-        gate_up_int8,
-        gate_up_int8_scales,
-        down_int8,
-        down_int8_scales,
+        gate_up_q4,
+        gate_up_q4_scales,
+        down_q4,
+        down_q4_scales,
     })
 }
 
@@ -891,14 +916,15 @@ pub fn decoder_forward(
                 }
                 barrier.wait();
 
-                // Stage: fused gate_up + SwiGLU, split over intermediate rows.
+                // Stage: fused gate_up + SwiGLU (INT4 group-quantized weights,
+                // R11-I), split over intermediate rows.
                 {
                     let (s, e) = kernels::range_for(tid, nt, intermediate);
                     let x_scale = unsafe { *(scales_ptr as *const f32).add(2) };
                     unsafe {
-                        kernels::int8_swiglu_range(
+                        kernels::int4_swiglu_range(
                             ffn_out_ptr as *mut f32, x_int8_ptr as *const i8, x_scale,
-                            layer.gate_up_int8.as_ptr(), layer.gate_up_int8_scales.as_ptr(),
+                            layer.gate_up_q4.as_ptr(), layer.gate_up_q4_scales.as_ptr(),
                             dim, s, e,
                         );
                     }
@@ -913,14 +939,15 @@ pub fn decoder_forward(
                 }
                 barrier.wait();
 
-                // Stage: down-projection with fused residual add (x += ffn @ down).
+                // Stage: down-projection with fused residual add (x += ffn @ down),
+                // INT4 group-quantized weights (R11-I).
                 {
                     let (s, e) = kernels::range_for(tid, nt, dim);
                     let x_scale = unsafe { *(scales_ptr as *const f32).add(3) };
                     unsafe {
-                        kernels::int8_matvec_range(
+                        kernels::int4_matvec_range(
                             x_ptr as *mut f32, ffn_int8_ptr as *const i8, x_scale,
-                            layer.down_int8.as_ptr(), layer.down_int8_scales.as_ptr(),
+                            layer.down_q4.as_ptr(), layer.down_q4_scales.as_ptr(),
                             Some(x_ptr as *const f32), intermediate, s, e,
                         );
                     }

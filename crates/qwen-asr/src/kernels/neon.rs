@@ -741,6 +741,117 @@ pub unsafe fn matvec_int8(
     }
 }
 
+/// SDOT the 4 packed-INT4 groups at `w` (64 bytes = 128 weights) against the
+/// 8 pre-loaded activation vectors, returning one int32 lane per group.
+/// Nibble layout matches `kernels::quantize_bf16_weights_to_int4`: low nibble
+/// = weight `j`, high nibble = weight `j + 16`, codes stored offset-by-8.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn int4_dot4_groups(
+    w: *const u8,
+    x: &[int8x16_t; 8],
+    mask: uint8x16_t,
+    off8: int8x16_t,
+) -> int32x4_t {
+    let mut acc = [vdupq_n_s32(0); 4];
+    for i in 0..4 {
+        let b = vld1q_u8(w.add(i * 16));
+        let lo = vsubq_s8(vreinterpretq_s8_u8(vandq_u8(b, mask)), off8);
+        let hi = vsubq_s8(vreinterpretq_s8_u8(vshrq_n_u8(b, 4)), off8);
+        acc[i] = sdot_s32(sdot_s32(acc[i], lo, x[2 * i]), hi, x[2 * i + 1]);
+    }
+    // Pairwise-add tree: lane g of the result = full sum of group g.
+    vpaddq_s32(vpaddq_s32(acc[0], acc[1]), vpaddq_s32(acc[2], acc[3]))
+}
+
+/// INT4 group-quantized matvec (R11-I): `y = W_q4 @ x_int8 * x_scale` with
+/// per-32-weight-group BF16 weight scales. `w_q4` packs two codes per byte and
+/// `w_scales_bf16` holds `in_dim / 32` BF16 scales per row (layout produced by
+/// `kernels::quantize_bf16_weights_to_int4`). Each group's integer dot is
+/// exact (SDOT); groups are scaled and accumulated in f32, 4 groups per
+/// iteration via a pairwise-add tree. Optionally adds bias (fused residual).
+///
+/// # Safety
+/// Uses NEON SDOT via inline asm. `in_dim` must be a multiple of 128 (all
+/// decode-path call sites are 1024 / 2048 / 3072).
+#[cfg(target_arch = "aarch64")]
+#[allow(clippy::too_many_arguments)] // hot kernel entry point; params mirror the INT8 ABI
+pub unsafe fn matvec_int4_g32(
+    y: &mut [f32], x_int8: *const i8, x_scale: f32,
+    w_q4: *const u8, w_scales_bf16: *const u16,
+    bias: Option<&[f32]>,
+    in_dim: usize, out_dim: usize,
+) {
+    debug_assert_eq!(in_dim % 128, 0);
+    let ngroups = in_dim / 32;
+    let row_bytes = in_dim / 2;
+    let mask = vdupq_n_u8(0x0F);
+    let off8 = vdupq_n_s8(8);
+
+    let mut o = 0;
+    // Paired rows share the activation loads.
+    while o + 1 < out_dim {
+        let w0 = w_q4.add(o * row_bytes);
+        let w1 = w_q4.add((o + 1) * row_bytes);
+        let s0 = w_scales_bf16.add(o * ngroups);
+        let s1 = w_scales_bf16.add((o + 1) * ngroups);
+        let mut accf0 = vdupq_n_f32(0.0);
+        let mut accf1 = vdupq_n_f32(0.0);
+        let mut g = 0;
+        while g + 4 <= ngroups {
+            let xb = x_int8.add(g * 32);
+            let x = [
+                vld1q_s8(xb), vld1q_s8(xb.add(16)),
+                vld1q_s8(xb.add(32)), vld1q_s8(xb.add(48)),
+                vld1q_s8(xb.add(64)), vld1q_s8(xb.add(80)),
+                vld1q_s8(xb.add(96)), vld1q_s8(xb.add(112)),
+            ];
+            let d0 = int4_dot4_groups(w0.add(g * 16), &x, mask, off8);
+            let d1 = int4_dot4_groups(w1.add(g * 16), &x, mask, off8);
+            let sc0 = vreinterpretq_f32_u32(vshll_n_u16(vld1_u16(s0.add(g)), 16));
+            let sc1 = vreinterpretq_f32_u32(vshll_n_u16(vld1_u16(s1.add(g)), 16));
+            accf0 = vfmaq_f32(accf0, vcvtq_f32_s32(d0), sc0);
+            accf1 = vfmaq_f32(accf1, vcvtq_f32_s32(d1), sc1);
+            g += 4;
+        }
+        let mut v0 = vaddvq_f32(accf0) * x_scale;
+        let mut v1 = vaddvq_f32(accf1) * x_scale;
+        if let Some(b) = bias {
+            v0 += b[o];
+            v1 += b[o + 1];
+        }
+        y[o] = v0;
+        y[o + 1] = v1;
+        o += 2;
+    }
+    // Odd tail row.
+    while o < out_dim {
+        let w0 = w_q4.add(o * row_bytes);
+        let s0 = w_scales_bf16.add(o * ngroups);
+        let mut accf0 = vdupq_n_f32(0.0);
+        let mut g = 0;
+        while g + 4 <= ngroups {
+            let xb = x_int8.add(g * 32);
+            let x = [
+                vld1q_s8(xb), vld1q_s8(xb.add(16)),
+                vld1q_s8(xb.add(32)), vld1q_s8(xb.add(48)),
+                vld1q_s8(xb.add(64)), vld1q_s8(xb.add(80)),
+                vld1q_s8(xb.add(96)), vld1q_s8(xb.add(112)),
+            ];
+            let d0 = int4_dot4_groups(w0.add(g * 16), &x, mask, off8);
+            let sc0 = vreinterpretq_f32_u32(vshll_n_u16(vld1_u16(s0.add(g)), 16));
+            accf0 = vfmaq_f32(accf0, vcvtq_f32_s32(d0), sc0);
+            g += 4;
+        }
+        let mut val = vaddvq_f32(accf0) * x_scale;
+        if let Some(b) = bias {
+            val += b[o];
+        }
+        y[o] = val;
+        o += 1;
+    }
+}
+
 /// INT8 argmax: find argmax of x @ W.T where W is int8-quantized.
 /// x_int8: quantized input `[in_dim]`, x_scale: input quantization scale
 /// W_int8: quantized weights `[out_dim * in_dim]`, w_scales: per-row scales `[out_dim]`
