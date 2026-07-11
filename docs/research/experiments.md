@@ -5655,6 +5655,70 @@ lm_head argmax) was fully reverted and only this log entry is kept. R11-C's
 "phase 2 skipped" rationale was wrong about the stages being microsecond-scale,
 but right about the outcome.
 
+### R11-E: fuse decoder prefill QKV and gate/up GEMMs — Rejected
+
+Motivation: multi-token prefill (`decoder.rs`, `decoder_prefill`) ran five
+separate pooled GEMMs per layer over the same input activation — wq/wk/wv
+(same `x_norm`) and gate/up (same `x_norm2`) — each with its own BF16→F32
+conversion, its own pool dispatch, and its own re-read of `x`. Fusing the
+same-input projections into one wider GEMM should cut 5 GEMMs+5 conversions to
+2+2 per layer and read `x` once per pass. Distinct from the rejected R9-E,
+which reused the *interleaved* `gate_up_fused` weights — this probe instead
+converts the **separate** gate/up (and q/k/v) weights into *adjacent row
+ranges* of one scratch region, so no interleaved post-processing is needed.
+
+Change tested:
+- QKV: convert wq, wk, wv into adjacent ranges of `bf16_scratch`
+  (`[q_rows; k_rows; v_rows] × dim`) via the existing
+  `bf16_to_f32_buf_parallel`, one `linear_nobias` pooled GEMM over
+  `out_dim = q_dim + 2*kv_dim` into a new `pref_qkv` buffer (`[seq, q|k|v]`
+  rows), then a per-row split-copy into the existing contiguous `pref_q/k/v`
+  (kept the split-copy — adapting the per-head norm / RoPE / attention kernels
+  to a strided `q_dim+2*kv_dim` row layout was not worth the risk for a
+  negligible copy).
+- gate/up: same adjacent-rows trick over `out_dim = 2*intermediate` into a new
+  `pref_gateup` buffer, then a new `swiglu_fused_rows` kernel reading gate/up
+  from the two contiguous halves of each row into `pref_gate`.
+- `bf16_scratch` grown to `max((q_dim+2*kv_dim)*dim, 2*intermediate*dim)`; new
+  `pref_qkv`/`pref_gateup` buffers added to `DecoderBuffers`. Forced aligner
+  routed to a new `decoder_prefill_no_fuse` (separate path preserved);
+  single-token decode untouched.
+
+Benchmark (`bench/run.sh --runs 5`, two back-to-back base/candidate pairs,
+median inference ms; base = HEAD binary):
+
+| Mode | Pair-1 base | Pair-1 cand | Pair-2 base | Pair-2 cand |
+|------|-------------|-------------|-------------|-------------|
+| offline   | 596 | 605 | 596 | 593 |
+| segmented | 598 | 604 | 598 | 603 |
+| streaming | 564 | 569 | 573 | 572 |
+
+3-mode average: pair-1 586.0 → 592.7 (**+1.1% slower**), pair-2 589.0 → 589.3
+(+0.05% slower) — no pair improves, aggregate 587.5 → 591.0 (+0.6% slower),
+well short of the +1.5% improvement bar. The phase the change actually touches,
+`decode_ms` (prefill runs inside decode), is flat within noise: offline base
+419/418 vs cand 422/415, segmented 421/419 vs 419/426, streaming 351/352 vs
+354/350 ms. Encoder is untouched, yet its `encode_ms` drifts 177–185 ms across
+runs — the machine noise floor dwarfs any prefill delta.
+
+Why it doesn't help: on the transcription workload prefill is a small fraction
+of runtime. Offline does one small prompt prefill then a long single-token
+decode loop (~419 ms decode vs ~10s of ms of prefill); segmented/streaming do
+one small prefill per segment/chunk. Fusing prefill's GEMMs — even correctly
+cutting 5 dispatches+conversions to 2 — bites on too little wall to register,
+and the added split-copy plus new buffers land it fractionally negative.
+
+Quality gates (all passed before rejection): 51 tests pass, zero warnings;
+bench WER lines `0.0270 / 0.0270 / 0.2973` in all four runs, confirming the
+fused wide-GEMM grouping is numerically safe. LibriSpeech was not re-run — a
+flat-to-negative result across both pairs makes the corpus gate moot.
+
+Decision: **Rejected.** No improvement on the 3-mode average in either pair
+(one pair mildly negative), `decode_ms` flat; prefill is too small a slice of
+this workload for GEMM fusion to matter. The Rust code (`pref_qkv`/
+`pref_gateup` buffers, `swiglu_fused_rows`, fused conversion/GEMM branches,
+`decoder_prefill_no_fuse`) was fully reverted and only this log entry is kept.
+
 ---
 
 ## Autoresearch Program Baseline Experiments
