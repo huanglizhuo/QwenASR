@@ -5578,6 +5578,85 @@ unchanged, transcripts identical.
 
 ---
 
+### R11-D: dynamic chunk scheduling in the fused decode region — Rejected
+
+Motivation: R11-C's phase 2 was skipped as "microsecond-scale stages", but that
+is only true of the dim-1024 norm/rope glue. The heavy per-token stages are not:
+the INT8 lm_head matvec+argmax streams ~155 MB of weights per generated token,
+and the per-layer QKV/O/gate_up/down INT8 matvecs stream ~15 MB per layer. With
+static even splits each such stage's wall is the E-core slice, so the R11-C
+work-stealing idea was retested *inside* the fused single-token decode
+`parallel_region`.
+
+Change tested:
+- Added `RegionBarrier::wait_and_reset(&self, counter: &AtomicUsize)` to
+  `kernels/pool.rs`: identical to `wait()` except the LAST arriver stores 0 into
+  `counter` (Relaxed) immediately before its `generation.fetch_add(Release)` —
+  the Release publish of the gate makes the reset visible to all waiters before
+  they proceed, giving race-free per-stage counter reuse across stages and
+  tokens without epoch arithmetic (`nt <= 1` resets inline).
+- In the fused decode region (`decoder.rs`, aarch64): a `StageCounters` struct
+  (4 × `AtomicUsize`, one per heavy stage) allocated per decode call and
+  captured by the region closure. The barrier *preceding* each heavy stage
+  became `wait_and_reset(&counters.<stage>)`; the stage itself became a
+  `fetch_add(1, Relaxed)` grab loop over fixed-size row-block items: QKV
+  256 rows (16 items over q|k|v's 4096 rows), gate_up+SwiGLU 128 rows (24 items
+  over intermediate 3072), O-proj and down-proj 64 rows (16 items over
+  dim 1024). Small stages (norms, rope, attention scan, quantize glue) stayed
+  static.
+- `argmax_matvec_int8` (lm_head): static `parallel_for` split replaced with
+  dynamic 2048-row items (75 items over the 151936-row vocab), per-thread
+  running argmax with an explicit lowest-index tie-break at both reduction
+  levels — exactly the tie-break the ascending static scan had implicitly — so
+  token selection is scheduling-independent.
+- All block sizes even and boundaries dependent only on the output dimension,
+  so every row takes the same paired-row kernel path and per-row math (integer
+  dot + one per-row scale multiply) is unchanged → bit-identical output by
+  construction.
+
+Benchmark (`bench/run.sh --runs 5`, two back-to-back base/candidate pairs,
+median inference ms; base = HEAD binary):
+
+| Mode | Pair-1 base | Pair-1 cand | Pair-2 base | Pair-2 cand |
+|------|-------------|-------------|-------------|-------------|
+| offline   | 601 | 596 | 601 | 601 |
+| segmented | 594 | 601 | 598 | 605 |
+| streaming | 591 | 572 | 564 | 573 |
+
+3-mode average: pair-1 595.3 → 589.7 (−0.9%), pair-2 587.7 → 593.0 (**+0.9%**)
+— the sign flips between pairs and the aggregate is dead even (591.5 vs
+591.3 ms, −0.03%). Per-mode minima also favor the base slightly (offline 590 vs
+592, segmented 591 vs 591, streaming 559 vs 562). Offline `decode_ms` medians
+are flat (base 424/424 vs cand 421/424 ms), and an interleaved 5× spot check of
+offline decoding time landed base ~418 ms vs cand ~426 ms — no decode win
+anywhere, well inside the ±1.5% noise floor.
+
+Why it doesn't help: unlike the compute-bound encoder/prefill GEMMs where R11-C
+won 5–7%, the single-token decode phase is **memory-bandwidth-bound** — each
+token streams ~575 MB of INT8 weights (28 × ~15 MB layers + 155 MB lm_head)
+through a shared DRAM bus at an effective ~115 GB/s. P- and E-cores are all
+stalled on the same bus, so a static E-core slice is not meaningfully slower
+than a P-core slice and there is no straggler tax for work-stealing to
+reclaim; the atomics and lost per-thread row locality just add a little
+overhead on the other side of the ledger.
+
+Quality gates (all passed before rejection): 51 tests pass, zero warnings;
+bench WER lines `0.0270 / 0.0270 / 0.2973` in all four runs; transcripts on
+`bench/samples/audio.wav` verified **byte-identical** to the base binary in all
+three modes (offline / -S 30 / --stream), as expected from the unchanged
+per-row math and preserved argmax tie-breaking. LibriSpeech was not re-run —
+bit-identical output on the probe plus full rejection makes the corpus gate
+moot.
+
+Decision: **Rejected.** No improvement on the 3-mode average in either pair
+(one pair mildly negative), decode_ms flat; the phase is bandwidth-bound, not
+straggler-bound. The Rust code (barrier primitive, stage counters, dynamic
+lm_head argmax) was fully reverted and only this log entry is kept. R11-C's
+"phase 2 skipped" rationale was wrong about the stages being microsecond-scale,
+but right about the outcome.
+
+---
+
 ## Autoresearch Program Baseline Experiments
 
 These experiments come from the initial `codex-auto-research` autoresearch program baseline (`programs.md`). They are structural buffer-reuse optimizations that predate the numbered round structure above.
