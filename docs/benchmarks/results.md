@@ -35,37 +35,48 @@ Results are written to `bench/results/current/`.
 
 ### Latest Results
 
-> Generated on: 2026-07-08
-> Commit: `aea0cc2`
+> Generated on: 2026-07-11
+> Commit: `d241af9b`
 > Hardware: Apple M5 Pro, 48 GB RAM
-> Threads: default CLI thread policy
+> Threads: default CLI thread policy (12 on this machine since R11-G)
 
 | Mode | Median inference ms | Mean ms | Best ms | Realtime factor | WER (sample) |
 |---|---:|---:|---:|---:|---:|
-| offline | 800 | 810.1 | 784 | 35.25× | 0.0270 |
-| segmented | 794 | 799.1 | 783 | 35.52× | 0.0270 |
-| streaming | 773 | 772.9 | 759 | 36.48× | 0.2973 |
+| offline | 563 | 568.8 | 557 | 50.09× | 0.0000 |
+| segmented | 572 | 570.4 | 559 | 49.30× | 0.0000 |
+| streaming | 544 | 544.3 | 531 | 51.89× | 0.2973 |
 
 #### Wall-clock timing
 
 | Mode | Median wall ms | Mean ms | Best ms | Wall realtime factor |
 |---|---:|---:|---:|---:|
-| offline | 1052.4 | 1108.4 | 1038.9 | 26.80× |
-| segmented | 1045.6 | 1052.9 | 1033.7 | 26.97× |
-| streaming | 1025.6 | 1025.2 | 1012.4 | 27.50× |
+| offline | 828.5 | 900.0 | 822.0 | 34.04× |
+| segmented | 839.0 | 838.0 | 822.6 | 33.61× |
+| streaming | 810.5 | 810.8 | 799.0 | 34.79× |
 
 #### Note on sample WER
 
-Offline and segmented now emit the full 46-token transcript for the bundled 28.2 s clip (`WER=0.0270`). Earlier speed rows around `437-656 ms` used truncating paths, including a punctuation/token-count early stop or long-audio cap, and are not comparable as full-transcript results. Streaming still uses a lower-latency partial path on this sample (`WER=0.2973`).
+Offline and segmented emit the full 46-token transcript for the bundled 28.2 s clip; since the Round 11 INT4 decode-FFN change (`6ed39526`) it matches the reference exactly (`WER=0.0000` — the prior `0.0270` was one spurious comma). Earlier speed rows around `437-656 ms` used truncating paths, including a punctuation/token-count early stop or long-audio cap, and are not comparable as full-transcript results. Streaming still uses a lower-latency partial path on this sample (`WER=0.2973`).
 
 #### Kernel profile (offline)
 
-When run with `--profile`, the offline run reports per-kernel timings. The latest profile will be inserted here after regeneration.
+Per-kernel timings from a single `--profile` offline run at `d241af9b` (inference buckets only; load/audio buckets excluded):
+
+| Kernel | Total ms | Calls |
+|---|---:|---:|
+| sgemm | 231.8 | 335 |
+| bf16_matvec (incl. INT8/INT4 decode matvecs) | 170.0 | 196 |
+| conv2d_op | 63.4 | 87 |
+| attention_causal | 26.7 | 28 |
+| attention_bidir | 15.3 | 18 |
+| gelu | 6.7 | 106 |
+| rms_norm | 5.1 | 2678 |
 
 ### Historical context
 
-- Initial Rust port (`bf52daf`): 1,670 ms offline / 16.88× RTF (latest cross-implementation run, `--threads 15`)
-- Current implementation (`aea0cc2`): 800 ms offline / 35.25× RTF (dedicated speed benchmark), 878 ms offline / 32.10× RTF (latest cross-implementation run, `--threads 15`)
+- Initial Rust port (`bf52daf`): 1,670 ms offline / 16.88× RTF (cross-implementation run, `--threads 15`)
+- Round 10 (`aea0cc2`): 800 ms offline / 35.25× RTF (dedicated speed benchmark)
+- Round 11 (`d241af9b`): 563 ms offline / 50.09× RTF — dynamic work-stealing scheduling, 12-thread default, INT4 decode FFN weights (see `experiments.md` Round 11)
 
 See [`comparison.md`](./comparison.md) for the latest cross-implementation numbers and [`experiments.md`](../research/experiments.md) for the full optimization diaries.
 
@@ -126,27 +137,28 @@ python3 librispeech-wer-bench/librispeech_wer.py \
 
 ### Latest Results
 
-> Generated on: 2026-07-07
+> Generated on: 2026-07-11
+> Commit: `d241af9b`
 > Dataset: LibriSpeech `dev-clean-2`
 > Items evaluated: 100
 > Mode: offline
-> Artifact: `bench/wer-results/20260707T144417Z/summary.json`
-
-The later `aea0cc2` long-audio parallel decode work recorded this 100-file gate as unchanged in `docs/research/experiments.md`.
+> Artifact: `librispeech-wer-bench/results-100/current-offline-100/summary.json`
 
 | Metric | Value |
 |---|---:|
 | Corpus WER | 0.0357 |
-| Macro WER | 0.0397 |
-| Corpus CER | 0.0122 |
-| Macro CER | 0.0133 |
+| Macro WER | 0.0388 |
+| Corpus CER | 0.0142 |
+| Macro CER | 0.0147 |
 | Failed utterances | 0 / 100 |
 
 ### Historical context
 
 - Early baseline (`step0-current`, `12663c5`): corpus WER 0.1101
 - After WER recovery tuning: corpus WER 0.0387
-- Latest target: keep corpus WER ≤ 0.04 while improving speed
+- Rounds 10 and 11 pre-INT4 (`963a4041`): corpus WER 0.0350
+- Round 11 INT4 decode FFN (`6ed39526`): corpus WER 0.0357 — the accepted quantization cost, inside the ≤ 0.0358 gate (see `experiments.md` R11-I)
+- Standing target: keep corpus WER ≤ 0.04 while improving speed
 
 See [`experiments.md`](../research/experiments.md) for the full tuning diary.
 

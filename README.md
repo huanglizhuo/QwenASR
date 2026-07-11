@@ -8,22 +8,22 @@ Supports 0.6B and 1.7B models with offline, segmented, streaming, live capture, 
 
 ## Performance
 
-On an Apple M5 Pro, qwen-asr transcribes the standard 28.2-second benchmark clip in **800 ms** in the dedicated local benchmark, about **35× faster than realtime**, while producing the full transcript. In the latest full cross-implementation comparison, qwen-asr is faster than the upstream C implementation and the second-state MLX GPU baseline; `mlx-audio` is faster on median inference time in this run.
+On an Apple M5 Pro, qwen-asr transcribes the standard 28.2-second benchmark clip in **563 ms** in the dedicated local benchmark — about **50× faster than realtime** — while producing the full transcript. In the latest full cross-implementation comparison, the pure-CPU qwen-asr is the **fastest implementation overall**, ahead of both GPU baselines (`mlx-audio` MLX and second-state MLX) and 2.5× faster than the upstream C implementation.
 
 | Implementation | Median inference | Realtime factor |
 |---|---:|---:|
-| mlx-audio Python MLX | 693 ms | 40.66× |
-| qwen-asr (latest) | 878 ms | 32.10× |
-| second-state/qwen3_asr_rs MLX GPU | 1,397 ms | 20.16× |
-| pure C upstream | 1,660 ms | 16.97× |
-| qwen-asr (first Rust port) | 1,670 ms | 16.88× |
+| **qwen-asr (latest)** | **658 ms** | **42.86×** |
+| mlx-audio Python MLX | 687 ms | 40.97× |
+| second-state/qwen3_asr_rs MLX GPU | 1,388 ms | 20.29× |
+| qwen-asr (first Rust port) | 1,649 ms | 17.10× |
+| pure C upstream | 1,662 ms | 16.94× |
 
 <p float="left">
   <img src="docs/benchmarks/charts/benchmark-unified-latency.png" width="48%" alt="Latency comparison" />
   <img src="docs/benchmarks/charts/benchmark-unified-rtf.png" width="48%" alt="Realtime factor comparison" />
 </p>
 
-> Benchmarked on the same 28.2 s sample with 10 runs each. The table shows the latest full cross-implementation run (`bench/compare-results/20260708T055239Z`) at qwen-asr `aea0cc2`. Earlier `a7470a2` comparison rows were faster because they stopped after 27 tokens and did not produce the full transcript. See [`docs/benchmarks/comparison.md`](docs/benchmarks/comparison.md) for full details and reproduction steps.
+> Benchmarked on the same 28.2 s sample with 10 runs each. The table shows the latest full cross-implementation run (`bench/compare-results/20260711T145612Z`) at qwen-asr `d241af9b` with `--threads 15` for every implementation; the dedicated speed benchmark (binary default threads) reports 563 ms / 50.09×. All rows produce the full transcript. See [`docs/benchmarks/comparison.md`](docs/benchmarks/comparison.md) for full details and reproduction steps.
 
 ## Documentation
 

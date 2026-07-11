@@ -3,8 +3,8 @@
 ## Methodology
 
 - Offline benchmark on the same input WAV and model across five implementations.
-- qwen-asr first: `bf52daf`.
-- qwen-asr latest: `aea0cc2`.
+- qwen-asr first: `bf52dafe`.
+- qwen-asr latest: `d241af9b`.
 - Upstream C: `antirez/qwen-asr`.
 - GPU baselines: `second-state/qwen3_asr_rs` MLX and `mlx-audio` Python MLX.
 - Implementations are benchmarked sequentially, not in parallel; each round is a standalone process invocation.
@@ -31,22 +31,22 @@
 
 | Implementation | Commit | Median inference ms | Mean ms | Best ms | RTF |
 |---|---:|---:|---:|---:|---:|
-| mlx-audio Python MLX | `0.4.4` | `693` | `753` | `679` | `40.66x` |
-| qwen-asr (latest) | `aea0cc2` | `878` | `1,475` | `846` | `32.10x` |
-| second-state MLX GPU | `0226270` | `1,397` | `1,515` | `1,377` | `20.16x` |
-| pure C upstream | `b00b789` | `1,660` | `1,668` | `1,645` | `16.97x` |
-| qwen-asr (first) | `bf52daf` | `1,670` | `1,783` | `1,656` | `16.88x` |
+| qwen-asr (latest) | `d241af9b` | `658` | `668` | `629` | `42.86x` |
+| mlx-audio Python MLX | `0.4.5` | `687` | `750` | `682` | `40.97x` |
+| second-state MLX GPU | `0226270` | `1,388` | `1,466` | `1,378` | `20.29x` |
+| qwen-asr (first) | `bf52dafe` | `1,649` | `1,651` | `1,630` | `17.10x` |
+| pure C upstream | `b00b789` | `1,662` | `1,661` | `1,637` | `16.94x` |
 
 <details>
 <summary>Wall-clock timing</summary>
 
 | Implementation | Commit | Median wall-clock ms | Mean ms | Best ms | Wall-clock RTF |
 |---|---:|---:|---:|---:|---:|
-| mlx-audio Python MLX | `0.4.4` | `1,745` | `1,859` | `1,698` | `16.14x` |
-| qwen-asr (latest) | `aea0cc2` | `1,175` | `1,774` | `1,106` | `24.01x` |
-| second-state MLX GPU | `0226270` | `1,599` | `1,779` | `1,576` | `17.61x` |
-| pure C upstream | `b00b789` | `1,938` | `1,950` | `1,922` | `14.53x` |
-| qwen-asr (first) | `bf52daf` | `2,020` | `2,354` | `2,004` | `13.96x` |
+| qwen-asr (latest) | `d241af9b` | `932` | `976` | `901` | `30.25x` |
+| mlx-audio Python MLX | `0.4.5` | `1,718` | `1,829` | `1,701` | `16.39x` |
+| second-state MLX GPU | `0226270` | `1,593` | `1,736` | `1,579` | `17.67x` |
+| qwen-asr (first) | `bf52dafe` | `2,005` | `2,040` | `1,985` | `14.06x` |
+| pure C upstream | `b00b789` | `1,941` | `1,942` | `1,915` | `14.51x` |
 
 </details>
 
@@ -56,8 +56,8 @@
 
 ## Findings
 
-- qwen-asr latest `aea0cc2` is `1.90x` the speed of qwen-asr first `bf52daf`.
-- qwen-asr latest `aea0cc2` is `1.89x` faster than the upstream pure C implementation.
-- qwen-asr latest `aea0cc2` is `1.59x` faster than second-state MLX GPU by inference latency.
-- qwen-asr latest `aea0cc2` is `0.79x` faster than mlx-audio Python MLX by inference latency.
+- qwen-asr latest `d241af9b` is `2.51x` the speed of qwen-asr first `bf52dafe`.
+- qwen-asr latest `d241af9b` is `2.53x` faster than the upstream pure C implementation.
+- qwen-asr latest `d241af9b` is `2.11x` faster than second-state MLX GPU by inference latency.
+- qwen-asr latest `d241af9b` is `1.04x` faster than mlx-audio Python MLX by inference latency.
 

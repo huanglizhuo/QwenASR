@@ -1,6 +1,6 @@
 # QwenASR Performance Optimizations
 
-This document catalogs the performance optimizations implemented in the pure-Rust QwenASR CPU inference engine. Current HEAD reaches 64+× realtime on Apple M5 for offline transcription of the 28.2 s benchmark sample.
+This document catalogs the performance optimizations implemented in the pure-Rust QwenASR CPU inference engine. Current HEAD (`d241af9b`) reaches 50× realtime on Apple M5 Pro for full-transcript offline transcription of the 28.2 s benchmark sample (563 ms median inference) — the fastest implementation in the cross-comparison, ahead of both MLX GPU baselines.
 
 ## 1. Memory Traffic & Allocation Reduction
 
