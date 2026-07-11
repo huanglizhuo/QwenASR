@@ -5719,6 +5719,89 @@ this workload for GEMM fusion to matter. The Rust code (`pref_qkv`/
 `pref_gateup` buffers, `swiglu_fused_rows`, fused conversion/GEMM branches,
 `decoder_prefill_no_fuse`) was fully reverted and only this log entry is kept.
 
+### R11-F: bound-screened exact lm_head argmax (INT4 prescreen + INT8 rescan) — Rejected
+
+Motivation: R11-D established the single-token decode phase is DRAM-bandwidth
+bound (~575 MB streamed per token at ~115 GB/s), and the lm_head INT8
+matvec+argmax over 151936 vocab rows × 1024 dims (~155 MB per generated token)
+is the single largest weight stream (~27% of per-token traffic). Only reading
+fewer bytes can speed it up. This probe screens the vocabulary with a packed
+INT4 approximation (half the bytes) plus a *sound* per-row bound, so the exact
+INT8 rescan touches only a small candidate set — while returning a
+**bit-identical** argmax.
+
+Design (exact-screening, not approximation):
+- Load time (`decoder.rs`): from the existing per-row-scaled INT8 lm_head, build
+  a group-wise INT4 table (G=32 → 32 groups/row) with an **integer** per-group
+  step `step_ig = max(1, round(max_j|w8_ij|/7))`, codes `c_ij ∈ [-8,7]`, plus
+  per-group `resid D_ig = max_j|w8_ij − c_ij·step_ig|` (u8). Packed via the
+  thread pool: +77.8 MB codes, +4.9 MB steps, +4.9 MB resid (~87.6 MB, ~7.1 GB
+  RSS total).
+- Per token, two passes (`kernels/neon.rs`, `mod.rs`): pass 1 unpacks nibbles
+  (NEON shifts) and SDOTs deinterleaved even/odd input halves to get the exact
+  integer approx dot `A_i = Σ_g step_ig·(Σ_j x8_j·c_ij)` and integer bound
+  `B_i = Σ_g S_g·D_ig` (`S_g = Σ_j∈g|x8_j|`), giving `A_i−B_i ≤ dot_i ≤ A_i+B_i`;
+  pass 2 rescans only `R = { i : scoreHigh_i ≥ L }` (L = max scoreLow) with the
+  exact INT8 kernel and the original ascending strict-`>` tie-break.
+- Bit-identity invariant: base score is `fl(fl(fl(dot_i)·x_scale)·s8_i)`. Because
+  i64→f32 conversion and multiply-by-positive are both monotonic, the float
+  bounds satisfy `scoreLow_i ≤ score_i ≤ scoreHigh_i` exactly; every row
+  attaining the true max has `scoreHigh ≥ score ≥ L`, so it lies in R, and the
+  rescan reproduces the lowest-index winner. Keeping the step **integer** makes
+  A_i and B_i exact integers, so there is no float rounding leak in the bound.
+
+Rescan-set statistics (offline, 47 decode tokens, `QASR_LM_SCREEN_STATS`):
+median R = **192 (0.13%)**, avg R = **4234 (2.79%)**, p90 ≈ 9928 (6.5%),
+max R = 74104 (**48.8%**); only 5/47 tokens exceed 10k rows. Most tokens are
+extremely cheap to screen, but a handful of ambiguous/flat-distribution tokens
+blow the candidate set up to near half the vocabulary. Traffic per token
+(average): pass 1 ~87.6 MB + pass 2 ~4.3 MB ≈ **92 MB vs base 155 MB** (~40%
+stage cut); but the outlier tokens read INT4 + nearly-full INT8 (~160 MB —
+*worse* than base).
+
+Benchmark (`bench/run.sh --runs 5`, two back-to-back base/candidate pairs,
+median inference ms; base = HEAD binary):
+
+| Mode | Pair-1 base | Pair-1 cand | Pair-2 base | Pair-2 cand |
+|------|-------------|-------------|-------------|-------------|
+| offline   | 598 | 601 | 603 | 608 |
+| segmented | 603 | 606 | 597 | 602 |
+| streaming | 570 | 575 | 573 | 578 |
+
+3-mode average: pair-1 590.3 → 594.0 (**+0.6% slower**), pair-2 591.0 → 596.0
+(**+0.8% slower**) — *both* pairs regress, none reach the +1.5% bar.
+
+Why it doesn't help: the ~40%-average byte cut did not convert to wall time.
+Unlike the pure INT8 stream, the INT4 pass does the *same* 1024 SDOT MACs per
+row **plus** per-byte nibble unpacking (shift/reinterpret), per-group bound
+arithmetic (32 mul-add/row), a 600 KB scoreHigh write+read, and an input
+deinterleave — so the pass is more ALU-dense per byte and the phase stops being
+purely bandwidth-limited, eating the savings. On top of that, the 5/47 outlier
+tokens with R up to 48.8% read INT4 *plus* an almost-full INT8 rescan
+(> base 155 MB), dragging the average the wrong way. The clean ~11% projected
+per-token traffic reduction is a best case that the compute overhead and the
+heavy-tail of R never realize.
+
+Quality gates (all passed before rejection): 51 tests + 3 doctests pass, zero
+warnings; bench WER lines `0.0270 / 0.0270 / 0.2973` in all four runs;
+transcripts on `bench/samples/audio.wav` verified **byte-identical** to the base
+binary in all three modes (offline / -S 30 / --stream), confirming the sound
+screening + tie-break invariant. LibriSpeech was not re-run — bit-identical
+output on the probe plus a fully negative result makes the corpus gate moot.
+
+Decision: **Rejected.** Both pairs regress ~0.6–0.8%; the bandwidth saved by
+INT4 is offset by the unpack/bound ALU overhead (the pass is no longer
+bandwidth-bound) and by the heavy-tailed rescan set. The Rust code
+(`pack_lm_head_int4*`, `lm_screen_int4_range`, `lm_argmax_exact_filtered_range`,
+`screened_argmax_int8_int4`, the three `lm_head_int4*` Decoder fields, and the
+`dump_lm_screen_stats` instrumentation) was fully reverted and only this log
+entry is kept. The soundness construction is correct and reusable, but INT4
+screening of the lm_head is not a decode-speed win on this machine. Future
+angle: the median-R = 192 result suggests a *cheaper* screen (e.g. a coarse
+INT8-magnitude upper-bound pass that reads far less than 87 MB, or caching the
+prior token's top-K rows) could still exploit the tiny typical candidate set
+without paying a full second matvec's worth of ALU.
+
 ---
 
 ## Autoresearch Program Baseline Experiments
