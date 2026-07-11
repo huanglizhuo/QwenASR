@@ -5378,15 +5378,26 @@ Decision: **Kept.**
 
 ## Speed Improvement Experiments — Round 11
 
-Goal: after Round 10 made the multi-token GEMM phase pool-parallel and raised
-the default thread count to 10 (P + min(E, P) on M5 Pro), revisit the encoder
-conv-stem — the one remaining multi-token phase that is parallelized *inside*
-each kernel rather than across its independent units of work.
+Goal: a +20% end-to-end speed target on top of Round 10, holding WER
+essentially unchanged and all modes/features intact. Ten probes were run
+(R11-A through R11-I, including H1/H2); three were kept.
 
 Baseline reference (`round11-baseline`, M5 Pro 5P/10E, default 10 threads):
 offline `639 ms`, segmented -S30 `637 ms`, streaming `600 ms`; profile buckets
 encode `194 ms`, `conv2d_op 72.8 ms`. Bench WER `0.0270` offline/segmented,
 `0.2973` streaming.
+
+Round outcome (see the closing summary after R11-I for details): kept
+R11-C (dynamic work-stealing scheduling, −5.4–6.8%), R11-G (default threads
+10 → 12, −2.9%), and R11-I (INT4 decode FFN weights, −2.1%) — cumulatively
+**~10–12%** (final confirmation run `round11-final`: offline `572 ms`,
+segmented `559 ms`, streaming `549 ms`). The headline negative finding of the
+round is a measured hardware wall: **the single-token decode phase streams
+~575 MB of weights per generated token at an effective ~115 GB/s and is
+DRAM-bandwidth saturated** (established by R11-D, corroborated by R11-F and
+R11-I). Scheduling, fusion, and locality changes are free-lunch-less in that
+phase; only byte reduction moves it, and R11-I consumed essentially the whole
+WER budget doing so.
 
 ### R11-A: parallelize encoder conv-stem chunks — Rejected
 
@@ -6011,6 +6022,37 @@ Tier 2 (also INT4-quantizing Q/K/V/O, a further ~72 MB/token) was **not
 attempted**: the protocol required Tier 1 to pass both gates *with margin*,
 and the WER gate passed with essentially none — the remaining WER budget does
 not cover quantizing the attention projections.
+
+### Round 11 summary and where the remaining headroom is
+
+Kept: R11-C `cc7f49d4` (dynamic work-stealing chunks, −5.4–6.8%,
+bit-identical), R11-G `963a4041` (default threads 10 → 12 via
+`P + min(E, P + (E−P)/2)`, −2.9%, bit-identical), R11-I `6ed39526` (INT4
+decode FFN weights, −2.1%, LibriSpeech corpus WER 0.0350 → 0.0357). Final
+confirmation (`round11-final`, runs=5): offline `572 ms` / segmented `559 ms`
+/ streaming `549 ms` — **~10–12% cumulative** against the round baseline,
+short of the +20% target.
+
+Rejected with measurements (all reverted, entries above): conv-chunk
+parallelism (A), convert-into-GEMM fusion (B), decode-region dynamic
+scheduling (D), prefill QKV/gate-up fusion (E), bound-screened lm_head (F),
+GEMM item-size retune (H1), direct NEON conv1 (H2).
+
+The binding constraint is now physical: the single-token decode phase streams
+~575 MB/token at ~115 GB/s effective — near DRAM saturation on M5 Pro
+(R11-D). The two known routes to the remaining ~8–10%:
+
+1. **Buy back WER headroom, then quantize further.** R11-I's absmax group
+   scales left the WER gate with a 0.0001 margin. MSE-optimal group scales or
+   AWQ-style activation-aware equalization should recover most of the
+   0.0350 → 0.0357 drift; with margin restored, Tier 2 (Q/K/V/O INT4,
+   ~72 MB/token) and possibly a plain-INT4 lm_head (~77 MB/token, argmax
+   sensitivity permitting) become attemptable — each worth roughly
+   another 1.5–2%.
+2. **Speculative / multi-token decoding.** Amortizing the weight stream over
+   K drafted-then-verified tokens is the only known way through (rather than
+   under) the bandwidth wall; it is an architectural change measured in weeks,
+   not a probe.
 
 Decision: **KEPT** (Tier 1, FFN only). Decode weights per layer are now INT8
 attention (Q/K/V/O, per-row scales) + INT4 FFN (G=32, BF16 group scales);
