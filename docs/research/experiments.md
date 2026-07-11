@@ -5804,6 +5804,72 @@ without paying a full second matvec's worth of ALU.
 
 ---
 
+### R11-G: default thread count raised to include more E-cores — KEPT
+
+Motivation: R11-C's dynamic work-stealing chunks (`parallel_for_dynamic`) changed
+the cost/benefit of extra E-cores. Before R11-C every parallel op waited on the
+slowest (E-core) fixed slice, so adding E-cores past `P + min(E, P)` regressed —
+the extra cores straggled. With work-stealing the extra E-cores now drain items
+proportionally instead of owning a fixed slice, so they become net-positive up to
+the point of oversubscribing the P+E cores against the process's auxiliary/OS
+threads. The old default (`P + min(E, P) = 10` on M5 Pro) was tuned for the
+pre-R11-C static-split world; re-sweeping the thread count in the dynamic-schedule
+era should find a higher optimum.
+
+Sweep (M5 Pro 5P/10E, offline single-run inference ms, no `-t` = default 10):
+
+| threads | offline ms | note |
+|---------|-----------|------|
+| t5  | 707–726 | P-cores only (old-old default) |
+| t8  | 612–622 | |
+| t10 | 590–607 | current default `P + min(E, P)` |
+| t12 | 582–589 | **new optimum** |
+| t14 | 606–608 | regression (oversubscription begins) |
+| t15 | 657–692 | bad |
+
+Full 3-mode bench (`bench/run.sh --runs 5`, median inference ms):
+t12 = 589/589/551 (avg 576.3) vs t10 = 596/600/583 (avg 593.0) vs
+t13 = 594/598/561 (avg 584.3). t12 wins all three modes, **−2.8% avg vs t10**.
+The cliff at t14+ is the process's auxiliary threads + OS contending once every
+P+E core is claimed by a kernel worker.
+
+Change (`kernels/pool.rs`): `get_default_threads()` formula
+`P + min(E, P)` → **`P + min(E, P + (E − P) / 2)`** (integer division), factored
+into a unit-tested pure helper `default_threads_formula(p, e)`:
+
+- M5 Pro 5P/10E: `5 + min(10, 5 + (10 − 5)/2)` = `5 + min(10, 7)` = **12**.
+- `E <= P`: reduces exactly to the old `P + min(E, P)` (= `P + E`), so machines
+  with no sweep data (and where the old formula already used all/most cores) are
+  untouched. The `E − P` subtraction is guarded by an explicit branch so it can
+  never underflow the unsigned type.
+- Never exceeds `P + E` (each branch caps the E-core term at `E`).
+- `MAX_THREADS = 16` clamp unchanged.
+
+Validation: `cargo test --release` all pass (13 in the pool module incl. the new
+`default_threads_formula_matches_spec`), zero warnings; binary auto-picks 12
+(stderr `Optimizations: … | 12 threads | aarch64`, base binary showed 10);
+transcripts on `bench/samples/audio.wav` **byte-identical** to the HEAD base
+binary in all three modes (R11-C fixed every work-item boundary independent of
+`nt`, so raising the thread count cannot change the math — confirmed by the
+equality check). Back-to-back pair (`--runs 5`, median inference ms):
+
+| Mode | base (t10) | cand (t12) | Δ |
+|------|-----------|-----------|-----|
+| offline   | 601 | 581 | −3.3% |
+| segmented | 603 | 588 | −2.5% |
+| streaming | 571 | 555 | −2.8% |
+| **avg**   | **591.7** | **574.7** | **−2.87%** |
+
+WER lines `0.0270 / 0.0270 / 0.2973` in both runs. Candidate reproduces the
+sweep's ~t12 numbers.
+
+Decision: **Kept.** The default rises from 10 to 12 threads on M5 Pro, −2.87%
+3-mode average with WER and transcripts unchanged. Doc comment states the
+12-thread optimum is validated on M5 Pro (5P/10E) only and that t14+
+oversubscribes.
+
+---
+
 ## Autoresearch Program Baseline Experiments
 
 These experiments come from the initial `codex-auto-research` autoresearch program baseline (`programs.md`). They are structural buffer-reuse optimizations that predate the numbered round structure above.

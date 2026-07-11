@@ -172,17 +172,28 @@ fn sysctl_uint(name: &[u8]) -> Option<usize> {
 /// Default kernel thread count when the user passes no `-t N`.
 ///
 /// On Apple Silicon this reads the P-core count (`hw.perflevel0.physicalcpu`)
-/// and E-core count (`hw.perflevel1.physicalcpu`) and returns `P + min(E, P)`:
-/// all performance cores plus up to an equal number of efficiency cores.
+/// and E-core count (`hw.perflevel1.physicalcpu`) and returns
+/// `P + min(E, P + (E - P) / 2)` (integer division): all performance cores plus
+/// a bounded slice of the efficiency cores. When `E <= P` this reduces exactly
+/// to the older `P + min(E, P)` (= `P + E`), so machines where we have no sweep
+/// data — and where the old formula already used all/most cores — are left
+/// untouched. When `E > P` it adds P E-cores plus half of the surplus:
+/// e.g. M5 Pro 5P/10E → `5 + min(10, 5 + (10 - 5) / 2)` = `5 + min(10, 7)` = 12.
+/// The result never exceeds `P + E` (each branch caps the E-core term at `E`).
 ///
 /// Historically this returned P-cores only, on the assumption that efficiency
-/// cores always hurt (extra dispatch + memory-bus contention). That is no
-/// longer true: once the multi-token encoder/prefill GEMM phase became
-/// pool-parallel (round-10 `sgemm_nt_pooled`), the extra cores have real GEMM
-/// work to do, and on M5 Pro (5P/10E) `P + min(E, P) = 10` threads beats the
-/// 5-P-core default across offline/segmented/streaming with WER unchanged.
-/// Capping the E-core contribution at `P` keeps us short of the over-subscribed
-/// regime (all cores) that regressed in the same sweep.
+/// cores always hurt (extra dispatch + memory-bus contention). Round 10 made
+/// the multi-token encoder/prefill GEMM phase pool-parallel (`sgemm_nt_pooled`),
+/// so `P + min(E, P) = 10` threads then beat the 5-P-core default. Round 11's
+/// dynamic work-stealing chunks (`parallel_for_dynamic`) went further: extra
+/// E-cores now steal work proportionally instead of straggling on a fixed even
+/// slice, which made *more* E-cores profitable. An M5 Pro sweep (t5..t15) put
+/// the optimum at 12 threads (t12 −2.8% 3-mode avg vs the t10 default, WER
+/// unchanged); t14+ oversubscribes the P+E cores against the process's
+/// auxiliary/OS threads and regresses. Hence the new formula lands on 12 here.
+/// NOTE: this 12-thread optimum is validated on M5 Pro (5P/10E) only; the shape
+/// of the curve (best just below all-cores, cliff at t14+) is the machine-
+/// specific part.
 ///
 /// Falls back to the total CPU count on non-macOS or when the perflevel
 /// sysctls are unavailable (e.g. Intel Macs), matching the previous behavior.
@@ -192,10 +203,20 @@ pub fn get_default_threads() -> usize {
     {
         if let Some(p) = sysctl_uint(b"hw.perflevel0.physicalcpu\0") {
             let e = sysctl_uint(b"hw.perflevel1.physicalcpu\0").unwrap_or(0);
-            return (p + e.min(p)).clamp(1, MAX_THREADS);
+            return default_threads_formula(p, e).clamp(1, MAX_THREADS);
         }
     }
     get_num_cpus().clamp(1, MAX_THREADS)
+}
+
+/// `P + min(E, P + (E - P) / 2)` (integer division), computed with an explicit
+/// branch so the `E - P` subtraction can never underflow the unsigned type.
+///   E <= P  -> extra = E            -> P + E   (== old `P + min(E, P)`)
+///   E >  P  -> extra = P + (E-P)/2  (always <= E, so result <= P + E)
+#[inline]
+fn default_threads_formula(p: usize, e: usize) -> usize {
+    let extra = if e <= p { e } else { (p + (e - p) / 2).min(e) };
+    p + extra
 }
 
 /// Run a closure in parallel using the persistent thread pool.
@@ -356,4 +377,29 @@ pub(crate) fn range_for(tid: usize, nt: usize, total: usize) -> (usize, usize) {
     let start = (tid * chunk).min(total);
     let end = (start + chunk).min(total);
     (start, end)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_threads_formula;
+
+    #[test]
+    fn default_threads_formula_matches_spec() {
+        // (a) M5 Pro 5P/10E lands on 12.
+        assert_eq!(default_threads_formula(5, 10), 12);
+        // (b) E <= P reduces to the old `P + min(E, P)` = `P + E`.
+        for (p, e) in [(4, 0), (4, 1), (4, 4), (8, 3), (10, 10), (6, 6)] {
+            assert_eq!(default_threads_formula(p, e), p + e, "E<=P: {p}P/{e}E");
+        }
+        // (c) Never exceeds P + E.
+        for p in 1..=16 {
+            for e in 0..=24 {
+                assert!(default_threads_formula(p, e) <= p + e, "{p}P/{e}E");
+            }
+        }
+        // Spot checks of the E > P branch: P + P + (E-P)/2.
+        assert_eq!(default_threads_formula(4, 8), 4 + 6); // 4 + min(8, 4+2)
+        assert_eq!(default_threads_formula(2, 8), 2 + 5); // 2 + min(8, 2+3)
+        assert_eq!(default_threads_formula(5, 11), 5 + 8); // 5 + min(11, 5+3)
+    }
 }
