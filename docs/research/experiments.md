@@ -6206,6 +6206,102 @@ was never changed). Finding for the next attempt: **pure MSE is the wrong
 objective here** — the WER headroom must be bought with an activation/outlier-
 aware scheme (route 1 of the Round 11 summary stands, but AWQ-style, not MSE).
 
+### R12-B2: INT4 group size 32 → 16 for decode FFN weights — Rejected
+
+Motivation: R12-B proved the *scale-search* path is a dead end — MSE-optimal
+scales clamp the few large-magnitude outlier weights that dominate the decode
+logits, so reconstruction MSE fell 1.26× while corpus WER rose 0.0357 → 0.0372.
+The R12-B lesson was to *keep absmax* (which by construction never clamps: the
+group extreme maps to code ±7) and instead reduce error by shrinking the group.
+This probe halves the FFN INT4 group 32 → 16: absmax scale selection and the
+signed `[-8,7]` nibble layout are unchanged; there are simply twice as many BF16
+group scales (12.5% scale overhead vs 6.25%), each spanning fewer weights so the
+per-group absmax tracks the local weight magnitude more tightly. If the
+0.0350 → 0.0357 absmax drift is genuinely a quantization-granularity artifact,
+a strictly-lower-error *non-clamping* scheme should recover it.
+
+Change (`INT4_GROUP` 32 → 16, one shared const driving quantizer + kernel):
+- `kernels::quantize_bf16_weights_to_int4` now emits `in_dim / 16` groups of 8
+  packed bytes each (byte `j` = weight `j` low nibble, weight `j + 8` high),
+  same absmax `scale = groupmax / 7` rounded to BF16, codes fitted to the
+  rounded scale. Total code bytes (`in_dim / 2`) unchanged; scale array doubles.
+- NEON `matvec_int4` (renamed from `matvec_int4_g32`) reworked for 8-byte
+  groups: `int4_dot4_groups` loads a group's 8 bytes (`vld1_u8`), unpacks the 8
+  low then 8 high nibbles into one 16-lane vector (`vcombine_u8`), and does a
+  **single** SDOT per group against that group's 16 activations (vs two SDOTs
+  per 32-weight group before). Four groups per iteration still collapse via the
+  `vpaddq` tree into one `int32x4` FMA'd with four BF16 scales, so the outer
+  loop and paired-row structure are untouched; only the inner granularity
+  halves. A `const` assert ties the kernel's 8-byte unpack to `INT4_GROUP == 16`.
+
+MSE probe (throwaway test over the model's real FFN BF16 weights — all 28
+layers × {gate,up,down}, 264 M weights, reconstruction SSE against BF16
+originals; both rules absmax):
+
+| Scale rule | mean per-weight MSE | total SSE | clamps |
+|---|---|---|---|
+| G=32 absmax (R11-I) | 6.404e-6 | 1692.3 | 0 |
+| G=16 absmax (R12-B2) | 4.876e-6 | 1288.3 | 0 |
+
+Improvement **1.314× (−23.9% MSE)**, and neither rule ever clamps (absmax
+property confirmed empirically). Notably G=16 absmax SSE (1288.3) is *lower* than
+R12-B's MSE-optimal G=32 (1340.0) — shrinking the group beats searching the scale
+*and* avoids clamping. The reconstruction proxy could hardly look more favorable.
+
+WER (100-file LibriSpeech dev-clean-2, offline, greedy → deterministic per
+binary; base = HEAD/R12-A binary, cand = R12-B2 binary):
+
+| Metric | Baseline (G=32) | Candidate (G=16) | Δ |
+|---|---|---|---|
+| Corpus WER | **0.0357** | **0.0387** | **+0.0030 (worse)** |
+| Macro WER  | 0.0388 | 0.0411 | +0.0023 (worse) |
+| Corpus CER | 0.0142 | 0.0137 | −0.0005 (better) |
+
+Baseline reproduces the R11-I/R12-B reference 0.0357 exactly (49 word edits). The
+candidate **fails the WER gate** (`corpus WER < 0.0357` required; got 0.0387, 53
+word edits) — it moves WER the *wrong way*, further than R12-B did, even though
+its reconstruction MSE is the best of the three schemes and it never clamps a
+single weight. CER again improves while WER regresses. This is the sharper
+version of R12-B's lesson: the FFN reconstruction-MSE proxy is simply **not
+predictive** of decode WER on this model — even an error-*reducing*,
+non-clamping quantization change perturbs the argmax adversely. Any structural
+change to the FFN codes shuffles the decode logits by ~1 word-edit-per-500 in an
+essentially uncorrelated direction; there is no free-lunch WER recovery on the
+plain per-group-scale axis (clamping or not, coarser or finer).
+
+Speed (`bench/run.sh --runs 5`, two back-to-back base/candidate pairs, median
+inference ms on `bench/samples/audio.wav`; M5 Pro, out-of-the-box threads):
+
+| Mode | P1 base | P1 cand | P2 base | P2 cand |
+|------|---------|---------|---------|---------|
+| offline   | 561 | 568 | 562 | 571 |
+| segmented | 553 | 565 | 553 | 563 |
+| streaming | 534 | 540 | 530 | 543 |
+
+3-mode averages: pair-1 549.3 → 557.7 (**+1.52% slower**), pair-2 548.3 → 559.0
+(**+1.95% slower**) — *both* pairs regress and both breach the +1.5% budget. The
+touched phase confirms the cause: offline `decode_ms` 392/393 → 399/399,
+segmented 382/383 → 397/393, streaming 328/330 → 336/337 (consistently +2–4%
+decode). Halving the group doubles the number of per-group scale FMAs and
+BF16→F32 scale widenings, replaces the two-SDOT-per-32-group inner body with a
+one-SDOT-per-16-group body plus a `vcombine` nibble-merge, and adds ~8 MB of
+scale bytes to the ~463 MB/token FFN stream — so the pass gets more ALU-dense
+per useful byte and loses throughput. RSS rose ~+17–30 MB median (scales array
+doubled; slightly above the projected +8 MB but in the noise). Transcripts are
+not bit-identical (codes/scales changed) — expected.
+
+Decision: **Rejected**, on both gates. WER moves 0.0357 → 0.0387 (macro 0.0388 →
+0.0411) despite a 1.31× MSE improvement and zero clamping — decisively failing
+the primary WER gate — and speed regresses +1.5–2.0% past budget from the halved
+inner-loop granularity. Code fully reverted; only this log entry is kept. Finding:
+combined with R12-B, **the FFN INT4 reconstruction-MSE proxy does not predict
+decode WER at all** — coarser, finer, absmax, or MSE-optimal scales all move WER
+in an uncorrelated direction of ~1 word-edit per few-hundred. The 0.0350 → 0.0357
+absmax drift is not a granularity artifact and cannot be bought back on the
+per-group-scale axis; recovering it needs an activation-aware objective that
+optimizes the *logit/argmax* directly (calibration-set-driven, AWQ-style), not
+any refinement of blind per-group weight reconstruction.
+
 ---
 
 ## Autoresearch Program Baseline Experiments
