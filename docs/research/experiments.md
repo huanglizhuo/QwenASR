@@ -6136,6 +6136,76 @@ Decision: **KEPT.** ~185–200 MB (~5%) peak-RSS reduction on the non-aligner
 `gate_up_fused_bf16` buffer is now a load-time-only quantization source on
 aarch64 and is dropped before the layer is stored.
 
+### R12-B: MSE-optimal INT4 group scales — Rejected
+
+Motivation: R11-I's absmax group scales (`absmax/7`) moved the 100-file
+LibriSpeech corpus WER 0.0350 → 0.0357, consuming essentially the whole
+WER-gate headroom and blocking Tier-2 INT4 (QKVO, lm_head). The Round 11
+summary's route 1 was to *buy back* that headroom by improving quantization
+quality **without touching the runtime kernels or byte format**, so a later
+Tier-2 attempt has margin. This probe tests the cheapest such idea: replace
+absmax scale selection with a per-group **MSE-optimal** scale search.
+
+Change (`kernels::quantize_bf16_weights_to_int4`, load-time only): for each
+G=32 group, evaluate a 15-point grid of candidate scales spanning 0.70×–1.05×
+the absmax scale (`make_qx_quants`-style; 1.00× is in the grid so the result
+can never regress below absmax MSE), quantize+dequantize with each, and keep
+the scale minimizing squared reconstruction error. Critically each candidate
+is **rounded to BF16 first** and the error measured against that rounded value,
+so the search optimizes exactly what the runtime dequant reads. Packed nibble
+layout, group size, signed range `[-8,7]`, and BF16 scale dtype are unchanged —
+`matvec_int4_g32` and every other runtime path read byte-identical structures;
+only the *values* of the stored scales/codes differ. The existing
+`test_int4_pack_and_matvec` per-weight `step/2` bound no longer holds (a smaller
+scale clamps extremes), so it was updated to the meaningful non-regression
+property: chosen-scale group SSE ≤ absmax-scale group SSE.
+
+MSE probe (throwaway test over the model's real FFN BF16 weights — all 28
+layers × {gate,up,down}, 264 M weights, reconstruction SSE against BF16
+originals):
+
+| Scale rule | mean per-weight MSE | total SSE |
+|---|---|---|
+| absmax (R11-I)  | 6.404e-6 | 1692.3 |
+| MSE-optimal (R12-B) | 5.071e-6 | 1340.0 |
+
+Improvement **1.263× (−20.8% MSE)** — the quantizer does exactly what it was
+asked to. Reconstruction error strictly improves everywhere.
+
+WER (100-file LibriSpeech dev-clean-2, offline, greedy → deterministic per
+binary; base = HEAD/R12-A binary, cand = R12-B binary):
+
+| Metric | Baseline (absmax) | Candidate (MSE-opt) | Δ |
+|---|---|---|---|
+| Corpus WER | **0.0357** | **0.0372** | **+0.0015 (worse)** |
+| Macro WER  | 0.0388 | 0.0401 | +0.0013 (worse) |
+| Corpus CER | 0.0142 | 0.0125 | −0.0017 (better) |
+
+Baseline reproduces the R11-I reference 0.0357 exactly. The candidate **fails
+the WER gate** (`corpus WER < 0.0357` required; got 0.0372) and macro WER also
+regresses, even though corpus CER *improves*. Transcripts are not bit-identical
+(weights changed) — expected. The result is the classic MSE↛WER mismatch:
+minimizing squared error picks slightly *smaller* scales that shrink the step
+for the bulk of each group at the cost of clamping the few large-magnitude
+"outlier" weights, and those outliers matter disproportionately for the decode
+logits/argmax. Character-level accuracy rises while word-level accuracy falls.
+Buying WER headroom on this path needs an **outlier-aware / activation-aware**
+objective (AWQ-style equalization), not plain MSE.
+
+Speed / load: decode kernels are untouched, so inference is unchanged by
+construction (byte-identical structures, same matvec). Wall time on
+`bench/samples/audio.wav` (offline, median of 3) rose 0.83 s → 0.92 s (**+11%**),
+entirely load-time: the 15× grid-search in the FFN quantizer runs inside the
+per-layer parallel load. That already brushes the ~15% load-growth ceiling —
+another reason not to keep a change that also fails its primary gate.
+
+Decision: **Rejected.** MSE-optimal group scales improve FFN reconstruction MSE
+1.26× but move corpus WER 0.0357 → 0.0372 (macro 0.0388 → 0.0401), failing the
+WER gate; CER improves but WER is the gate. Code fully reverted (runtime format
+was never changed). Finding for the next attempt: **pure MSE is the wrong
+objective here** — the WER headroom must be bought with an activation/outlier-
+aware scheme (route 1 of the Round 11 summary stands, but AWQ-style, not MSE).
+
 ---
 
 ## Autoresearch Program Baseline Experiments
