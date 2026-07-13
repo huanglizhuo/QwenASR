@@ -51,9 +51,13 @@ pub struct DecLayer {
     pub gate_weight_bf16: *const u16,
     pub up_weight_bf16: *const u16,
     pub down_weight_bf16: *const u16,
-    /// Owned interleaved bf16 fusion of gate+up — populated only for non-aligner
-    /// configs (single-token decode path uses it). Empty for forced-aligner since
-    /// aligner only ever runs prefill, which streams gate/up separately.
+    /// Owned interleaved bf16 fusion of gate+up. Only the non-aarch64 decode
+    /// path consumes it at runtime (`linear_nobias_bf16_swiglu`); on aarch64 the
+    /// single-token decode path uses `gate_up_q4` instead, so the fused buffer is
+    /// used only transiently at load time as the INT4 quantization source and this
+    /// field is left empty (R12-A) to save ~350 MB RSS. Also empty for the
+    /// forced-aligner (aligner only ever runs prefill, which streams gate/up
+    /// separately).
     pub gate_up_fused_bf16: Vec<u16>,
     /// INT8 quantized attention weights + per-row scales — populated only for
     /// non-aligner configs (used by aarch64 single-token decode). Empty for aligner.
@@ -171,7 +175,20 @@ fn load_dec_layer(ms: &MultiSafetensors, cfg: &QwenConfig, i: usize) -> Option<D
             quantize_to_superpage_int4(gate_up_fused.as_ptr(), 2 * inter, hidden);
         let (down_q4, down_q4_scales) = quantize_to_superpage_int4(down_bf16, hidden, inter);
 
-        (gate_up_fused,
+        // On aarch64 the fused bf16 buffer was only needed as the INT4
+        // quantization source above — the runtime decode path uses `gate_up_q4`.
+        // Drop it here (store an empty Vec) to reclaim ~350 MB RSS across the
+        // model (R12-A). Non-aarch64 still consumes it in the bf16 SwiGLU decode
+        // path, so keep it there.
+        #[cfg(target_arch = "aarch64")]
+        let gate_up_fused_kept = {
+            drop(gate_up_fused);
+            Vec::new()
+        };
+        #[cfg(not(target_arch = "aarch64"))]
+        let gate_up_fused_kept = gate_up_fused;
+
+        (gate_up_fused_kept,
          wq_int8, wq_int8_scales, wk_int8, wk_int8_scales,
          wv_int8, wv_int8_scales, wo_int8, wo_int8_scales,
          gate_up_q4, gate_up_q4_scales, down_q4, down_q4_scales)

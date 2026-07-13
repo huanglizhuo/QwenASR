@@ -6063,6 +6063,81 @@ scales) before touching the attention projections.
 
 ---
 
+## Speed Improvement Experiments — Round 12
+
+### R12-A: drop aarch64 runtime copy of fused gate_up bf16 weights — KEPT
+
+Motivation: since R11-I moved the aarch64 single-token decode FFN onto the INT4
+`gate_up_q4` codes, the owned interleaved bf16 fusion `DecLayer.gate_up_fused_bf16`
+(built in `load_dec_layer`, `2*inter*hidden` u16 per layer = 12 MB/layer ×28 ≈
+352 MB for the 0.6B model) has exactly one remaining runtime consumer: the
+`#[cfg(not(target_arch = "aarch64"))]` bf16 SwiGLU decode path
+(`linear_nobias_bf16_swiglu`). On aarch64 that buffer is dead weight after load
+— its only use is as the *source* for the load-time INT4 quantization. Prefill
+streams gate/up separately from the mmap, so nothing else needs it. This is a
+pure RSS reclaim with no runtime math change.
+
+Change (`decoder.rs`, `load_dec_layer`):
+- Still build the interleaved `gate_up_fused` as a local temporary and still use
+  it as the INT4 quantization source (`quantize_to_superpage_int4`) — quantization
+  stays single-rounded from the original BF16, unchanged.
+- After quantizing, on `#[cfg(target_arch = "aarch64")]` the temporary is dropped
+  and `Vec::new()` is stored into `DecLayer.gate_up_fused_bf16`; on
+  `#[cfg(not(target_arch = "aarch64"))]` the fused buffer is stored as before, so
+  the non-aarch64 bf16 decode path compiles and runs identically.
+- Struct field kept on all arches; aligner path unchanged (already stores empty
+  Vecs). Field doc comment updated to describe the new load-only lifetime.
+- Build clean: `RUSTFLAGS="-C target-cpu=native" cargo build --release` — zero
+  warnings.
+
+Peak RSS (`/usr/bin/time -l` maximum resident set size, median of 3 runs on
+`bench/samples/audio.wav`; base = HEAD binary, cand = R12-A binary):
+
+| Mode | Base RSS | Cand RSS | Δ |
+|------|----------|----------|-----|
+| offline   | 3731 MB | 3547 MB | **−184 MB** |
+| segmented | 3734 MB | 3539 MB | **−195 MB** |
+| streaming | 3721 MB | 3525 MB | **−196 MB** |
+
+Peak anonymous footprint (`peak memory footprint`, offline) 2296 → 2095 MB
+(−201 MB). The realized ~185–200 MB is short of the 352 MB the buffers occupy at
+steady state: with 12-thread parallel layer loading each worker holds a 12 MB
+fused temp live while it quantizes, and the freed arenas stay as allocator
+high-water during the load, so the peak (hit during load) never drops by the
+full resident set. Still a clean, consistent ~5% cut of total RSS at zero runtime
+cost.
+
+Benchmark (`bench/run.sh --runs 5`, two back-to-back base/candidate pairs,
+median inference ms):
+
+| Mode | P1 base | P1 cand | P2 base | P2 cand |
+|------|---------|---------|---------|---------|
+| offline   | 618 | 581 | 586 | 598 |
+| segmented | 596 | 588 | 588 | 596 |
+| streaming | 564 | 560 | 578 | 567 |
+
+3-mode averages: pair-1 592.7 → 576.3 (−2.8%), pair-2 584.0 → 587.0 (**+0.5%**)
+— the sign flips between pairs (pair-1 favors cand, pair-2 favors base) and the
+aggregate is 588.3 → 581.7 (−1.1%), well inside the ±3% machine noise floor.
+As expected: the change only frees load-time memory and does not touch any decode
+kernel, so runtime is unaffected.
+
+Quality gates (behavior-neutral on aarch64 — bit-identical outputs by
+construction, the INT4 quantization source is untouched):
+- 53 tests pass, zero warnings.
+- Transcripts on `bench/samples/audio.wav` verified **byte-identical** to the
+  base binary in all three modes (offline / -S 30 / --stream); bench WER lines
+  unchanged `0.0000 / 0.0000 / 0.2973`.
+- WER corpus run **not required** — bit-identical transcripts make it moot
+  (same disposition as R11-D).
+
+Decision: **KEPT.** ~185–200 MB (~5%) peak-RSS reduction on the non-aligner
+0.6B model, bit-identical decode output, speed within noise. The
+`gate_up_fused_bf16` buffer is now a load-time-only quantization source on
+aarch64 and is dropped before the layer is stored.
+
+---
+
 ## Autoresearch Program Baseline Experiments
 
 These experiments come from the initial `codex-auto-research` autoresearch program baseline (`programs.md`). They are structural buffer-reuse optimizations that predate the numbered round structure above.
