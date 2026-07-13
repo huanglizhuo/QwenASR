@@ -6388,6 +6388,77 @@ would show up unambiguously on the large-set gate (CI half-width ≈ ±0.0009),
 whereas on 100 files it was invisible. Runtime cost of the new gate: ~20–25
 min per binary on M5 Pro (2703 utts, offline) — acceptable for a hard gate.
 
+### R12-B4: INT4 FFN damage ablation — gate_up vs down_proj — Rejected (damage is distributed; both mixed variants fail the gate)
+
+Motivation: R12-B3 proved the shipped R11-I configuration (both decode FFN
+projections INT4 G=32) costs **+10.2% relative** corpus WER on the full
+dev-clean set (0.0271 → 0.0299, ΔWER 95% CI [+0.0019, +0.0036],
+P(worse)=1.0000) — a violation of the standing no-WER-loss constraint. Before
+reverting R11-I wholesale or investing in AWQ equalization, this ablation asks
+*which* projection drives the damage. If it is lopsided, a mixed configuration
+(one projection INT4, the other back at INT8 per-row scales) could restore WER
+while keeping roughly half the byte savings.
+
+Setup: both quantization paths coexist in `decoder.rs`/`kernels/mod.rs` — the
+pre-R11-I `int8_swiglu_range` restored alongside `int4_swiglu_range`, the
+existing `int8_matvec_range` (already live for the O-projection) wired as the
+down-proj alternative — with a load-time `QWEN_FFN_Q=g4d4|g4d8|g8d4` env
+probe selecting per-projection precision, so one binary served all runs (probe
+only; never committed). Both INT8 and INT4 buffers quantize from the original
+BF16 weights (single-rounded; the interleaved gate_up fusion is a BF16 copy).
+Sanity: the probe build's `g4d4` reproduces HEAD's recorded bench-sample
+transcript (same kernels, same single-rounded quantization; dispatch selects
+on which buffer is populated); 53 tests, zero warnings. Variants measured on the full dev-clean gate (2703 utts,
+offline, `librispeech_wer.py` + `wer_bootstrap.py`, 10k paired resamples),
+references A (INT8 FFN, `eca57b32`) and B (INT4 FFN, HEAD) reused from
+R12-B3.
+
+Corpus WER, full dev-clean (2703 utts, 54,402 ref words):
+
+| Config | gate_up | down | corpus WER | word edits | ΔWER vs A (95% CI) | rel | P(worse) |
+|---|---|---|---|---|---|---|---|
+| A (ref) | INT8 | INT8 | 0.0271 | 1475 | — | — | — |
+| G4 | INT4 | INT8 | 0.0286 | 1556 | +0.00149 [+0.00071, +0.00229] | +5.5% | 1.0000 |
+| D4 | INT8 | INT4 | 0.0281 | 1527 | +0.00096 [+0.00030, +0.00162] | +3.5% | 0.9981 |
+| B (HEAD) | INT4 | INT4 | 0.0299 | 1625 | +0.00276 [+0.00191, +0.00363] | +10.2% | 1.0000 |
+
+Against B (i.e. WER recovered by re-widening one projection): G4 −0.00127
+[−0.00203, −0.00054] (−4.3% rel, P(worse)=0.0005); D4 −0.00180 [−0.00260,
+−0.00102] (−6.0% rel, P(worse)=0.0000). 100-file continuity subset (no gate
+authority): A 0.0350 / G4 0.0379 / D4 0.0328 / B 0.0357 — the subset ranks D4
+*better than the INT8 reference* (−6.25% rel, P(worse)=0.10) while the full
+set shows it significantly worse (+3.5%, P(worse)=0.998), a fresh demonstration
+of R12-B3's finding that the small set is blind (and here actively misleading)
+at these effect sizes.
+
+Findings:
+
+1. **Neither mixed variant passes the benign-half gate** (vs A: CI lower bound
+   ≤ 0 AND point < +2% relative). G4's CI lower bound is +0.00071, D4's
+   +0.00030 — both exclude zero in the harmful direction, and both point
+   estimates (+5.5%, +3.5%) exceed +2% relative.
+2. **The damage is distributed and near-additive, not lopsided.** gate_up INT4
+   alone costs +0.00149, down INT4 alone +0.00096; their sum (+0.00245) is
+   ~89% of the joint effect (+0.00276). gate_up carries ~1.5× the damage of
+   down_proj — consistent with it being 2× the bytes and feeding the SwiGLU
+   nonlinearity — but there is no benign half to keep. Plain absmax INT4 G=32
+   is simply below the quality floor for *every* decode FFN projection of this
+   0.6B model.
+
+Decision: **Rejected — all runtime code reverted to HEAD** (`8cbfe8de` state;
+this entry is the only change committed). No speed pairs were run since no
+variant passed the WER gate (byte arithmetic for the record: per-layer FFN
+stream incl. scales — INT4+INT4 5.31 MB, G4 6.69 MB, D4 8.09 MB, INT8+INT8
+9.47 MB; over 28 layers G4 would have kept ~77 MB and D4 ~38 MB of R11-I's
+~116 MB/token traffic cut, i.e. roughly two-thirds / one-third).
+The R11-I configuration remains in violation of the no-WER-loss constraint;
+since partial rollback cannot fix it, the remaining levers are (a) **full
+R11-I revert** to INT8 FFN — giving back the measured −2.1% speed for a
+guaranteed WER restore — or (b) **AWQ-style activation-aware equalization
+(R12-B5)** first, which must now recover the drift on *both* projections
+(target: ΔWER vs A with CI lower bound ≤ 0 under the R12-B3 gate) for INT4 to
+stay. If R12-B5 fails, revert R11-I.
+
 ---
 
 ## Autoresearch Program Baseline Experiments
