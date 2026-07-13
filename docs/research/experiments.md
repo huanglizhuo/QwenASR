@@ -6302,6 +6302,92 @@ per-group-scale axis; recovering it needs an activation-aware objective that
 optimizes the *logit/argmax* directly (calibration-set-driven, AWQ-style), not
 any refinement of blind per-group weight reconstruction.
 
+### R12-B3: WER-gate recalibration — INT8 vs INT4 FFN on the large set — drift is real (+10% relative), and the 100-file gate cannot see it
+
+Motivation: R11-I's 100-file drift (0.0350 → 0.0357, 48 → 49 word edits) has
+been treated as "consumed WER headroom", blocking Tier-2 INT4 (QKVO, lm_head).
+But R12-B (−21% reconstruction MSE) and R12-B2 (−24% MSE, zero clamping) both
+*worsened* 100-file WER despite strictly better weights, raising the suspicion
+that at ~49 edits the gate is dominated by argmax-lottery noise — marginal
+tokens flipping quasi-randomly — and that the 0.0350 → 0.0357 drift itself
+might not be statistically significant. This experiment quantifies it. No
+runtime code was touched; this is measurement/tooling only.
+
+Harness: the full LibriSpeech **dev-clean** split — 2703 utterances, 54,402
+reference words, 27× the historical gate — extracted from the cached openslr
+`resources/12/dev-clean.tar.gz` into the gitignored
+`librispeech-wer-bench/dev-clean-full/` and run through the existing
+`librispeech-wer-bench/librispeech_wer.py` unchanged (offline mode, ffmpeg →
+16 kHz mono s16 WAV, deterministic sorted utterance order, greedy decode →
+deterministic per binary). Two binaries, one output-relevant axis:
+
+- **A (INT8 FFN)**: built at `eca57b32` (= `6ed39526~1`, the parent of R11-I)
+  in a temporary worktree, `RUSTFLAGS="-C target-cpu=native" cargo build
+  --release`. Everything on HEAD since then is output-identical (R12-A verified
+  bit-identical; R12-B/B2 fully reverted), so A vs B isolates exactly the FFN
+  INT8 → INT4 quantization.
+- **B (INT4 FFN)**: built at HEAD (`d8fce93f`).
+
+Analysis: new `bench/wer_bootstrap.py` — pairs the two per-utterance
+`results.jsonl` files by utt id and runs a **paired bootstrap** (10,000
+resamples over utterances, seed 0) on Δcorpus-WER = B − A; also reports the
+historical 100-file dev-clean-2 subset (all 100 utt ids present in dev-clean;
+ids committed as `bench/wer_subset_devclean2_100.txt` for `--subset-ids`)
+from the same runs for continuity.
+
+Corpus WER (offline, same runs, both set sizes):
+
+| Set | n utts | ref words | A (INT8 FFN) | B (INT4 FFN) | ΔWER (B−A) | 95% CI | P(B worse) |
+|---|---|---|---|---|---|---|---|
+| dev-clean (full) | 2703 | 54,402 | **0.0271** | **0.0299** | **+0.00276 (+10.2% rel)** | [+0.00191, +0.00363] | **1.0000** |
+| 100-file subset | 100 | 1,371 | 0.0350 | 0.0357 | +0.00073 (+2.1% rel) | [−0.00364, +0.00499] | 0.5689 |
+
+Continuity check: the 100-file subset reproduces the historical ledger
+*exactly* — A = 0.0350 / 48 edits (the R11-I "HEAD ref"), B = 0.0357 / 49
+edits (the R11-I gate result) — confirming harness determinism and that the
+A/B difference is precisely the R11-I change. Macro WER moves 0.0317 → 0.0358,
+corpus CER 0.0074 → 0.0084 (full set). Per-utterance word edits: A total 1475
+(mean 0.546, median 0, max 13, 69.9% of utts edit-free), B total 1625 (mean
+0.601, median 0, max 12, 67.2% edit-free) — INT4 adds ~150 edits spread thinly
+across the corpus, ~1 extra edit per 18 utterances.
+
+Findings — both halves of the hypothesis resolve, in opposite directions:
+
+1. **The drift is real, and ~4× larger than the 100-file gate reported.** On
+   2703 utterances the INT4 FFN costs **+0.0028 absolute / +10.2% relative**
+   corpus WER, with a 95% CI excluding zero by a wide margin and every one of
+   10,000 resamples showing B worse. This is not argmax-lottery noise; R11-I
+   genuinely consumed (more than) the assumed headroom. The "0.0001 margin"
+   pass was an artifact of the small set: dev-clean-2's first 100 files are
+   both harder (WER 0.035 vs 0.027) and far too small to resolve the effect.
+2. **The 100-file gate is statistically blind at the effect sizes this
+   program cares about.** Its paired-bootstrap 95% CI half-width is ±0.004
+   (≈ ±12% relative) — wider than the true R11-I effect — so it could neither
+   have blocked R11-I nor steered R12-B/B2. Any past 100-file Δ of ≲ 1.5
+   word edits (≈ 0.001 WER) was unreadable. (R12-B/B2's failures at +0.0015 /
+   +0.0030 on 100 files were directionally correct but only by luck of draw.)
+
+New WER gate (supersedes the 100-file ≤-threshold rule for all future
+output-changing experiments):
+
+> Run both binaries on the full dev-clean set (2703 utts) via
+> `librispeech_wer.py`, then `bench/wer_bootstrap.py --a base.jsonl --b
+> cand.jsonl` (10,000 paired resamples). The candidate **passes** iff the 95%
+> CI of Δcorpus-WER (cand − base) does not exclude 0 in the harmful direction
+> — i.e. CI lower bound ≤ 0 — **and** the point estimate is < +2% relative.
+> Report the 100-file subset alongside for ledger continuity, but it carries
+> no gate authority.
+
+Decision for the Tier-2 INT4 track: **stays blocked, now on solid evidence.**
+The headroom consumption is real and measured (+10.2% relative), so further
+plain quantization (QKVO, lm_head INT4) on top of it is off the table.
+The next lever is unchanged from R12-B2's conclusion — AWQ-style
+activation-aware equalization — but it now has what it lacked: a steering
+signal that can actually resolve success. Recovering even half of the +0.0028
+would show up unambiguously on the large-set gate (CI half-width ≈ ±0.0009),
+whereas on 100 files it was invisible. Runtime cost of the new gate: ~20–25
+min per binary on M5 Pro (2703 utts, offline) — acceptable for a hard gate.
+
 ---
 
 ## Autoresearch Program Baseline Experiments
