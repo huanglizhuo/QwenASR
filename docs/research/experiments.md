@@ -6514,6 +6514,99 @@ scheme (AWQ-class) that passes the R12-B3 full-set bootstrap gate.
 
 ---
 
+### R12-E1: shared-model/session split (F27) — KEPT
+
+Motivation: unblock the A-track goal (F5) — lockstep batched segment decode,
+where B segments advance one token together through a `[B×dim]` skinny INT8
+GEMM so the ~575 MB/token decode weight stream is amortized ÷B (decode is
+DRAM-bound at ~115 GB/s; this is the only remaining big lever). That requires
+multiple decode sessions to coexist against one weight set. Before this change
+`QwenCtx` mixed immutable model data (mmaps, weight pointers, quantized buffers,
+config) with mutable per-transcription state (KV cache, RoPE cache, decoder/
+encoder scratch, settings), so N sessions could not share one model without
+duplicating the multi-GB weights.
+
+L3 audit (how parallel-segment decode shares weights today): L3 already
+contains the split *in miniature*, local to `transcribe.rs`. `SegWeights<'a>`
+is a bundle of borrowed `&Encoder`/`&Decoder`/`&QwenConfig`/prompt-token refs
+(shared `&` across workers), `SegSession` owns the per-worker
+`KvCache`/`RopeCache`/`DecoderBuffers`/`EncoderBuffers`, and `decode_segment_core`
+is a pure fn of `(weights, session, samples)`. `transcribe_splits_parallel`
+spawns K `thread::scope` workers, each building its own `SegSession` and sharing
+`&SegWeights`. So `Encoder`/`Decoder` were already `unsafe impl Sync`, and the
+session buffers are all `Vec`-backed (`Send`+`Sync`). L3 proves the split is
+sound; it just built `SegWeights` by borrowing a live `QwenCtx` instead of from
+a first-class shared model. The refactor was therefore kept minimal — L3's
+worker code is unchanged except that `SegWeights` now sources
+`encoder`/`decoder` from `ctx.model.*`.
+
+Design (what moved where):
+- New `pub struct QwenModel { config, encoder, decoder, _safetensors, model_dir }`
+  — immutable, `Sync`+`Send`, lives behind `Arc`. `QwenModel::load(dir) ->
+  Option<Arc<QwenModel>>` holds all the old load logic; `QwenModel::new_session()`
+  mints a session.
+- `QwenCtx` is now `{ model: Arc<QwenModel>, config: QwenConfig, <all the old
+  per-session buffers + settings> }`. It keeps a per-session **clone** of the
+  config so the one run-time-mutable config knob (`enc_n_window_infer`, set by
+  the CLI's `--enc-window-sec`) stays local to a session and never mutates the
+  shared model. This kept the ~15 `ctx.config` call sites untouched.
+- Only the genuinely model-owned fields moved behind the `Arc`: ~26 call sites
+  changed `ctx.encoder`/`ctx.decoder`/`ctx.model_dir` → `ctx.model.*`. All
+  session-buffer, perf, prompt, and settings fields keep their names, so
+  `transcribe.rs`/`decoder.rs`/`encoder.rs`/`align.rs` are otherwise untouched.
+- Public-API compatibility: `QwenCtx::load(dir)` is preserved
+  (`= QwenModel::load(dir).map(QwenCtx::from_model)`) and behaves identically;
+  the C/JNI ABIs are unchanged (they only touch `QwenCtx`). Added
+  `QwenCtx::from_model(Arc<QwenModel>)` and `QwenCtx::model() -> &Arc<QwenModel>`.
+  Zero new runtime deps (Arc is std), zero new compiler warnings.
+
+Verification (M5 Pro):
+- Build: zero warnings on default features; `-p qwen-asr --no-default-features`
+  builds clean; CLI builds clean. (Pre-existing clippy lints in
+  `kernels/mod.rs` / CLI are unchanged — none introduced.)
+- Tests: `cargo test --release` = 53 passed (52 at HEAD + the new
+  `two_sessions_one_model_match_sequential`). That test loads ONE `QwenModel`,
+  mints two sessions, transcribes two different clips **concurrently** on two
+  threads, and asserts byte-identical output to two sequential fresh
+  `QwenCtx::load` contexts (also asserts `Arc::strong_count == 3`).
+- Bit-identity: CLI transcripts on `bench/samples/audio.wav` (offline, `-S 30`,
+  `--stream`) and `bench/long/samples/long-2min.wav` + `long-10min.wav`
+  (offline and `-S 30`) are **byte-identical** to the HEAD binary across all six.
+- Speed (`bench/run.sh --runs 5`, two back-to-back HEAD/NEW pairs):
+
+| Mode | HEAD p1 | NEW p1 | HEAD p2 | NEW p2 |
+|------|--------:|-------:|--------:|-------:|
+| offline | 590 | 590 | 598 | 591 |
+| segmented | 593 | 593 | 596 | 595 |
+| streaming | 555 | 562 | 551 | 556 |
+| 3-mode avg | 579.3 | 581.7 | 581.7 | 580.7 |
+
+  3-mode average delta: +0.4% (pair 1), −0.2% (pair 2) — within the ±1.5%
+  noise band, no consistent direction. offline/segmented are essentially
+  identical; streaming carries the usual ~1% jitter both ways. Load time and
+  RSS are unchanged: the only new allocation is a per-session `QwenConfig` clone
+  (a few hundred bytes of POD); weights are shared by `Arc`, not copied.
+- No WER run needed: transcripts are byte-identical in every mode (R11-D
+  policy), so corpus/macro WER is unchanged by construction.
+
+Stage-2 interface (what the lockstep scheduler will consume): `Arc<QwenModel>`
+as the shared read-only weight set, plus N independently-advancing sessions.
+Two levels are available: (a) full `QwenCtx` sessions via
+`QwenModel::new_session()` for coarse per-file/per-request parallelism
+(each is `Send`, movable onto its own thread), and (b) the lighter-weight
+`SegWeights`(borrowed from `&QwenModel`) + `SegSession`(owned KV/RoPE/scratch)
+pair already used by L3, which is the natural unit for a `[B×dim]` batched
+decode: the scheduler holds B `SegSession`s, prefills each, then steps them in
+lockstep by replacing `decoder_forward`'s single-token matvecs with a
+B-row skinny INT8 GEMM against the one shared `Decoder`. No batched kernel was
+added here — this stage only makes B coexisting sessions expressible and
+proven concurrent.
+
+Decision: **Kept.** Pure refactor, bit-identical everywhere, speed within
+noise, and it unblocks F5/F16/F28 (all previously "blocked by F27").
+
+---
+
 ## Autoresearch Program Baseline Experiments
 
 These experiments come from the initial `codex-auto-research` autoresearch program baseline (`programs.md`). They are structural buffer-reuse optimizations that predate the numbered round structure above.
