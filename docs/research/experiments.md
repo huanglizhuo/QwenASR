@@ -6459,6 +6459,59 @@ guaranteed WER restore — or (b) **AWQ-style activation-aware equalization
 (target: ΔWER vs A with CI lower bound ≤ 0 under the R12-B3 gate) for INT4 to
 stay. If R12-B5 fails, revert R11-I.
 
+### R12-B5: revert INT4 decode FFN weights to INT8 — WER floor restoration
+
+Motivation: R12-B3 proved on the full dev-clean gate (2703 utts, paired
+bootstrap) that R11-I's INT4 decode FFN costs **+10.2% relative** corpus WER
+(0.0271 → 0.0299, ΔWER 95% CI [+0.0019, +0.0036], P(worse) = 1.0000), and
+R12-B4 showed the damage is distributed across *both* projections — no mixed
+INT4/INT8 configuration passes the gate. The project's standing constraint is
+no WER loss, so this is a quality fix, not an optimization probe: restore the
+pre-R11-I INT8 decode FFN, accepting the measured speed/RSS give-back.
+
+Change: the fused decode region's FFN stages go back to exactly the math of
+`6ed39526~1` — fused gate_up INT8 (per-row scales, quantized from the
+interleaved bf16 temp) via the restored `int8_swiglu_range`, and down_proj
+INT8 (per-row, from bf16) via the existing `int8_matvec_range` with fused
+residual. All work kept since R11-I survives: R12-A's load-time-only fused
+gate_up bf16 temp is preserved (now the INT8 quantization source, still
+dropped on aarch64 after quantizing — the persistent ~352 MB buffer does not
+return), and R11-C/R11-G etc. are untouched. The now-dead INT4 machinery is
+deleted per zero-warning policy (`gate_up_q4`/`down_q4` fields,
+`quantize_to_superpage_int4`, `quantize_bf16_weights_to_int4` + `INT4_GROUP`,
+`int4_swiglu_range`/`int4_matvec_range`, `neon::matvec_int4_g32` +
+`int4_dot4_groups`, and the INT4 pack/matvec test) — git history preserves it
+for AWQ re-entry. 52 tests pass, zero warnings.
+
+Verification (M5 Pro): the strongest check is exactness — every kept change
+since `6ed39526~1` was verified bit-identical, so the restored binary must
+reproduce the R12-B3 INT8 reference (A, built at `eca57b32`) byte-for-byte.
+Full dev-clean sweep (2703 utts, offline, `librispeech_wer.py`): **2703/2703
+hypotheses byte-identical to `A-int8-full`** (both raw and normalized), corpus
+WER **0.0271** exactly (1475 word edits, macro 0.0317, CER 0.0074). 100-file
+continuity subset: 0.0350 / 48 edits — the pre-R11-I ledger value, exactly.
+Bench sample regains the one pre-R11-I spurious comma (offline/segmented
+sample WER 0.0000 → 0.0270, 45 → 46 tokens; single-clip artifact, the full
+set moves the other way).
+
+Costs (accepted, not a rejection criterion — this gives back R11-I's win):
+
+- Speed, two back-to-back 3-mode pairs vs HEAD (`cc644684`), `bench/run.sh
+  --runs 5`, median inference ms (offline/segmented/streaming): pair 1
+  HEAD 562/563/545 (agg 1670) → INT8 590/584/547 (agg 1721), **+3.05%**;
+  pair 2 HEAD 558/562/546 (agg 1666) → INT8 579/588/556 (agg 1723),
+  **+3.42%**. Offline decode_ms ~390 → ~414. Slightly above R11-I's recorded
+  −2.06%, within its pair spread (−0.7%…−3.05%) plus the sample's one extra
+  decoded token.
+- Peak RSS (per-mode, `/usr/bin/time -l`, single runs): offline 3538 → 3662 MB
+  (+124), segmented 3539 → 3660 MB (+121), streaming 3539 → 3668 MB (+129) —
+  the expected ~+116 MB INT8-vs-INT4 FFN buffer delta plus scale-buffer
+  layout differences (bench-median RSS deltas agree: +117…+124 MB).
+
+Decision: **Kept** — WER floor restored to 0.0271 with byte-exact provenance.
+Re-entry condition: INT4 decode FFN may only re-land via an activation-aware
+scheme (AWQ-class) that passes the R12-B3 full-set bootstrap gate.
+
 ---
 
 ## Autoresearch Program Baseline Experiments

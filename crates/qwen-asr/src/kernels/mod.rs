@@ -779,47 +779,23 @@ pub(crate) unsafe fn int8_qkv_range(
     }
 }
 
-/// Compute output rows `[start, end)` of an INT4 group-quantized matvec
-/// (`y = W @ x`, optional fused bias) using the pre-quantized input `x_int8`.
-/// INT4 counterpart of [`int8_matvec_range`] for the fused decode region
-/// (R11-I): weight layout is `in_dim / 2` packed code bytes plus
-/// `in_dim / INT4_GROUP` BF16 group scales per row.
+/// Compute intermediate rows `[start, end)` of the fused INT8 gate_up + SwiGLU
+/// projection. Slice entry point of the fused decode region (R5-B). `x_int8`
+/// is the already-quantized input of length `in_dim`.
 #[cfg(target_arch = "aarch64")]
 #[inline]
 #[allow(clippy::too_many_arguments)] // hot kernel entry point; params mirror the SIMD call
-pub(crate) unsafe fn int4_matvec_range(
-    y_ptr: *mut f32, x_int8: *const i8, x_scale: f32,
-    w_q4: *const u8, w_scales: *const u16,
-    bias_ptr: Option<*const f32>,
-    in_dim: usize, start: usize, end: usize,
-) {
-    if start >= end { return; }
-    let n = end - start;
-    let y_local = std::slice::from_raw_parts_mut(y_ptr.add(start), n);
-    let w_local = w_q4.add(start * (in_dim / 2));
-    let s_local = w_scales.add(start * (in_dim / INT4_GROUP));
-    let bias_local = bias_ptr.map(|p| std::slice::from_raw_parts(p.add(start), n));
-    neon::matvec_int4_g32(y_local, x_int8, x_scale, w_local, s_local, bias_local, in_dim, n);
-}
-
-/// Compute intermediate rows `[start, end)` of the fused INT4 gate_up + SwiGLU
-/// projection in the fused decode region (R11-I, replacing the former INT8
-/// `int8_swiglu_range`); the gate/up rows stay interleaved exactly like the
-/// BF16 fusion (`linear` row `2j` = gate, `2j + 1` = up).
-#[cfg(target_arch = "aarch64")]
-#[inline]
-#[allow(clippy::too_many_arguments)] // hot kernel entry point; params mirror the SIMD call
-pub(crate) unsafe fn int4_swiglu_range(
+pub(crate) unsafe fn int8_swiglu_range(
     ffn_ptr: *mut f32, x_int8: *const i8, x_scale: f32,
-    w_q4: *const u8, w_scales: *const u16,
+    w_int8: *const i8, w_scales: *const f32,
     in_dim: usize, start: usize, end: usize,
 ) {
     if start >= end { return; }
     let n_rows = end - start;
-    let w_local = w_q4.add(2 * start * (in_dim / 2));
-    let s_local = w_scales.add(2 * start * (in_dim / INT4_GROUP));
+    let w_local = w_int8.add(2 * start * in_dim);
+    let w_scales_local = std::slice::from_raw_parts(w_scales.add(2 * start), 2 * n_rows);
     let mut gate_up_local = vec![0.0f32; 2 * n_rows];
-    neon::matvec_int4_g32(&mut gate_up_local, x_int8, x_scale, w_local, s_local, None, in_dim, 2 * n_rows);
+    neon::matvec_int8(&mut gate_up_local, x_int8, x_scale, w_local, w_scales_local, None, in_dim, 2 * n_rows);
     let ffn_local = std::slice::from_raw_parts_mut(ffn_ptr.add(start), n_rows);
     for j in 0..n_rows {
         let g = gate_up_local[2 * j];
@@ -1686,64 +1662,6 @@ pub unsafe fn quantize_bf16_weights_to_int8(w_bf16: *const u16, out_dim: usize, 
         }
         (int8_data, scales)
     }
-}
-
-/// Weights per group for INT4 group quantization of decode weights (R11-I).
-/// Each group packs into `INT4_GROUP / 2` bytes plus one BF16 scale.
-pub const INT4_GROUP: usize = 32;
-
-/// Quantize BF16 weights to packed INT4 with per-group BF16 scales (G=32).
-/// Returns `(packed_codes, group_scales)` with `in_dim / 2` code bytes and
-/// `in_dim / 32` scales per row.
-///
-/// Codes are symmetric `[-7, 7]` (group scale = group absmax / 7, mirroring
-/// the INT8 path's absmax / 127) and stored offset-by-8 as unsigned nibbles.
-/// Within each 32-weight group, packed byte `j` (of 16) holds weight `j` in
-/// the low nibble and weight `j + 16` in the high nibble — the layout the
-/// NEON unpack (`and 0x0F` / `shr #4`) expects. Scales are rounded-to-nearest
-/// BF16 and the codes are computed against the *rounded* scale, so the
-/// decode-time dequantization is centered on the stored values.
-///
-/// # Safety
-/// `w_bf16` must point to at least `out_dim * in_dim` readable `u16` (BF16)
-/// values that stay valid for the duration of the call. `in_dim` must be a
-/// multiple of `INT4_GROUP`.
-pub unsafe fn quantize_bf16_weights_to_int4(
-    w_bf16: *const u16,
-    out_dim: usize,
-    in_dim: usize,
-) -> (Vec<u8>, Vec<u16>) {
-    assert_eq!(in_dim % INT4_GROUP, 0);
-    let ngroups = in_dim / INT4_GROUP;
-    let row_bytes = in_dim / 2;
-    let mut packed = vec![0u8; out_dim * row_bytes];
-    let mut scales = vec![0u16; out_dim * ngroups];
-    let src = unsafe { std::slice::from_raw_parts(w_bf16, out_dim * in_dim) };
-    let mut w = [0.0f32; INT4_GROUP];
-    for row in 0..out_dim {
-        for g in 0..ngroups {
-            let base = row * in_dim + g * INT4_GROUP;
-            let mut max_abs = 0.0f32;
-            for (j, wj) in w.iter_mut().enumerate() {
-                let v = f32::from_bits((src[base + j] as u32) << 16);
-                *wj = v;
-                max_abs = max_abs.max(v.abs());
-            }
-            let scale = if max_abs > 0.0 { max_abs / 7.0 } else { 1.0 };
-            // Round-to-nearest-even BF16 (scale is a positive normal float).
-            let bits = scale.to_bits();
-            let sb = (bits.wrapping_add(0x7FFF + ((bits >> 16) & 1)) >> 16) as u16;
-            scales[row * ngroups + g] = sb;
-            let inv = 1.0 / f32::from_bits((sb as u32) << 16);
-            let dst = &mut packed[row * row_bytes + g * 16..row * row_bytes + (g + 1) * 16];
-            for (j, d) in dst.iter_mut().enumerate() {
-                let lo = ((w[j] * inv).round().clamp(-8.0, 7.0) as i32 + 8) as u8;
-                let hi = ((w[j + 16] * inv).round().clamp(-8.0, 7.0) as i32 + 8) as u8;
-                *d = lo | (hi << 4);
-            }
-        }
-    }
-    (packed, scales)
 }
 
 /// INT8 threaded argmax: find argmax(x @ W.T) using INT8 quantized weights.
