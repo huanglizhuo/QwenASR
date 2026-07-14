@@ -805,6 +805,121 @@ pub(crate) unsafe fn int8_swiglu_range(
 }
 
 // ========================================================================
+// Batched (lockstep) INT8 decode range wrappers (R12-E2)
+//
+// Slice entry points for the lockstep scheduler (stage 3): each partitions the
+// SAME weight-row range `[start, end)` as the single-session kernels, but
+// applies each streamed weight row to all `b` sessions before moving to the
+// next row (loop order: rows outer, sessions inner). Each session's output is
+// bit-identical to a standalone single-session `int8_*_range` call — see the
+// exactness tests in `tests` below. `b` is a small runtime value (2–6); the
+// per-session pointer arrays are stack-resident (`MAX_BATCH`).
+// ========================================================================
+
+/// Max lockstep batch size (per-session pointer arrays are stack-allocated).
+#[cfg(target_arch = "aarch64")]
+pub(crate) const MAX_BATCH: usize = 8;
+
+/// Batched analogue of [`int8_matvec_range`]: rows `[start, end)` for all `b`
+/// sessions. `y[bi]`/`x_int8[bi]`/`bias[bi]` are per-session base pointers.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[allow(clippy::too_many_arguments, dead_code)] // consumed by the lockstep scheduler (R12-E2 stage 3)
+pub(crate) unsafe fn int8_matvec_range_batched(
+    b: usize,
+    y: &[*mut f32], x_int8: &[*const i8], x_scale: &[f32],
+    w_int8: *const i8, w_scales: *const f32,
+    bias: Option<&[*const f32]>,
+    in_dim: usize, start: usize, end: usize,
+) {
+    if start >= end { return; }
+    let n = end - start;
+    let mut y_off = [std::ptr::null_mut::<f32>(); MAX_BATCH];
+    let mut bias_off = [std::ptr::null::<f32>(); MAX_BATCH];
+    for bi in 0..b {
+        y_off[bi] = y[bi].add(start);
+    }
+    if let Some(bs) = bias {
+        for bi in 0..b { bias_off[bi] = bs[bi].add(start); }
+    }
+    let w_local = w_int8.add(start * in_dim);
+    let w_scales_local = std::slice::from_raw_parts(w_scales.add(start), n);
+    neon::matvec_int8_batched(
+        b, &y_off[..b], &x_int8[..b], &x_scale[..b], w_local, w_scales_local,
+        if bias.is_some() { Some(&bias_off[..b]) } else { None }, in_dim, n,
+    );
+}
+
+/// Batched analogue of [`int8_qkv_range`]: the `[start, end)` slice over the
+/// concatenated `q|k|v` rows, for all `b` sessions.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[allow(clippy::too_many_arguments, dead_code)] // consumed by the lockstep scheduler (R12-E2 stage 3)
+pub(crate) unsafe fn int8_qkv_range_batched(
+    b: usize,
+    q: &[*mut f32], k: &[*mut f32], v: &[*mut f32],
+    x_int8: &[*const i8], x_scale: &[f32],
+    wq: *const i8, wq_scales: *const f32,
+    wk: *const i8, wk_scales: *const f32,
+    wv: *const i8, wv_scales: *const f32,
+    in_dim: usize, q_dim: usize, kv_dim: usize,
+    start: usize, end: usize,
+) {
+    if start >= end { return; }
+    let total_dim = q_dim + 2 * kv_dim;
+    let q_end = q_dim;
+    let k_end = q_end + kv_dim;
+    // Q range
+    if start < q_end {
+        let s = start;
+        let e = end.min(q_end);
+        if s < e {
+            int8_matvec_range_batched(b, q, x_int8, x_scale, wq, wq_scales, None, in_dim, s, e);
+        }
+    }
+    // K range
+    if start < k_end && end > q_end {
+        let s = start.max(q_end) - q_end;
+        let e = end.min(k_end) - q_end;
+        if s < e {
+            int8_matvec_range_batched(b, k, x_int8, x_scale, wk, wk_scales, None, in_dim, s, e);
+        }
+    }
+    // V range
+    if end > k_end {
+        let s = start.max(k_end) - k_end;
+        let e = end.min(total_dim) - k_end;
+        if s < e {
+            int8_matvec_range_batched(b, v, x_int8, x_scale, wv, wv_scales, None, in_dim, s, e);
+        }
+    }
+}
+
+/// Batched analogue of [`int8_swiglu_range`]: intermediate rows `[start, end)`
+/// for all `b` sessions.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[allow(clippy::too_many_arguments, dead_code)] // consumed by the lockstep scheduler (R12-E2 stage 3)
+pub(crate) unsafe fn int8_swiglu_range_batched(
+    b: usize,
+    ffn: &[*mut f32], x_int8: &[*const i8], x_scale: &[f32],
+    w_int8: *const i8, w_scales: *const f32,
+    in_dim: usize, start: usize, end: usize,
+) {
+    if start >= end { return; }
+    let n_rows = end - start;
+    let mut ffn_off = [std::ptr::null_mut::<f32>(); MAX_BATCH];
+    for bi in 0..b {
+        ffn_off[bi] = ffn[bi].add(start);
+    }
+    let w_local = w_int8.add(2 * start * in_dim);
+    let w_scales_local = std::slice::from_raw_parts(w_scales.add(2 * start), 2 * n_rows);
+    neon::swiglu_int8_batched(
+        b, &ffn_off[..b], &x_int8[..b], &x_scale[..b], w_local, w_scales_local, in_dim, n_rows,
+    );
+}
+
+// ========================================================================
 // 2D Convolution (im2col + BLAS sgemm)
 // ========================================================================
 
@@ -1727,6 +1842,86 @@ pub fn argmax_matvec_int8(x: &[f32], w_int8: &[i8], w_scales: &[f32], in_dim: us
     }
 }
 
+/// Batched INT8 lm_head argmax (R12-E2): stream the (~155 MB) lm_head weights
+/// ONCE and score all `b` session hidden states against them, returning each
+/// session's argmax token. Bit-identical to `b` independent
+/// [`argmax_matvec_int8`] calls when `in_dim` is a multiple of 16 (the lm_head
+/// case, in_dim = dec_hidden = 1024) — the amortization lever for the lockstep
+/// decode's per-token vocabulary scoring. Row partitioning + strict-`>` reduce
+/// give the same index-stable tie-break as the single-session kernel.
+#[cfg(target_arch = "aarch64")]
+#[allow(dead_code)] // consumed by the lockstep scheduler (R12-E2 stage 3)
+pub fn argmax_matvec_int8_batched(
+    xs: &[&[f32]], w_int8: &[i8], w_scales: &[f32], in_dim: usize, out_dim: usize,
+) -> Vec<usize> {
+    let b = xs.len();
+    let mut x_int8_bufs: Vec<Vec<i8>> = Vec::with_capacity(b);
+    let mut x_scales: Vec<f32> = Vec::with_capacity(b);
+    for x in xs {
+        let (q, s) = quantize_f32_to_int8(x);
+        x_int8_bufs.push(q);
+        x_scales.push(s);
+    }
+    let x_ptrs: Vec<*const i8> = x_int8_bufs.iter().map(|v| v.as_ptr()).collect();
+    let n_threads = get_num_threads();
+
+    if n_threads <= 1 {
+        let mut best = vec![0usize; b];
+        let mut best_val = vec![-1e30f32; b];
+        unsafe {
+            neon::argmax_int8_batched(
+                b, &mut best, &mut best_val, &x_ptrs, &x_scales,
+                w_int8.as_ptr(), w_scales, in_dim, 0, out_dim,
+            );
+        }
+        return best;
+    }
+
+    // Per-thread × per-session best, laid out row-major [tid * b + bi].
+    let mut best_all = vec![0usize; n_threads * b];
+    let mut best_val_all = vec![-1e30f32; n_threads * b];
+    let x_ptrs_addr = x_ptrs.as_ptr() as usize;
+    let x_scales_addr = x_scales.as_ptr() as usize;
+    let w_int8_ptr = w_int8.as_ptr() as usize;
+    let w_scales_ptr = w_scales.as_ptr() as usize;
+    let bi_ptr = best_all.as_mut_ptr() as usize;
+    let bv_ptr = best_val_all.as_mut_ptr() as usize;
+
+    parallel_for(|tid, nt| {
+        let chunk = out_dim.div_ceil(nt);
+        let start = tid * chunk;
+        let end = (start + chunk).min(out_dim);
+        let base = tid * b;
+        let best = unsafe { std::slice::from_raw_parts_mut((bi_ptr as *mut usize).add(base), b) };
+        let best_val = unsafe { std::slice::from_raw_parts_mut((bv_ptr as *mut f32).add(base), b) };
+        if start >= end { return; }
+        let x_ptrs = unsafe { std::slice::from_raw_parts(x_ptrs_addr as *const *const i8, b) };
+        let x_scales = unsafe { std::slice::from_raw_parts(x_scales_addr as *const f32, b) };
+        let w_scales = unsafe { std::slice::from_raw_parts(w_scales_ptr as *const f32, out_dim) };
+        unsafe {
+            neon::argmax_int8_batched(
+                b, best, best_val, x_ptrs, x_scales,
+                w_int8_ptr as *const i8, w_scales, in_dim, start, end,
+            );
+        }
+    });
+
+    // Reduce per session: threads own increasing contiguous row ranges, so a
+    // strict-`>` reduce keeps the lowest-index winner on ties.
+    let mut best = vec![0usize; b];
+    let mut best_val = vec![-1e30f32; b];
+    for tid in 0..n_threads {
+        for bi in 0..b {
+            let v = best_val_all[tid * b + bi];
+            if v > best_val[bi] {
+                best_val[bi] = v;
+                best[bi] = best_all[tid * b + bi];
+            }
+        }
+    }
+    best
+}
+
 pub fn argmax_matvec_bf16(x: &[f32], w_bf16: *const u16, in_dim: usize, out_dim: usize) -> usize {
     let n_threads = get_num_threads();
     if n_threads <= 1 {
@@ -1771,4 +1966,249 @@ pub fn argmax_matvec_bf16(x: &[f32], w_bf16: *const u16, in_dim: usize, out_dim:
         }
     }
     best
+}
+
+// ========================================================================
+// Batched decode kernel exactness tests (R12-E2)
+//
+// Assert every batched kernel's per-session output is BIT-IDENTICAL (exact f32
+// equality, not tolerance) to the corresponding single-session kernel, across
+// odd sizes / tails / partial row ranges / batch sizes. This is the correctness
+// argument for lockstep decode: per-session token sequences cannot depend on
+// batch composition if the kernels are exact.
+// ========================================================================
+#[cfg(all(test, target_arch = "aarch64"))]
+mod tests {
+    use super::*;
+
+    // Deterministic LCG helpers so tests are reproducible without deps.
+    struct Rng(u64);
+    impl Rng {
+        fn new(seed: u64) -> Self { Rng(seed) }
+        fn next_u32(&mut self) -> u32 {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (self.0 >> 32) as u32
+        }
+        fn i8(&mut self) -> i8 { ((self.next_u32() % 255) as i32 - 127) as i8 }
+        fn f32_pm1(&mut self) -> f32 { (self.next_u32() as f32 / u32::MAX as f32) * 2.0 - 1.0 }
+    }
+
+    fn gen_w(rng: &mut Rng, rows: usize, in_dim: usize) -> (Vec<i8>, Vec<f32>) {
+        let w: Vec<i8> = (0..rows * in_dim).map(|_| rng.i8()).collect();
+        let s: Vec<f32> = (0..rows).map(|_| 0.001 + rng.f32_pm1().abs() * 0.02).collect();
+        (w, s)
+    }
+
+    // Per-session quantized inputs (realistic: quantize f32 activations).
+    fn gen_inputs(rng: &mut Rng, b: usize, in_dim: usize) -> (Vec<Vec<i8>>, Vec<f32>) {
+        let mut q = Vec::new();
+        let mut sc = Vec::new();
+        for _ in 0..b {
+            let x: Vec<f32> = (0..in_dim).map(|_| rng.f32_pm1() * 3.0).collect();
+            let (xi, s) = quantize_f32_to_int8(&x);
+            q.push(xi);
+            sc.push(s);
+        }
+        (q, sc)
+    }
+
+    #[test]
+    fn batched_matvec_matches_single() {
+        let mut rng = Rng::new(0xC0FFEE);
+        for &in_dim in &[16usize, 32, 48, 64, 17, 33, 1024] {
+            for &out_dim in &[1usize, 2, 7, 16, 31] {
+                for &b in &[1usize, 2, 3, 5, 6] {
+                    for use_bias in [false, true] {
+                        let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
+                        let (xi, xs) = gen_inputs(&mut rng, b, in_dim);
+                        let bias: Vec<Vec<f32>> = (0..b)
+                            .map(|_| (0..out_dim).map(|_| rng.f32_pm1()).collect())
+                            .collect();
+                        // partial range: middle slice + full
+                        for &(s, e) in &[(0usize, out_dim), (0, out_dim / 2), (out_dim / 3, out_dim)] {
+                            if s >= e { continue; }
+                            let xi_ptrs: Vec<*const i8> = xi.iter().map(|v| v.as_ptr()).collect();
+                            let bias_ptrs: Vec<*const f32> = bias.iter().map(|v| v.as_ptr()).collect();
+
+                            // Reference: single-session int8_matvec_range per session.
+                            let mut y_ref: Vec<Vec<f32>> = (0..b).map(|_| vec![0.0f32; out_dim]).collect();
+                            for j in 0..b {
+                                unsafe {
+                                    int8_matvec_range(
+                                        y_ref[j].as_mut_ptr(), xi[j].as_ptr(), xs[j],
+                                        w.as_ptr(), ws.as_ptr(),
+                                        if use_bias { Some(bias[j].as_ptr()) } else { None },
+                                        in_dim, s, e,
+                                    );
+                                }
+                            }
+                            // Batched.
+                            let mut y_bat: Vec<Vec<f32>> = (0..b).map(|_| vec![0.0f32; out_dim]).collect();
+                            let y_ptrs: Vec<*mut f32> = y_bat.iter_mut().map(|v| v.as_mut_ptr()).collect();
+                            unsafe {
+                                int8_matvec_range_batched(
+                                    b, &y_ptrs, &xi_ptrs, &xs, w.as_ptr(), ws.as_ptr(),
+                                    if use_bias { Some(&bias_ptrs) } else { None },
+                                    in_dim, s, e,
+                                );
+                            }
+                            for j in 0..b {
+                                assert_eq!(y_ref[j], y_bat[j],
+                                    "matvec mismatch in_dim={in_dim} out_dim={out_dim} b={b} bias={use_bias} range={s}..{e} sess={j}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn batched_swiglu_matches_single() {
+        let mut rng = Rng::new(0x5019_1000);
+        for &in_dim in &[16usize, 32, 48, 17, 1024] {
+            for &n_rows in &[1usize, 3, 8, 15] {
+                for &b in &[1usize, 2, 4, 6] {
+                    // gate_up has 2*n_rows weight rows (interleaved gate/up).
+                    let (w, ws) = gen_w(&mut rng, 2 * n_rows, in_dim);
+                    let (xi, xs) = gen_inputs(&mut rng, b, in_dim);
+                    for &(s, e) in &[(0usize, n_rows), (0, n_rows / 2), (n_rows / 3, n_rows)] {
+                        if s >= e { continue; }
+                        let xi_ptrs: Vec<*const i8> = xi.iter().map(|v| v.as_ptr()).collect();
+                        let mut ff_ref: Vec<Vec<f32>> = (0..b).map(|_| vec![0.0f32; n_rows]).collect();
+                        for j in 0..b {
+                            unsafe {
+                                int8_swiglu_range(
+                                    ff_ref[j].as_mut_ptr(), xi[j].as_ptr(), xs[j],
+                                    w.as_ptr(), ws.as_ptr(), in_dim, s, e,
+                                );
+                            }
+                        }
+                        let mut ff_bat: Vec<Vec<f32>> = (0..b).map(|_| vec![0.0f32; n_rows]).collect();
+                        let ff_ptrs: Vec<*mut f32> = ff_bat.iter_mut().map(|v| v.as_mut_ptr()).collect();
+                        unsafe {
+                            int8_swiglu_range_batched(
+                                b, &ff_ptrs, &xi_ptrs, &xs, w.as_ptr(), ws.as_ptr(), in_dim, s, e,
+                            );
+                        }
+                        for j in 0..b {
+                            assert_eq!(ff_ref[j], ff_bat[j],
+                                "swiglu mismatch in_dim={in_dim} n_rows={n_rows} b={b} range={s}..{e} sess={j}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn batched_qkv_matches_single() {
+        let mut rng = Rng::new(0xA11CE);
+        let in_dim = 1024usize;
+        for &(q_dim, kv_dim) in &[(2048usize, 1024usize), (32, 16), (48, 16)] {
+            for &b in &[1usize, 2, 4, 6] {
+                let total = q_dim + 2 * kv_dim;
+                let (wq, wqs) = gen_w(&mut rng, q_dim, in_dim);
+                let (wk, wks) = gen_w(&mut rng, kv_dim, in_dim);
+                let (wv, wvs) = gen_w(&mut rng, kv_dim, in_dim);
+                let (xi, xs) = gen_inputs(&mut rng, b, in_dim);
+                let xi_ptrs: Vec<*const i8> = xi.iter().map(|v| v.as_ptr()).collect();
+                for &(s, e) in &[(0usize, total), (0, q_dim + 3), (q_dim, k_end(q_dim, kv_dim) + 2), (k_end(q_dim, kv_dim), total)] {
+                    if s >= e { continue; }
+                    let mut q_ref: Vec<Vec<f32>> = (0..b).map(|_| vec![0.0f32; q_dim]).collect();
+                    let mut k_ref: Vec<Vec<f32>> = (0..b).map(|_| vec![0.0f32; kv_dim]).collect();
+                    let mut v_ref: Vec<Vec<f32>> = (0..b).map(|_| vec![0.0f32; kv_dim]).collect();
+                    for j in 0..b {
+                        unsafe {
+                            int8_qkv_range(
+                                q_ref[j].as_mut_ptr(), k_ref[j].as_mut_ptr(), v_ref[j].as_mut_ptr(),
+                                xi[j].as_ptr(), xs[j],
+                                wq.as_ptr(), wqs.as_ptr(), wk.as_ptr(), wks.as_ptr(),
+                                wv.as_ptr(), wvs.as_ptr(), in_dim, q_dim, kv_dim, s, e,
+                            );
+                        }
+                    }
+                    let mut q_bat: Vec<Vec<f32>> = (0..b).map(|_| vec![0.0f32; q_dim]).collect();
+                    let mut k_bat: Vec<Vec<f32>> = (0..b).map(|_| vec![0.0f32; kv_dim]).collect();
+                    let mut v_bat: Vec<Vec<f32>> = (0..b).map(|_| vec![0.0f32; kv_dim]).collect();
+                    let qp: Vec<*mut f32> = q_bat.iter_mut().map(|v| v.as_mut_ptr()).collect();
+                    let kp: Vec<*mut f32> = k_bat.iter_mut().map(|v| v.as_mut_ptr()).collect();
+                    let vp: Vec<*mut f32> = v_bat.iter_mut().map(|v| v.as_mut_ptr()).collect();
+                    unsafe {
+                        int8_qkv_range_batched(
+                            b, &qp, &kp, &vp, &xi_ptrs, &xs,
+                            wq.as_ptr(), wqs.as_ptr(), wk.as_ptr(), wks.as_ptr(),
+                            wv.as_ptr(), wvs.as_ptr(), in_dim, q_dim, kv_dim, s, e,
+                        );
+                    }
+                    for j in 0..b {
+                        assert_eq!(q_ref[j], q_bat[j], "qkv q mismatch qd={q_dim} kvd={kv_dim} b={b} range={s}..{e} sess={j}");
+                        assert_eq!(k_ref[j], k_bat[j], "qkv k mismatch qd={q_dim} kvd={kv_dim} b={b} range={s}..{e} sess={j}");
+                        assert_eq!(v_ref[j], v_bat[j], "qkv v mismatch qd={q_dim} kvd={kv_dim} b={b} range={s}..{e} sess={j}");
+                    }
+                }
+            }
+        }
+    }
+
+    fn k_end(q_dim: usize, kv_dim: usize) -> usize { q_dim + kv_dim }
+
+    #[test]
+    fn batched_argmax_matches_single() {
+        // lm_head is always tail-free (in_dim = dec_hidden = 1024), so restrict
+        // exactness to multiple-of-16 in_dim where the combined-tail form is
+        // byte-identical to argmax_int8_range.
+        let mut rng = Rng::new(0xF00D5);
+        for &in_dim in &[16usize, 32, 1024] {
+            for &out_dim in &[1usize, 4, 17, 128, 257] {
+                for &b in &[1usize, 2, 3, 5] {
+                    let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
+                    let (xi, xs) = gen_inputs(&mut rng, b, in_dim);
+                    let xi_ptrs: Vec<*const i8> = xi.iter().map(|v| v.as_ptr()).collect();
+
+                    // Reference: neon single-session argmax over the full range.
+                    let mut ref_best = vec![0usize; b];
+                    for j in 0..b {
+                        let (best, _) = unsafe {
+                            neon::argmax_int8_range(xi[j].as_ptr(), xs[j], w.as_ptr(), &ws, in_dim, 0, out_dim)
+                        };
+                        ref_best[j] = best;
+                    }
+
+                    // Batched neon core (single range).
+                    let mut best = vec![0usize; b];
+                    let mut best_val = vec![-1e30f32; b];
+                    unsafe {
+                        neon::argmax_int8_batched(b, &mut best, &mut best_val, &xi_ptrs, &xs, w.as_ptr(), &ws, in_dim, 0, out_dim);
+                    }
+                    assert_eq!(ref_best, best, "argmax core mismatch in_dim={in_dim} out_dim={out_dim} b={b}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn batched_argmax_toplevel_matches_single() {
+        // Exercise the threaded top-level entry against argmax_matvec_int8.
+        // Pin to 1 thread to avoid racing the global pool with parallel tests.
+        let saved = get_num_threads();
+        set_threads(1);
+        let mut rng = Rng::new(0x1234ABCD);
+        let in_dim = 1024usize;
+        for &out_dim in &[128usize, 1000, 4096] {
+            for &b in &[1usize, 2, 4] {
+                let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
+                let xs_f: Vec<Vec<f32>> = (0..b)
+                    .map(|_| (0..in_dim).map(|_| rng.f32_pm1() * 3.0).collect())
+                    .collect();
+                let refs: Vec<usize> = xs_f.iter()
+                    .map(|x| argmax_matvec_int8(x, &w, &ws, in_dim, out_dim))
+                    .collect();
+                let xs_ref: Vec<&[f32]> = xs_f.iter().map(|v| v.as_slice()).collect();
+                let bat = argmax_matvec_int8_batched(&xs_ref, &w, &ws, in_dim, out_dim);
+                assert_eq!(refs, bat, "argmax toplevel mismatch out_dim={out_dim} b={b}");
+            }
+        }
+        set_threads(saved);
+    }
 }

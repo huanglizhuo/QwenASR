@@ -6607,6 +6607,98 @@ noise, and it unblocks F5/F16/F28 (all previously "blocked by F27").
 
 ---
 
+### R12-E2: lockstep batched segment decode — Partial (kernels only)
+
+Motivation (the bandwidth math): single-token decode is DRAM-bound. Each token
+streams ~575 MB of INT8 weights (28 layers × {QKV, O, gate_up, down} + the
+155 MB lm_head) at ~115 GB/s effective (R11-D), so per-token time has a
+~4–5 ms floor set by weight traffic, not compute. L3's parallel-segment path
+runs B independent segment workers, each decoding on its own — that multiplies
+weight-bandwidth demand ×B and the workers contend for the one memory bus, so
+it saturates around K≈7 at ~2x (L3). The A-track lever (F5) is to advance B
+segments **in lockstep**: stream each weight row from DRAM once and apply it to
+all B session inputs before moving on, so decode weight traffic per token drops
+÷B while compute stays the same. INT8×INT8→i32 accumulation is exact and
+order-independent, so each session's output can be **bit-identical** to the
+sequential path by construction — the correctness argument for a batched
+scheduler.
+
+This stage lands the **batched kernels alone**, unit-tested for bit-identity,
+and defers the scheduler integration to stage 3 (see "Scope" below).
+
+Kernel design (loop order is the whole point):
+- Four batched decode kernels in `kernels/neon.rs`, mirroring the single-session
+  fused-decode kernels but with the loop order **weight rows outer, sessions
+  inner** — the streamed weight row sits in L1 and is reused across all B
+  sessions (B a small runtime value, 2–6; `MAX_BATCH = 8` stack-sized pointer
+  arrays, no const-generic explosion):
+  - `matvec_int8_batched` — O-proj / down-proj, optional per-session fused
+    residual add.
+  - `swiglu_int8_batched` — fused gate_up + SwiGLU (gate row `2j`, up row
+    `2j+1` streamed once, applied to all B).
+  - `argmax_int8_batched` — lm_head: streams each weight row once, updates B
+    running `(best, best_val)` pairs with the same strict-`>` index-stable
+    tie-break as the single kernel.
+  - Range wrappers in `kernels/mod.rs`: `int8_matvec_range_batched`,
+    `int8_qkv_range_batched` (q|k|v subrange split, three matvec dispatches),
+    `int8_swiglu_range_batched`, plus a threaded top-level
+    `argmax_matvec_int8_batched` (row-partition + per-session reduce). These are
+    the exact entry points the stage-3 scheduler will call inside its parallel
+    region (rows partitioned across threads; each thread streams its slice once
+    and applies it to all B).
+- **Bit-identity by construction.** The INT8 SDOT dot-product reduces to an
+  exact i32 sum regardless of accumulator grouping (int8×int8 ≤ 16129, ×1024
+  dims ≈ 16.5 M, well inside i32), so the batched kernels are free to group
+  SDOT however they like; they only replicate the single-session *float
+  combine + scalar-tail* expression per (row, session). Two shared row-dot
+  helpers encode those two float shapes exactly: `int8_row_dot_f32`
+  (per-element f32 tail, matches `matvec_int8` / `int8_swiglu_range`) and
+  `int8_row_dot_argmax` (integer-combined tail `(sum+tail) as f32 * s * ws`,
+  matches `argmax_int8_range`; tail-free for the real lm_head where
+  in_dim = dec_hidden = 1024).
+
+Verification (M5 Pro):
+- Build: zero warnings on default features, `-p qwen-asr --no-default-features`,
+  and the CLI crate. (Batched entry points carry
+  `#[allow(dead_code)]` "consumed by lockstep scheduler (R12-E2 stage 3)" so a
+  no-caller landing stays warning-clean.)
+- Tests: `cargo test --release -p qwen-asr` = **58 passed** (53 at HEAD + 5 new
+  exactness tests). The new `kernels::tests` module asserts, with **exact f32
+  equality** (`assert_eq!`, not tolerance), that each batched kernel's
+  per-session output equals `B×` the single-session kernel, sweeping odd sizes
+  and tails (in_dim ∈ {16,17,32,33,48,64,1024}), odd/even out_dim, partial row
+  ranges (including q/k/v boundary splits), batch sizes B ∈ {1,2,3,5,6}, and
+  the residual-bias on/off path. argmax exactness is asserted for tail-free
+  in_dim (the lm_head case) against both `neon::argmax_int8_range` and the
+  threaded `argmax_matvec_int8`.
+- CLI bit-identity is **trivial this stage**: no decode call-site was touched
+  (the batched kernels have no caller yet), so offline / `-S 30` / `--stream`
+  output is byte-identical to HEAD by construction. Confirmed the release
+  binary still transcribes `bench/samples/audio.wav` correctly.
+- No WER run (nothing in the decode path changed — R11-D policy).
+- No speed claim: the kernels are not yet wired into any path.
+
+Scope decision (why kernels-only): the lockstep **scheduler** is a ~400-line
+rewrite of the hottest 28-layer single-token region (`decoder.rs`) lifted to B
+coexisting `SegSession`s — per-session norms/RoPE/KV-write/quantize glue
+distributed across threads between barriers, per-session×head attention
+partitions, batched weight kernels for the heavy stages, **per-session position
+divergence** (each segment's `pos` and RoPE angles differ), ragged completion
+(shrink B as sessions hit their stop token), and wave/refill for
+segments > B. Its KEEP gate requires byte-identity across offline / segmented /
+streaming **and** the multi-segment long-audio workloads, plus a multi-minute
+B-sweep (2/4/6) benchmark. That cannot be built and verified cleanly in one
+session without risking a broken tree, so per the plan's scope-control clause a
+clean partial landing (kernels, unit-tested, zero warnings, no perf claim)
+beats a monster diff. The kernels are the reusable, verifiable-by-construction
+core; stage 3 consumes them as-is.
+
+Decision: **Partial (kernels only).** Batched INT8 decode kernels landed and
+proven bit-identical to the single-session path; lockstep scheduler integration
++ B-sweep + long-audio speed is stage 3.
+
+---
+
 ## Autoresearch Program Baseline Experiments
 
 These experiments come from the initial `codex-auto-research` autoresearch program baseline (`programs.md`). They are structural buffer-reuse optimizations that predate the numbered round structure above.

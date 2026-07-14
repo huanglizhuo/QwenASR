@@ -860,3 +860,167 @@ pub unsafe fn argmax_int8_range(
 
     (best, best_val)
 }
+
+// ========================================================================
+// Batched (lockstep) INT8 decode kernels (R12-E2)
+//
+// B small sessions advance one token together. The weight matrix is streamed
+// from DRAM ONCE per row (rows outer loop) and applied to all B session inputs
+// (sessions inner loop), so the ~575 MB/token decode weight stream is amortized
+// ÷B. INT8×INT8→i32 accumulation is exact and order-independent, so each
+// session's per-row integer dot equals what the single-session kernel computes;
+// the float combine + scalar-tail expressions below are byte-for-byte the same
+// as the single-session path, making every session's output BIT-IDENTICAL to a
+// standalone single-session call by construction. Proven by the exactness unit
+// tests in `kernels::tests`.
+// ========================================================================
+
+/// One output row's f32 value for `matvec_int8`-style kernels: SDOT integer
+/// dot (exact regardless of accumulator grouping) scaled by `x_scale*w_scale`,
+/// with a per-element f32 scalar tail. Byte-identical to the per-row math of
+/// [`matvec_int8`] (both its 2-row and 1-row-tail paths).
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn int8_row_dot_f32(
+    w_row: *const i8, x_int8: *const i8, x_scale: f32, w_scale: f32, in_dim: usize,
+) -> f32 {
+    let mut acc0 = vdupq_n_s32(0);
+    let mut acc1 = vdupq_n_s32(0);
+    let mut k = 0;
+    while k + 32 <= in_dim {
+        acc0 = sdot_s32(acc0, vld1q_s8(x_int8.add(k)), vld1q_s8(w_row.add(k)));
+        acc1 = sdot_s32(acc1, vld1q_s8(x_int8.add(k + 16)), vld1q_s8(w_row.add(k + 16)));
+        k += 32;
+    }
+    while k + 16 <= in_dim {
+        acc0 = sdot_s32(acc0, vld1q_s8(x_int8.add(k)), vld1q_s8(w_row.add(k)));
+        k += 16;
+    }
+    let mut val = vaddvq_s32(vaddq_s32(acc0, acc1)) as f32 * x_scale * w_scale;
+    while k < in_dim {
+        val += (*x_int8.add(k) as f32) * (*w_row.add(k) as f32) * x_scale * w_scale;
+        k += 1;
+    }
+    val
+}
+
+/// One output row's f32 value for `argmax_int8_range`-style scoring: integer
+/// dot with an integer-accumulated tail combined *before* the float conversion
+/// (`(sum + tail) as f32 * x_scale * w_scale`). Byte-identical to
+/// [`argmax_int8_range`] for tail-free `in_dim` (the lm_head case, in_dim =
+/// dec_hidden = 1024) and to its 2-row path in general.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn int8_row_dot_argmax(
+    w_row: *const i8, x_int8: *const i8, x_scale: f32, w_scale: f32, in_dim: usize,
+) -> f32 {
+    let mut acc0 = vdupq_n_s32(0);
+    let mut acc1 = vdupq_n_s32(0);
+    let mut k = 0;
+    while k + 32 <= in_dim {
+        acc0 = sdot_s32(acc0, vld1q_s8(x_int8.add(k)), vld1q_s8(w_row.add(k)));
+        acc1 = sdot_s32(acc1, vld1q_s8(x_int8.add(k + 16)), vld1q_s8(w_row.add(k + 16)));
+        k += 32;
+    }
+    while k + 16 <= in_dim {
+        acc0 = sdot_s32(acc0, vld1q_s8(x_int8.add(k)), vld1q_s8(w_row.add(k)));
+        k += 16;
+    }
+    let sum = vaddvq_s32(vaddq_s32(acc0, acc1));
+    let mut tail = 0i32;
+    while k < in_dim {
+        tail += (*x_int8.add(k) as i32) * (*w_row.add(k) as i32);
+        k += 1;
+    }
+    (sum + tail) as f32 * x_scale * w_scale
+}
+
+/// Batched INT8 matvec: for each output row, stream the weight row once and
+/// apply it to all `b` sessions (each with its own quantized input + scale +
+/// output + optional residual bias). `y[bi]`/`x_int8[bi]`/`bias[bi]` point at
+/// the first element each session writes/reads (already offset by the caller);
+/// `w_int8`/`w_scales` cover rows `[0, out_dim)`. Row-`o`, session-`bi` output
+/// equals `matvec_int8`'s row-`o` output for that session, exactly.
+///
+/// # Safety
+/// All pointers must be valid for the stated ranges; slices have length `b`.
+#[cfg(target_arch = "aarch64")]
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn matvec_int8_batched(
+    b: usize,
+    y: &[*mut f32], x_int8: &[*const i8], x_scale: &[f32],
+    w_int8: *const i8, w_scales: &[f32],
+    bias: Option<&[*const f32]>,
+    in_dim: usize, out_dim: usize,
+) {
+    for o in 0..out_dim {
+        let w_row = w_int8.add(o * in_dim);
+        let ws = w_scales[o];
+        for bi in 0..b {
+            let mut val = int8_row_dot_f32(w_row, x_int8[bi], x_scale[bi], ws, in_dim);
+            if let Some(bs) = bias {
+                val += *bs[bi].add(o);
+            }
+            *y[bi].add(o) = val;
+        }
+    }
+}
+
+/// Batched fused gate_up + SwiGLU. For each intermediate row `j`, stream the
+/// gate row `2j` and up row `2j+1` once and apply to all `b` sessions.
+/// `ffn[bi]` points at the first output row (already offset); `w_int8` at gate
+/// row `0`; `w_scales` covers `2*n_rows` interleaved gate/up scales. Byte-
+/// identical to [`int8_swiglu_range`] per (row, session).
+///
+/// # Safety
+/// All pointers must be valid for the stated ranges; slices have length `b`.
+#[cfg(target_arch = "aarch64")]
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn swiglu_int8_batched(
+    b: usize,
+    ffn: &[*mut f32], x_int8: &[*const i8], x_scale: &[f32],
+    w_int8: *const i8, w_scales: &[f32],
+    in_dim: usize, n_rows: usize,
+) {
+    for j in 0..n_rows {
+        let wg = w_int8.add(2 * j * in_dim);
+        let wu = w_int8.add((2 * j + 1) * in_dim);
+        let sg = w_scales[2 * j];
+        let su = w_scales[2 * j + 1];
+        for bi in 0..b {
+            let g = int8_row_dot_f32(wg, x_int8[bi], x_scale[bi], sg, in_dim);
+            let u = int8_row_dot_f32(wu, x_int8[bi], x_scale[bi], su, in_dim);
+            *ffn[bi].add(j) = g / (1.0 + (-g).exp()) * u;
+        }
+    }
+}
+
+/// Batched INT8 argmax (lm_head): stream each weight row of `[start, end)` once
+/// and update every session's running `(best, best_val)` with index-stable
+/// tie-breaking (strict `>`, so the lowest row index wins ties — identical to
+/// [`argmax_int8_range`]). `best`/`best_val` are per-session running state
+/// (init to `0` / `-1e30`); call across disjoint row ranges then reduce.
+///
+/// # Safety
+/// All pointers must be valid for the stated ranges; slices have length `b`.
+#[cfg(target_arch = "aarch64")]
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn argmax_int8_batched(
+    b: usize,
+    best: &mut [usize], best_val: &mut [f32],
+    x_int8: &[*const i8], x_scale: &[f32],
+    w_int8: *const i8, w_scales: &[f32],
+    in_dim: usize, start: usize, end: usize,
+) {
+    for o in start..end {
+        let w_row = w_int8.add(o * in_dim);
+        let ws = w_scales[o];
+        for bi in 0..b {
+            let val = int8_row_dot_argmax(w_row, x_int8[bi], x_scale[bi], ws, in_dim);
+            if val > best_val[bi] {
+                best_val[bi] = val;
+                best[bi] = o;
+            }
+        }
+    }
+}
