@@ -6699,6 +6699,162 @@ proven bit-identical to the single-session path; lockstep scheduler integration
 
 ---
 
+### R12-E3: lockstep batched segment decode scheduler — KEPT
+
+Stage 3 of the A-track (F5): the scheduler that consumes the R12-E2 batched
+kernels. On the multi-segment path, up to B live segment sessions now advance
+ONE token together through a batched single-token forward, so each decode
+weight row is streamed from DRAM once and applied to all B session inputs —
+decode weight bytes/token ÷B against the R11-D ~115 GB/s wall, instead of L3's
+B independent workers each streaming the full ~575 MB/token set.
+
+**Pre-implementation probe (drove the whole design).** The per-segment
+pipeline is NOT thread-count-invariant at HEAD: on long-10min `-S 30`, the
+default L3 path (nt=1 workers) gives md5 `80b4039c…` while forced-serial
+`QWEN_ASR_SEG_WORKERS=1` (nt=12 pipeline) gives `19925d0d…` — the L3-era
+divergence is still present, and it lives in the mel/encode/prefill half
+(pooled sgemm vs direct calls), not in the INT8 decode. Consequence: to stay
+byte-identical to the HEAD binary on multi-segment workloads, segment prefill
+must keep running in the exact L3 worker environment (`set_thread_override(1)`
+single-threaded workers); only the decode half may change execution shape,
+because only it is exact-by-construction.
+
+**`decoder_forward_batched`** (decoder.rs, aarch64): mirrors the fused
+single-token `parallel_region` stage for stage, generalized over B sessions
+(`BatchedSession { kv_cache, rope, bufs, input_embed }`, per-session `pos`
+divergence, per-session RoPE rows and KV strides):
+- Heavy stages call the four R12-E2 batched entry points
+  (`int8_qkv_range_batched`, `int8_matvec_range_batched` ×2 with fused
+  residual, `int8_swiglu_range_batched`) — weight rows partitioned across
+  threads exactly as before, sessions inner.
+- Serial glue (pre/post norms, q/k head norms, RoPE, KV write, activation
+  quantization, final norm) is STRIPED across threads by session index
+  (`bi = tid; bi += nt`) between barriers instead of tid-0-only, so B× glue
+  does not serialize. Same serial per-session code ⇒ same bits.
+- Attention: a flat work list of B×n_kv_heads (session, GQA-group) items
+  striped over threads; each item calls the existing
+  `causal_attention_heads` with that session's `pos`/`total_seq`/KV base.
+  Per-group output is independent of the partition, so bits are unchanged.
+- lm_head: `argmax_matvec_int8_batched` streams the 155 MB head once for all
+  live sessions (index-stable tie-breaks, R12-E2-tested).
+- `b == 1` delegates to the tuned single-session `decoder_forward`.
+Bit-identity per session is by construction: INT8 integer accumulation is
+exact under any row partitioning/batch composition, and every float combine
+replicates the single-session expression per (row, session).
+
+**Wave scheduler → dynamic refill** (transcribe.rs). The first cut used
+wave-boundary refill (prefill B segments, lockstep-decode until the wave
+drains, repeat). It was byte-identical but only ~5% faster than L3 at B=8
+(11.3 s vs 11.9 s on long-10min): with ~20 segments × ~2 s of single-threaded
+prefill each, the un-overlapped prefill phases ate most of the decode win.
+Landed design: **dynamic refill** — `B + lookahead` sessions circulate between
+background single-threaded prefill workers and the live decode set through an
+`mpsc` channel; when a segment finishes decoding, its session is immediately
+recycled into a prefill worker for the next unstarted segment. Prefill overlaps
+decode continuously and the live set stays near B. Batch composition/order is
+nondeterministic (prefill completion order), which is safe precisely because
+the batched step is exact per session regardless of composition — the
+transcript is still byte-identical. Per-segment `decode_ms` carries its own
+prefill time; the shared lockstep decode wall is accounted once.
+`decode_segment_core` was refactored into `prefill_segment_core` + the decode
+loop (serial path = same code, just factored; short-path behavior unchanged).
+
+B sweep (long-10min `-S 30`, lookahead 6, inference s; medians of 3 where
+marked, else single runs; L3 = same binary with `QWEN_ASR_SEG_LOCKSTEP=0`):
+
+| Config | inference |
+|--------|----------:|
+| L3 independent workers (K=14) | 12.2 s (median 3) |
+| lockstep B=2 | 12.0 s |
+| lockstep B=4 | 11.2 s |
+| lockstep B=6 | 10.5 s (median 3: 9.9) |
+| lockstep B=8 | **9.8 s (median 3)** |
+| (wave-boundary refill, B=8, for reference) | 11.3 s |
+
+Monotone in B up to `MAX_BATCH = 8` → **default B = 8** (`min(MAX_BATCH,
+n_splits)`), lookahead 6 (sweep over 2/4/6/8 was flat within noise; 6 keeps
+~5-6 prefill workers busy, which matches the measured prefill/decode work
+ratio). Internal debug-only env knobs, same convention as
+`QWEN_ASR_SEG_WORKERS`: `QWEN_ASR_SEG_BATCH`, `QWEN_ASR_SEG_LOOKAHEAD`,
+`QWEN_ASR_SEG_LOCKSTEP=0` (A/B escape to the L3 path). The committed default
+is static (lockstep on).
+
+**Bit-identity gate (HEAD binary vs new, byte-compared stdout):** IDENTICAL on
+all seven workloads — audio.wav offline / `-S 30` / `--stream`, long-2min
+offline / `-S 30`, long-10min offline / `-S 30` (`80b4039c…` and `4799ffc6…`
+reproduce the recorded L3 hashes, so every segment's text is identical). WER
+therefore unchanged by construction; no WER run (R11-D policy).
+
+**Speed.** Short gate (`bench/run.sh --runs 5`, two back-to-back pairs,
+median inference ms; audio.wav is single-segment at `-S 30` so lockstep is
+not exercised — neutrality check):
+
+| Mode | HEAD p1 | NEW p1 | HEAD p2 | NEW p2 |
+|------|--------:|-------:|--------:|-------:|
+| offline | 600 | 599 | 604 | 598 |
+| segmented | 606 | 604 | 601 | 612 |
+| streaming | 566 | 561 | 560 | 564 |
+
+All within the ±1.5% noise band, no consistent direction.
+
+Long-audio (`bench/long/run_long.sh --runs 3`, median inference; RSS =
+median peak):
+
+| Sample / mode | HEAD | NEW | Δ |
+|---------------|-----:|----:|---|
+| long-10min segmented | 12951 ms (46.5x) | **11596 ms (52.0x)** | **−10.5%** |
+| long-2min segmented | 3208 ms (37.6x) | **2564 ms (47.1x)** | **−20.1%** |
+| long-10min offline | 59478 ms | 60722 ms | thermal noise (below) |
+| long-2min offline | 4323 ms | 4741 ms | thermal noise (below) |
+| segmented WER 10min/2min | 0.03244 / 0.042857 | 0.03244 / 0.042857 | unchanged |
+| segmented RSS 10min | 11.45 GB | 11.47 GB | ≈ (14 sessions both) |
+
+The run_long pairs ran HEAD-then-NEW; interleaved A/B puts the true segmented
+delta higher (long-10min lockstep 9.5/9.8 s vs L3 12.1/12.4 s ≈ −20%). The
+apparent offline regressions are run-order/thermal artifacts, not code: the
+offline path is byte-identical code, and interleaved medians show no
+direction — long-2min offline HEAD 4732 ms vs NEW 4653 ms (NEW faster, 5
+rounds); long-10min offline swings 47–66 s with whichever binary runs first
+after cooldown winning (NEW-first: NEW 47.0 vs HEAD 61.9; HEAD-first: HEAD
+55.5 vs NEW 57.0).
+
+**Pool bug found & fixed** (kernels/pool.rs): `pool_worker` initialized
+`last_gen = 0`, so a worker spawned by `ensure_workers` AFTER dispatches had
+already advanced the generation counter (i.e. `set_threads` growing the pool
+mid-process — the new integration test does this; the CLI never did) treated
+the last long-completed dispatch as fresh work and replayed its dead closure
+frame → SIGSEGV. Fix: initialize `last_gen` from the current generation.
+Numerics-neutral. (Latent, still-unfixed cousin, noted for the record:
+dispatching with `1 < nt < spawned_workers` would let extra workers run the
+closure and over-count `done_atomic`; nothing in the repo downsizes the pool
+that way, and the new test grows it only.)
+
+Verification: zero warnings (default features, `-p qwen-asr
+--no-default-features`, CLI crate); `cargo test --release` = **59 passed**
+(58 at HEAD + new `lockstep_multi_segment_matches_serial`, which asserts a
+multi-segment transcription via lockstep at nt=1, nt=4, and forced B=2
+(shrink+refill) is byte-identical to the segment-by-segment sequential serial
+decode at nt=1).
+
+Decision: **KEPT.** Segmented long-audio improves −10.5% (long-10min) and
+−20.1% (long-2min) at run_long medians (≈ −20% interleaved), byte-identical
+everywhere, short 3-mode neutral. Below the 15–30% hope on the 10-min run
+because the job is no longer decode-dominated: with B=8 the decode weight
+stream drops ~8× and the ~40 core-seconds of nt=1-pinned prefill (which
+bit-identity forces) becomes a co-equal cost that dynamic refill can only
+partially hide behind the shorter decode phase.
+
+Remains / next: (a) prefill is now the binding constraint on the segmented
+path — either prove pooled-GEMM prefill bit-identity per-stage (would lift the
+nt=1 pin) or accept a documented transcript change in a future round;
+(b) B > 8 (`MAX_BATCH` bump) once prefill can keep a bigger live set fed;
+(c) streaming lockstep (the streaming path decodes one chunk at a time and
+never batches); (d) self-speculative decode reusing the same batched kernels
+(B speculative continuations of one stream); (e) the pool downsize hazard
+above if anything ever needs `set_threads` shrink-then-dispatch.
+
+---
+
 ## Autoresearch Program Baseline Experiments
 
 These experiments come from the initial `codex-auto-research` autoresearch program baseline (`programs.md`). They are structural buffer-reuse optimizations that predate the numbered round structure above.

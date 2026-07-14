@@ -824,7 +824,7 @@ pub(crate) const MAX_BATCH: usize = 8;
 /// sessions. `y[bi]`/`x_int8[bi]`/`bias[bi]` are per-session base pointers.
 #[cfg(target_arch = "aarch64")]
 #[inline]
-#[allow(clippy::too_many_arguments, dead_code)] // consumed by the lockstep scheduler (R12-E2 stage 3)
+#[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn int8_matvec_range_batched(
     b: usize,
     y: &[*mut f32], x_int8: &[*const i8], x_scale: &[f32],
@@ -854,7 +854,7 @@ pub(crate) unsafe fn int8_matvec_range_batched(
 /// concatenated `q|k|v` rows, for all `b` sessions.
 #[cfg(target_arch = "aarch64")]
 #[inline]
-#[allow(clippy::too_many_arguments, dead_code)] // consumed by the lockstep scheduler (R12-E2 stage 3)
+#[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn int8_qkv_range_batched(
     b: usize,
     q: &[*mut f32], k: &[*mut f32], v: &[*mut f32],
@@ -899,7 +899,7 @@ pub(crate) unsafe fn int8_qkv_range_batched(
 /// for all `b` sessions.
 #[cfg(target_arch = "aarch64")]
 #[inline]
-#[allow(clippy::too_many_arguments, dead_code)] // consumed by the lockstep scheduler (R12-E2 stage 3)
+#[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn int8_swiglu_range_batched(
     b: usize,
     ffn: &[*mut f32], x_int8: &[*const i8], x_scale: &[f32],
@@ -1850,7 +1850,6 @@ pub fn argmax_matvec_int8(x: &[f32], w_int8: &[i8], w_scales: &[f32], in_dim: us
 /// decode's per-token vocabulary scoring. Row partitioning + strict-`>` reduce
 /// give the same index-stable tie-break as the single-session kernel.
 #[cfg(target_arch = "aarch64")]
-#[allow(dead_code)] // consumed by the lockstep scheduler (R12-E2 stage 3)
 pub fn argmax_matvec_int8_batched(
     xs: &[&[f32]], w_int8: &[i8], w_scales: &[f32], in_dim: usize, out_dim: usize,
 ) -> Vec<usize> {

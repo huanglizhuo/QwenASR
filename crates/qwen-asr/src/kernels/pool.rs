@@ -39,7 +39,11 @@ fn get_pool() -> &'static Arc<ThreadPool> {
 }
 
 fn pool_worker(pool: Arc<ThreadPool>, tid: usize) {
-    let mut last_gen: u64 = 0;
+    // Start from the CURRENT generation: a worker spawned after dispatches
+    // have already happened (set_threads growing the pool mid-process, e.g.
+    // in tests) must not "see" the last long-completed dispatch as new work
+    // and replay its dead closure frame.
+    let mut last_gen: u64 = pool.gen_atomic.load(Ordering::Acquire);
     loop {
         // Fast path: spin briefly on atomic generation counter
         let mut found = false;

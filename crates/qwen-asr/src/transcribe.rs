@@ -182,28 +182,37 @@ struct SegCore {
     total_ms: f64,
 }
 
-/// Decode a single segment against shared `weights` using a worker-owned
-/// `session`. `on_piece` receives the raw bytes of each decoded *text* token as
-/// it is produced (the serial path streams these through `token_cb`; the
-/// parallel path captures them for ordered replay). This function touches no
-/// [`QwenCtx`] state, so it is safe to run on many threads concurrently as long
-/// as each call has its own `session`.
-#[allow(clippy::too_many_arguments)]
-fn decode_segment_core(
+/// Result of the segment "front half": mel → encoder → embedding assembly →
+/// decoder prefill. The session's KV cache holds the prefilled context; the
+/// autoregressive decode starts by feeding `next_embed` (the last prefill
+/// position's embedding) through one decoder forward.
+struct SegPrefilled {
+    /// Embedding of the last prefill position (input to the first forward).
+    next_embed: Vec<f32>,
+    /// Mel + encoder time (ms).
+    encode_ms: f64,
+    /// Decoder prefill time (ms), excluding the first forward.
+    prefill_ms: f64,
+    /// Wall anchor for the whole segment (start of the mel step).
+    seg_t0: f64,
+}
+
+/// Segment front half against shared `weights` using worker-owned session
+/// buffers: mel spectrogram, encoder, prompt/encoder embedding assembly and
+/// decoder prefill. Touches no [`QwenCtx`] state, so it is safe to run on many
+/// threads concurrently as long as each call has its own session buffers.
+fn prefill_segment_core(
     weights: &SegWeights,
     kv_cache: &mut KvCache,
     rope_cache: &mut RopeCache,
     dec_bufs: &mut DecoderBuffers,
     enc_bufs: &mut EncoderBuffers,
-    tokenizer: &QwenTokenizer,
     samples: &[f32],
     past_tokens: Option<&[i32]>,
-    on_piece: &mut dyn FnMut(&[u8]),
-) -> Option<SegCore> {
+) -> Option<SegPrefilled> {
     let cfg = weights.cfg;
     let dim = cfg.dec_hidden;
     let seg_t0 = get_time_ms();
-    let mut n_text_tokens = 0i32;
 
     // Mel spectrogram
     let t0 = get_time_ms();
@@ -355,25 +364,61 @@ fn decode_segment_core(
         &input_embeds,
         prefill_len,
     );
+    let prefill_ms = elapsed_ms(t0);
 
-    // First token from last prefill position
-    let last_embed = &input_embeds[prefill_len * dim..(prefill_len + 1) * dim];
+    if kernels::verbose() >= 2 {
+        eprintln!("  Prefill: {} tokens ({:.0} ms)", total_seq, prefill_ms);
+    }
+
+    Some(SegPrefilled {
+        next_embed: input_embeds[prefill_len * dim..(prefill_len + 1) * dim].to_vec(),
+        encode_ms: mel_ms + enc_ms,
+        prefill_ms,
+        seg_t0,
+    })
+}
+
+/// Decode a single segment against shared `weights` using a worker-owned
+/// `session`. `on_piece` receives the raw bytes of each decoded *text* token as
+/// it is produced (the serial path streams these through `token_cb`; the
+/// parallel path captures them for ordered replay). This function touches no
+/// [`QwenCtx`] state, so it is safe to run on many threads concurrently as long
+/// as each call has its own `session`.
+#[allow(clippy::too_many_arguments)]
+fn decode_segment_core(
+    weights: &SegWeights,
+    kv_cache: &mut KvCache,
+    rope_cache: &mut RopeCache,
+    dec_bufs: &mut DecoderBuffers,
+    enc_bufs: &mut EncoderBuffers,
+    tokenizer: &QwenTokenizer,
+    samples: &[f32],
+    past_tokens: Option<&[i32]>,
+    on_piece: &mut dyn FnMut(&[u8]),
+) -> Option<SegCore> {
+    let cfg = weights.cfg;
+    let dim = cfg.dec_hidden;
+    let mut n_text_tokens = 0i32;
+    let n_past = past_tokens.map_or(0, |t| t.len());
+    let tok_emb = weights.decoder.tok_embeddings_bf16;
+
+    let pre = prefill_segment_core(
+        weights, kv_cache, rope_cache, dec_bufs, enc_bufs, samples, past_tokens,
+    )?;
+
+    // Autoregressive decode (the first token comes from the last prefill
+    // position's embedding; its forward is counted as decode time here, while
+    // the reported per-segment decode_ms below still covers prefill + decode
+    // exactly as before).
+    let t0 = get_time_ms();
     let mut token = decoder::decoder_forward(
         weights.decoder,
         cfg,
         kv_cache,
         rope_cache,
         dec_bufs,
-        last_embed,
+        &pre.next_embed,
     );
-
-    let prefill_ms = elapsed_ms(t0);
-    if kernels::verbose() >= 2 {
-        eprintln!("  Prefill: {} tokens ({:.0} ms)", total_seq, prefill_ms);
-    }
-
-    // Autoregressive decode
-    let t0 = get_time_ms();
     let max_tokens = 2048;
     let mut n_generated = 0;
     let mut past_asr_text = weights.has_prefilled_asr_text || n_past > 0;
@@ -433,9 +478,9 @@ fn decode_segment_core(
         text: trimmed,
         header_bytes,
         n_text_tokens,
-        encode_ms: mel_ms + enc_ms,
-        decode_ms: prefill_ms + decode_ms,
-        total_ms: elapsed_ms(seg_t0),
+        encode_ms: pre.encode_ms,
+        decode_ms: pre.prefill_ms + decode_ms,
+        total_ms: elapsed_ms(pre.seg_t0),
     })
 }
 
@@ -862,12 +907,23 @@ pub fn transcribe_audio(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
     let use_past_text = ctx.past_text_conditioning;
 
     // Parallel fast path: when segments are independent (no past-text
-    // conditioning) and there is more than one, decode them concurrently across
-    // K single-threaded workers (see `transcribe_splits_parallel`). Each
-    // segment's decode is bit-identical to the serial path, so the assembled
-    // transcript is byte-identical. Past-text conditioning creates a serial
-    // dependency (segment N's prompt = segment N-1's text) and stays serial.
+    // conditioning) and there is more than one, decode them concurrently.
+    // On aarch64 the default is the lockstep batched scheduler (R12-E3):
+    // waves of segments advance one token together so the decode weight
+    // stream is amortized across the wave. Otherwise (or when lockstep is
+    // disabled) fall back to the L3 independent-worker path. Each segment's
+    // decode is bit-identical to the serial path in both schemes, so the
+    // assembled transcript is byte-identical. Past-text conditioning creates
+    // a serial dependency (segment N's prompt = segment N-1's text) and stays
+    // serial.
     if !use_past_text && n_splits > 1 {
+        #[cfg(target_arch = "aarch64")]
+        {
+            let b = lockstep_batch_size(n_splits);
+            if b >= 2 {
+                return transcribe_splits_lockstep(ctx, &audio_samples, &splits, &tokenizer, b);
+            }
+        }
         let k = segment_worker_count(n_splits);
         if k >= 2 {
             return transcribe_splits_parallel(ctx, &audio_samples, &splits, &tokenizer, k);
@@ -969,25 +1025,11 @@ fn segment_worker_count(n_splits: usize) -> usize {
     base.clamp(1, n_splits.max(1))
 }
 
-/// Decode independent segments concurrently. Each of `k` workers runs its
-/// kernels single-threaded (`set_thread_override(1)`) and owns its session
-/// buffers, so `k` segments occupy `k` cores with no shared thread-pool
-/// barriers — the in-process analogue of L2's independent processes, but
-/// sharing one immutable weight set. Segments are assigned round-robin for load
-/// balance; results are reassembled in segment order so the transcript (and the
-/// streamed `token_cb` byte order) is identical to the serial path.
-fn transcribe_splits_parallel(
-    ctx: &mut QwenCtx,
-    audio_samples: &[f32],
-    splits: &[usize],
-    tokenizer: &QwenTokenizer,
-    k: usize,
-) -> Option<String> {
+/// Per-segment owned sample buffers (mirrors the serial short-segment
+/// zero-padding). Owned so each worker can borrow its input across a scope.
+fn build_seg_inputs(audio_samples: &[f32], splits: &[usize]) -> Vec<Vec<f32>> {
     let n_splits = splits.len();
     let min_samples = SAMPLE_RATE as usize / 2;
-
-    // Per-segment owned sample buffers (mirrors the serial short-segment
-    // zero-padding). Owned so each worker can borrow its input across the scope.
     let mut seg_inputs: Vec<Vec<f32>> = Vec::with_capacity(n_splits);
     for s in 0..n_splits {
         let seg_start = splits[s];
@@ -1006,6 +1048,78 @@ fn transcribe_splits_parallel(
         };
         seg_inputs.push(buf);
     }
+    seg_inputs
+}
+
+/// One decoded segment held for ordered replay: the core result plus the text
+/// pieces in the order the decode produced them (what the serial path streams
+/// live through `token_cb`).
+struct SegOut {
+    core: SegCore,
+    streamed: String,
+}
+
+/// Ordered assembly of per-segment outputs — byte-for-byte equivalent to the
+/// serial segment loop. The streamed pieces are replayed through `token_cb` in
+/// segment order (reproducing the serial stdout byte stream exactly), then the
+/// segment texts are joined with the serial path's boundary-space rule.
+fn assemble_segment_outputs(ctx: &mut QwenCtx, slots: Vec<Option<SegOut>>) -> String {
+    let mut result = String::new();
+    for slot in slots.into_iter() {
+        let out = match slot {
+            Some(o) => o,
+            None => continue,
+        };
+        if !out.streamed.is_empty() {
+            if let Some(ref cb) = ctx.token_cb {
+                cb(&out.streamed);
+            }
+        }
+        apply_seg_core(ctx, &out.core);
+
+        let seg_text = out.core.text;
+        if seg_text.is_empty() {
+            continue;
+        }
+        let need_space = if !result.is_empty() {
+            let prev = *result.as_bytes().last().unwrap_or(&0);
+            let next = *seg_text.as_bytes().first().unwrap_or(&0);
+            should_insert_boundary_space(prev, next)
+        } else {
+            false
+        };
+        if need_space {
+            result.push(' ');
+            if let Some(ref cb) = ctx.token_cb {
+                cb(" ");
+            }
+        }
+        if let Some(ref cb) = ctx.token_cb {
+            if ctx.past_text_conditioning {
+                cb(&seg_text);
+            }
+        }
+        result.push_str(&seg_text);
+    }
+    result
+}
+
+/// Decode independent segments concurrently. Each of `k` workers runs its
+/// kernels single-threaded (`set_thread_override(1)`) and owns its session
+/// buffers, so `k` segments occupy `k` cores with no shared thread-pool
+/// barriers — the in-process analogue of L2's independent processes, but
+/// sharing one immutable weight set. Segments are assigned round-robin for load
+/// balance; results are reassembled in segment order so the transcript (and the
+/// streamed `token_cb` byte order) is identical to the serial path.
+fn transcribe_splits_parallel(
+    ctx: &mut QwenCtx,
+    audio_samples: &[f32],
+    splits: &[usize],
+    tokenizer: &QwenTokenizer,
+    k: usize,
+) -> Option<String> {
+    let n_splits = splits.len();
+    let seg_inputs = build_seg_inputs(audio_samples, splits);
 
     if kernels::verbose() >= 2 {
         eprintln!(
@@ -1023,11 +1137,6 @@ fn transcribe_splits_parallel(
         force_prompt_tokens: ctx.force_prompt_tokens.as_deref(),
         has_prefilled_asr_text: has_prefilled_asr_text(ctx),
     };
-
-    struct SegOut {
-        core: SegCore,
-        streamed: String,
-    }
 
     let weights_ref = &weights;
     let seg_inputs_ref = &seg_inputs;
@@ -1086,51 +1195,310 @@ fn transcribe_splits_parallel(
         slots[idx] = Some(out);
     }
 
-    // Ordered assembly — byte-for-byte equivalent to the serial loop. The
-    // streamed pieces (step 1) are what the serial path emits live through
-    // `token_cb` during each segment's decode; replaying them in segment order
-    // reproduces the exact stdout byte stream.
-    let mut result = String::new();
-    for slot in slots.into_iter() {
-        let out = match slot {
-            Some(o) => o,
-            None => continue,
-        };
-        if !out.streamed.is_empty() {
-            if let Some(ref cb) = ctx.token_cb {
-                cb(&out.streamed);
-            }
-        }
-        apply_seg_core(ctx, &out.core);
-
-        let seg_text = out.core.text;
-        if seg_text.is_empty() {
-            continue;
-        }
-        let need_space = if !result.is_empty() {
-            let prev = *result.as_bytes().last().unwrap_or(&0);
-            let next = *seg_text.as_bytes().first().unwrap_or(&0);
-            should_insert_boundary_space(prev, next)
-        } else {
-            false
-        };
-        if need_space {
-            result.push(' ');
-            if let Some(ref cb) = ctx.token_cb {
-                cb(" ");
-            }
-        }
-        if let Some(ref cb) = ctx.token_cb {
-            if ctx.past_text_conditioning {
-                cb(&seg_text);
-            }
-        }
-        result.push_str(&seg_text);
-    }
+    let result = assemble_segment_outputs(ctx, slots);
 
     // Report the parallel region's wall time as the inference time: the honest
     // latency of decoding all segments (per-segment `encode_ms`/`decode_ms`
     // remain component sums and now overlap in wall time).
+    ctx.perf_total_ms += region_ms;
+    Some(result)
+}
+
+/// Lockstep batch size (live-session cap) for the multi-segment decode path
+/// (R12-E3); see the R12-E3 B sweep for the default. Internal tuning knobs,
+/// not part of any public API: `QWEN_ASR_SEG_BATCH` overrides the batch size,
+/// `QWEN_ASR_SEG_LOOKAHEAD` the prefill lookahead, and
+/// `QWEN_ASR_SEG_LOCKSTEP=0` disables lockstep entirely (falls back to the L3
+/// independent-worker path) for debug A/B comparisons.
+#[cfg(target_arch = "aarch64")]
+fn lockstep_batch_size(n_splits: usize) -> usize {
+    let enabled = std::env::var("QWEN_ASR_SEG_LOCKSTEP")
+        .map(|v| v != "0")
+        .unwrap_or(true);
+    if !enabled {
+        return 1;
+    }
+    let b = std::env::var("QWEN_ASR_SEG_BATCH")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(kernels::MAX_BATCH);
+    b.min(kernels::MAX_BATCH).min(n_splits)
+}
+
+/// Number of extra sessions kept in flight in background prefill workers ahead
+/// of decode demand (R12-E3). Each costs one session's buffers (~0.5 GB) and
+/// one single-threaded worker while active.
+#[cfg(target_arch = "aarch64")]
+fn lockstep_lookahead() -> usize {
+    std::env::var("QWEN_ASR_SEG_LOOKAHEAD")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(6)
+}
+
+/// Per-segment token state machine for the lockstep decode loop. Mirrors the
+/// autoregressive loop in [`decode_segment_core`] exactly, advanced one
+/// produced token at a time.
+#[cfg(target_arch = "aarch64")]
+struct LockstepSeg {
+    seg_idx: usize,
+    /// Input embedding for the next decoder forward.
+    next_embed: Vec<f32>,
+    n_generated: usize,
+    past_asr_text: bool,
+    text_bytes: Vec<u8>,
+    header_bytes: Vec<u8>,
+    n_text_tokens: i32,
+    streamed: String,
+    encode_ms: f64,
+    prefill_ms: f64,
+    seg_t0: f64,
+    done: bool,
+}
+
+/// Decode independent segments with the lockstep batched scheduler (R12-E3).
+///
+/// Segments are prefilled by background single-threaded workers (bit-identical
+/// to the L3 independent-worker path by construction — the per-segment
+/// mel/encode/prefill pipeline is NOT thread-count-invariant, so it must run
+/// exactly as it does there), and up to `b_max` prefilled sessions advance ONE
+/// token together through [`decoder::decoder_forward_batched`]: each decode
+/// weight row is streamed from DRAM once and applied to all live sessions,
+/// cutting the ~575 MB/token decode weight traffic (the R11-D DRAM wall) by
+/// the live batch factor. The batched step is bit-identical to the
+/// single-session step per session (INT8 exactness, R12-E2) regardless of the
+/// batch composition, so the assembled transcript is byte-identical to both
+/// the L3 parallel path and the serial loop even though prefill completion
+/// order is nondeterministic.
+///
+/// Refill policy: dynamic — `b_max + lookahead` sessions circulate between
+/// background prefill workers and the live decode set through a channel. When
+/// a segment finishes decoding, its session is immediately recycled into a
+/// prefill worker for the next unstarted segment, so prefill overlaps decode
+/// instead of stalling it at wave boundaries, and the live set stays near
+/// `b_max` for maximal weight-stream amortization.
+#[cfg(target_arch = "aarch64")]
+fn transcribe_splits_lockstep(
+    ctx: &mut QwenCtx,
+    audio_samples: &[f32],
+    splits: &[usize],
+    tokenizer: &QwenTokenizer,
+    b_max: usize,
+) -> Option<String> {
+    let n_splits = splits.len();
+    let seg_inputs = build_seg_inputs(audio_samples, splits);
+    let lookahead = lockstep_lookahead();
+    let total_sessions = (b_max + lookahead).min(n_splits);
+
+    if kernels::verbose() >= 2 {
+        eprintln!(
+            "Lockstep segments: {} segments, batch {}, {} sessions",
+            n_splits, b_max, total_sessions
+        );
+    }
+
+    let cfg = ctx.config.clone();
+    let weights = SegWeights {
+        cfg: &cfg,
+        encoder: &ctx.model.encoder,
+        decoder: &ctx.model.decoder,
+        prompt_tokens: ctx.prompt_tokens.as_deref(),
+        force_prompt_tokens: ctx.force_prompt_tokens.as_deref(),
+        has_prefilled_asr_text: has_prefilled_asr_text(ctx),
+    };
+    let dim = cfg.dec_hidden;
+    let tok_emb = weights.decoder.tok_embeddings_bf16;
+    let max_tokens = 2048;
+
+    /// A prefilled session that is decoding (or queued to decode).
+    struct LiveSeg {
+        session: SegSession,
+        st: LockstepSeg,
+    }
+
+    let mut slots: Vec<Option<SegOut>> = (0..n_splits).map(|_| None).collect();
+    let weights_ref = &weights;
+    let seg_inputs_ref = &seg_inputs;
+
+    let region_t0 = get_time_ms();
+    let mut decode_ms_total = 0.0f64;
+
+    let (tx, rx) = std::sync::mpsc::channel::<(usize, SegSession, Option<SegPrefilled>)>();
+    std::thread::scope(|scope| {
+        // Hand `session` to a background worker that prefills `seg_idx` with
+        // single-threaded kernels (identical environment to the L3 workers)
+        // and sends it back through the channel.
+        let spawn_prefill = |session: SegSession, seg_idx: usize| {
+            let tx = tx.clone();
+            let input = &seg_inputs_ref[seg_idx];
+            scope.spawn(move || {
+                kernels::set_thread_override(1);
+                let mut s = session;
+                let pre = prefill_segment_core(
+                    weights_ref,
+                    &mut s.kv_cache,
+                    &mut s.rope_cache,
+                    &mut s.dec_bufs,
+                    &mut s.enc_bufs,
+                    input,
+                    None,
+                );
+                let _ = tx.send((seg_idx, s, pre));
+            });
+        };
+
+        let mut next_seg = 0usize;
+        let mut outstanding = 0usize;
+        while next_seg < total_sessions {
+            spawn_prefill(SegSession::new(&cfg), next_seg);
+            next_seg += 1;
+            outstanding += 1;
+        }
+
+        let mut live: Vec<LiveSeg> = Vec::with_capacity(b_max);
+        let mut ready: std::collections::VecDeque<LiveSeg> = std::collections::VecDeque::new();
+        let mut tokens = [0i32; kernels::MAX_BATCH];
+
+        while outstanding > 0 || !live.is_empty() || !ready.is_empty() {
+            // Collect finished prefills; block only when there is nothing to
+            // decode yet.
+            loop {
+                let msg = if live.is_empty() && ready.is_empty() && outstanding > 0 {
+                    rx.recv().ok()
+                } else {
+                    rx.try_recv().ok()
+                };
+                let Some((seg_idx, session, pre)) = msg else { break };
+                outstanding -= 1;
+                match pre {
+                    Some(pre) => ready.push_back(LiveSeg {
+                        session,
+                        st: LockstepSeg {
+                            seg_idx,
+                            next_embed: pre.next_embed,
+                            n_generated: 0,
+                            past_asr_text: weights.has_prefilled_asr_text,
+                            text_bytes: Vec::new(),
+                            header_bytes: Vec::new(),
+                            n_text_tokens: 0,
+                            streamed: String::new(),
+                            encode_ms: pre.encode_ms,
+                            prefill_ms: pre.prefill_ms,
+                            seg_t0: pre.seg_t0,
+                            done: false,
+                        },
+                    }),
+                    // Prefill failure = segment yields nothing (mirrors the
+                    // serial path's `continue`); recycle the session.
+                    None => {
+                        if next_seg < n_splits {
+                            spawn_prefill(session, next_seg);
+                            next_seg += 1;
+                            outstanding += 1;
+                        }
+                    }
+                }
+            }
+            while live.len() < b_max {
+                match ready.pop_front() {
+                    Some(l) => live.push(l),
+                    None => break,
+                }
+            }
+            if live.is_empty() {
+                continue;
+            }
+
+            // One lockstep step: advance every live session by one token.
+            let step_t0 = get_time_ms();
+            {
+                let mut batch: Vec<decoder::BatchedSession> = live
+                    .iter_mut()
+                    .map(|l| decoder::BatchedSession {
+                        kv_cache: &mut l.session.kv_cache,
+                        rope: &mut l.session.rope_cache,
+                        bufs: &mut l.session.dec_bufs,
+                        input_embed: &l.st.next_embed,
+                    })
+                    .collect();
+                let b = batch.len();
+                decoder::decoder_forward_batched(weights.decoder, &cfg, &mut batch, &mut tokens[..b]);
+            }
+            decode_ms_total += elapsed_ms(step_t0);
+
+            // Advance each live state machine (mirrors one iteration of the
+            // serial autoregressive loop). `tokens[j]` pairs with `live[j]`
+            // (the batch above was built in live order), so process every
+            // state BEFORE removing finished ones.
+            for (j, l) in live.iter_mut().enumerate() {
+                let st = &mut l.st;
+                let token = tokens[j];
+                if st.n_generated >= max_tokens {
+                    st.done = true;
+                } else {
+                    st.n_generated += 1;
+                    if token == TOKEN_ENDOFTEXT || token == TOKEN_IM_END {
+                        st.done = true;
+                    } else {
+                        if token == TOKEN_ASR_TEXT {
+                            st.past_asr_text = true;
+                        } else if st.past_asr_text {
+                            let piece_bytes = tokenizer.decode_bytes(token);
+                            st.text_bytes.extend_from_slice(piece_bytes);
+                            st.n_text_tokens += 1;
+                            st.streamed.push_str(&String::from_utf8_lossy(piece_bytes));
+                        } else if token < 151643 {
+                            let piece_bytes = tokenizer.decode_bytes(token);
+                            st.header_bytes.extend_from_slice(piece_bytes);
+                        }
+                        unsafe { tok_embed_bf16_to_f32(&mut st.next_embed, tok_emb, token, dim) };
+                    }
+                }
+            }
+            // Sweep out finished sessions and recycle them into prefill
+            // workers for the remaining segments.
+            let mut i = 0usize;
+            while i < live.len() {
+                if live[i].st.done {
+                    let l = live.swap_remove(i);
+                    let st = l.st;
+                    let text = String::from_utf8_lossy(&st.text_bytes);
+                    slots[st.seg_idx] = Some(SegOut {
+                        core: SegCore {
+                            text: text.trim().to_string(),
+                            header_bytes: st.header_bytes,
+                            n_text_tokens: st.n_text_tokens,
+                            encode_ms: st.encode_ms,
+                            // The lockstep decode wall is shared across live
+                            // sessions, so it is accounted once below;
+                            // per-segment decode_ms carries the segment's own
+                            // prefill time.
+                            decode_ms: st.prefill_ms,
+                            total_ms: elapsed_ms(st.seg_t0),
+                        },
+                        streamed: st.streamed,
+                    });
+                    if next_seg < n_splits {
+                        spawn_prefill(l.session, next_seg);
+                        next_seg += 1;
+                        outstanding += 1;
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+        }
+    });
+    let region_ms = elapsed_ms(region_t0);
+
+    // Shared lockstep decode wall time (all steps), accounted once.
+    ctx.perf_decode_ms += decode_ms_total;
+
+    let result = assemble_segment_outputs(ctx, slots);
+
+    // Report the whole region's wall time as the inference time (same
+    // convention as the parallel path).
     ctx.perf_total_ms += region_ms;
     Some(result)
 }

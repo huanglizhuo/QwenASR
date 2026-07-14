@@ -1110,6 +1110,383 @@ pub fn decoder_forward(
     next_token
 }
 
+/// One live decode session inside a lockstep batched step (R12-E3): the
+/// per-segment mutable state plus this step's input embedding. Weights come
+/// from the shared [`Decoder`].
+#[cfg(target_arch = "aarch64")]
+pub struct BatchedSession<'a> {
+    pub kv_cache: &'a mut KvCache,
+    pub rope: &'a mut RopeCache,
+    pub bufs: &'a mut DecoderBuffers,
+    pub input_embed: &'a [f32],
+}
+
+/// Advance `sessions.len()` decode sessions by ONE token each in lockstep
+/// (R12-E3). Mirrors the fused single-token [`decoder_forward`] region stage
+/// for stage, but the heavy projections use the R12-E2 batched kernels: each
+/// streamed weight row is applied to every live session before moving on, so
+/// decode weight DRAM traffic per token drops by the batch factor. Each
+/// session's output is bit-identical to running [`decoder_forward`] on it
+/// alone:
+/// - heavy stages (QKV / O-proj / SwiGLU / down-proj / lm_head argmax) are
+///   INT8 integer dots with a fixed per-row float combine — exact regardless
+///   of row partitioning or batching (kernel exactness tests, R12-E2);
+/// - glue stages (norms, RoPE, KV write, activation quantization) run the
+///   same serial per-session code, striped across threads by session index;
+/// - attention runs per (session, GQA group) work item through the same
+///   [`kernels::causal_attention_heads`] the single-session region uses
+///   (per-group output is independent of the item partition).
+///
+/// Sessions may sit at different positions (`kv_cache.len`); each uses its own
+/// RoPE row and KV history. `out_tokens[i]` receives session `i`'s next token.
+/// `sessions.len()` must be in `1..=MAX_BATCH`; `b == 1` delegates to the
+/// tuned single-session path (identical math).
+#[cfg(target_arch = "aarch64")]
+pub fn decoder_forward_batched(
+    decoder: &Decoder,
+    cfg: &QwenConfig,
+    sessions: &mut [BatchedSession],
+    out_tokens: &mut [i32],
+) {
+    const MB: usize = kernels::MAX_BATCH;
+    let b = sessions.len();
+    assert!(b >= 1 && b <= MB && out_tokens.len() >= b);
+    if b == 1 {
+        let s = &mut sessions[0];
+        out_tokens[0] = decoder_forward(decoder, cfg, s.kv_cache, s.rope, s.bufs, s.input_embed);
+        return;
+    }
+
+    let dim = cfg.dec_hidden;
+    let n_heads = cfg.dec_heads;
+    let n_kv_heads = cfg.dec_kv_heads;
+    let head_dim = cfg.dec_head_dim;
+    let intermediate = cfg.dec_intermediate;
+    let eps = cfg.dec_rms_norm_eps;
+    let theta = cfg.dec_rope_theta;
+    let q_dim = n_heads * head_dim;
+    let kv_dim = n_kv_heads * head_dim;
+    let scale = 1.0 / (head_dim as f32).sqrt();
+    let layers: &[DecLayer] = &decoder.layers;
+
+    // Per-session setup + pointer tables (usize so the region closure is Sync;
+    // same publication pattern as the single-session fused region).
+    let mut pos = [0usize; MB];
+    let mut kv_stride = [0usize; MB];
+    let mut x_ptr = [0usize; MB];
+    let mut x_norm_ptr = [0usize; MB];
+    let mut q_ptr = [0usize; MB];
+    let mut k_ptr = [0usize; MB];
+    let mut v_ptr = [0usize; MB];
+    let mut attn_out_ptr = [0usize; MB];
+    let mut ffn_out_ptr = [0usize; MB];
+    let mut x_int8_ptr = [0usize; MB];
+    let mut attn_int8_ptr = [0usize; MB];
+    let mut ffn_int8_ptr = [0usize; MB];
+    let mut kv_k_ptr = [0usize; MB];
+    let mut kv_v_ptr = [0usize; MB];
+    let mut rope_cos_ptr = [0usize; MB];
+    let mut rope_sin_ptr = [0usize; MB];
+
+    for (bi, s) in sessions.iter_mut().enumerate() {
+        s.bufs.x[..dim].copy_from_slice(&s.input_embed[..dim]);
+        let p = s.kv_cache.len;
+        if p >= s.kv_cache.max_seq {
+            s.kv_cache.grow(p + 1024);
+        }
+        s.rope.ensure(p + 1, head_dim, theta);
+        pos[bi] = p;
+        kv_stride[bi] = s.kv_cache.head_stride();
+        x_ptr[bi] = s.bufs.x.as_mut_ptr() as usize;
+        x_norm_ptr[bi] = s.bufs.x_norm.as_mut_ptr() as usize;
+        q_ptr[bi] = s.bufs.q.as_mut_ptr() as usize;
+        k_ptr[bi] = s.bufs.k.as_mut_ptr() as usize;
+        v_ptr[bi] = s.bufs.v.as_mut_ptr() as usize;
+        attn_out_ptr[bi] = s.bufs.attn_out.as_mut_ptr() as usize;
+        ffn_out_ptr[bi] = s.bufs.ffn_out.as_mut_ptr() as usize;
+        x_int8_ptr[bi] = s.bufs.x_int8.as_mut_ptr() as usize;
+        attn_int8_ptr[bi] = s.bufs.attn_int8.as_mut_ptr() as usize;
+        ffn_int8_ptr[bi] = s.bufs.ffn_int8.as_mut_ptr() as usize;
+        kv_k_ptr[bi] = s.kv_cache.k.as_mut_ptr() as usize;
+        kv_v_ptr[bi] = s.kv_cache.v.as_mut_ptr() as usize;
+        rope_cos_ptr[bi] = s.rope.cos_at(p).as_ptr() as usize;
+        rope_sin_ptr[bi] = s.rope.sin_at(p).as_ptr() as usize;
+    }
+
+    // Shared activation scales, published across threads only via barriers.
+    // scales[4*bi + 0]: QKV input, +1: O-proj input, +2: SwiGLU input,
+    // +3: down-proj input (per session).
+    let mut scales = [0.0f32; 4 * MB];
+    let scales_addr = scales.as_mut_ptr() as usize;
+
+    kernels::parallel_region(|barrier, tid, nt| {
+        // Per-stage pointer/scale table builders (stack arrays, per thread).
+        let mut_f32 = |tab: &[usize; MB]| {
+            let mut a = [std::ptr::null_mut::<f32>(); MB];
+            for (dst, &src) in a[..b].iter_mut().zip(tab[..b].iter()) {
+                *dst = src as *mut f32;
+            }
+            a
+        };
+        let const_f32 = |tab: &[usize; MB]| {
+            let mut a = [std::ptr::null::<f32>(); MB];
+            for (dst, &src) in a[..b].iter_mut().zip(tab[..b].iter()) {
+                *dst = src as *const f32;
+            }
+            a
+        };
+        let const_i8 = |tab: &[usize; MB]| {
+            let mut a = [std::ptr::null::<i8>(); MB];
+            for (dst, &src) in a[..b].iter_mut().zip(tab[..b].iter()) {
+                *dst = src as *const i8;
+            }
+            a
+        };
+        let scales_at = |slot: usize| {
+            let mut a = [0.0f32; MB];
+            for (bi, v) in a[..b].iter_mut().enumerate() {
+                *v = unsafe { *(scales_addr as *const f32).add(4 * bi + slot) };
+            }
+            a
+        };
+
+        for (layer_idx, layer) in layers.iter().enumerate() {
+            // Stage: pre-attention norm + input quantization (striped).
+            let mut bi = tid;
+            while bi < b {
+                unsafe {
+                    let x = std::slice::from_raw_parts(x_ptr[bi] as *const f32, dim);
+                    let x_norm =
+                        std::slice::from_raw_parts_mut(x_norm_ptr[bi] as *mut f32, dim);
+                    kernels::rms_norm(x_norm, x, &layer.input_norm, 1, dim, eps);
+                    let x_int8 =
+                        std::slice::from_raw_parts_mut(x_int8_ptr[bi] as *mut i8, dim);
+                    *(scales_addr as *mut f32).add(4 * bi) =
+                        kernels::quantize_into(x_int8, x_norm);
+                }
+                bi += nt;
+            }
+            barrier.wait();
+
+            // Stage: fused QKV projection, batched (rows outer, sessions inner).
+            {
+                let (s, e) = kernels::range_for(tid, nt, q_dim + 2 * kv_dim);
+                let qp = mut_f32(&q_ptr);
+                let kp = mut_f32(&k_ptr);
+                let vp = mut_f32(&v_ptr);
+                let xi = const_i8(&x_int8_ptr);
+                let xs = scales_at(0);
+                unsafe {
+                    kernels::int8_qkv_range_batched(
+                        b, &qp[..b], &kp[..b], &vp[..b], &xi[..b], &xs[..b],
+                        layer.wq_int8.as_ptr(), layer.wq_int8_scales.as_ptr(),
+                        layer.wk_int8.as_ptr(), layer.wk_int8_scales.as_ptr(),
+                        layer.wv_int8.as_ptr(), layer.wv_int8_scales.as_ptr(),
+                        dim, q_dim, kv_dim, s, e,
+                    );
+                }
+            }
+            barrier.wait();
+
+            // Stage: q/k norms, RoPE, KV-cache write (striped serial glue).
+            let mut bi = tid;
+            while bi < b {
+                unsafe {
+                    let q = std::slice::from_raw_parts_mut(q_ptr[bi] as *mut f32, q_dim);
+                    let k = std::slice::from_raw_parts_mut(k_ptr[bi] as *mut f32, kv_dim);
+                    kernels::rms_norm_per_head(q, &layer.q_norm_weight, 1, n_heads, head_dim, eps);
+                    kernels::rms_norm_per_head(k, &layer.k_norm_weight, 1, n_kv_heads, head_dim, eps);
+                    let cos = std::slice::from_raw_parts(rope_cos_ptr[bi] as *const f32, head_dim);
+                    let sin = std::slice::from_raw_parts(rope_sin_ptr[bi] as *const f32, head_dim);
+                    kernels::apply_rope_neox(q, cos, sin, 1, n_heads, head_dim);
+                    kernels::apply_rope_neox(k, cos, sin, 1, n_kv_heads, head_dim);
+
+                    // Head-contiguous KV write at pos[bi] (same as k/v_write_pos).
+                    let v = std::slice::from_raw_parts(v_ptr[bi] as *const f32, kv_dim);
+                    let layer_kv_off = layer_idx * n_kv_heads * kv_stride[bi];
+                    for h in 0..n_kv_heads {
+                        let dst = layer_kv_off + h * kv_stride[bi] + pos[bi] * head_dim;
+                        let src = h * head_dim;
+                        std::ptr::copy_nonoverlapping(
+                            k.as_ptr().add(src), (kv_k_ptr[bi] as *mut f32).add(dst), head_dim);
+                        std::ptr::copy_nonoverlapping(
+                            v.as_ptr().add(src), (kv_v_ptr[bi] as *mut f32).add(dst), head_dim);
+                    }
+                }
+                bi += nt;
+            }
+            barrier.wait();
+
+            // Stage: causal attention, striped over (session, GQA group) items —
+            // sessions have different sequence lengths, so each item carries its
+            // session's pos / total_seq / KV base.
+            {
+                let hpk = n_heads / n_kv_heads;
+                let n_items = b * n_kv_heads;
+                let mut item = tid;
+                while item < n_items {
+                    let bi = item / n_kv_heads;
+                    let g = item % n_kv_heads;
+                    let layer_kv_off = layer_idx * n_kv_heads * kv_stride[bi];
+                    unsafe {
+                        let attn_out =
+                            std::slice::from_raw_parts_mut(attn_out_ptr[bi] as *mut f32, q_dim);
+                        let q = std::slice::from_raw_parts(q_ptr[bi] as *const f32, q_dim);
+                        let k_base = (kv_k_ptr[bi] as *const f32).add(layer_kv_off);
+                        let v_base = (kv_v_ptr[bi] as *const f32).add(layer_kv_off);
+                        kernels::causal_attention_heads(
+                            attn_out, q, k_base, v_base, kv_stride[bi],
+                            1, pos[bi] + 1, n_heads, n_kv_heads, head_dim, scale, pos[bi],
+                            g * hpk, (g + 1) * hpk,
+                        );
+                    }
+                    item += nt;
+                }
+            }
+            barrier.wait();
+
+            // Stage: quantize attention output for the O-projection (striped).
+            let mut bi = tid;
+            while bi < b {
+                unsafe {
+                    let attn_out =
+                        std::slice::from_raw_parts(attn_out_ptr[bi] as *const f32, q_dim);
+                    let attn_int8 =
+                        std::slice::from_raw_parts_mut(attn_int8_ptr[bi] as *mut i8, q_dim);
+                    *(scales_addr as *mut f32).add(4 * bi + 1) =
+                        kernels::quantize_into(attn_int8, attn_out);
+                }
+                bi += nt;
+            }
+            barrier.wait();
+
+            // Stage: O-projection with fused residual add (x += attn @ wo), batched.
+            {
+                let (s, e) = kernels::range_for(tid, nt, dim);
+                let yp = mut_f32(&x_ptr);
+                let bp = const_f32(&x_ptr);
+                let ai = const_i8(&attn_int8_ptr);
+                let xs = scales_at(1);
+                unsafe {
+                    kernels::int8_matvec_range_batched(
+                        b, &yp[..b], &ai[..b], &xs[..b],
+                        layer.wo_int8.as_ptr(), layer.wo_int8_scales.as_ptr(),
+                        Some(&bp[..b]), q_dim, s, e,
+                    );
+                }
+            }
+            barrier.wait();
+
+            // Stage: post-attention norm + input quantization (striped).
+            let mut bi = tid;
+            while bi < b {
+                unsafe {
+                    let x = std::slice::from_raw_parts(x_ptr[bi] as *const f32, dim);
+                    let x_norm =
+                        std::slice::from_raw_parts_mut(x_norm_ptr[bi] as *mut f32, dim);
+                    kernels::rms_norm(x_norm, x, &layer.post_attn_norm, 1, dim, eps);
+                    let x_int8 =
+                        std::slice::from_raw_parts_mut(x_int8_ptr[bi] as *mut i8, dim);
+                    *(scales_addr as *mut f32).add(4 * bi + 2) =
+                        kernels::quantize_into(x_int8, x_norm);
+                }
+                bi += nt;
+            }
+            barrier.wait();
+
+            // Stage: fused gate_up + SwiGLU, batched over intermediate rows.
+            {
+                let (s, e) = kernels::range_for(tid, nt, intermediate);
+                let fp = mut_f32(&ffn_out_ptr);
+                let xi = const_i8(&x_int8_ptr);
+                let xs = scales_at(2);
+                unsafe {
+                    kernels::int8_swiglu_range_batched(
+                        b, &fp[..b], &xi[..b], &xs[..b],
+                        layer.gate_up_int8.as_ptr(), layer.gate_up_int8_scales.as_ptr(),
+                        dim, s, e,
+                    );
+                }
+            }
+            barrier.wait();
+
+            // Stage: quantize FFN activation for the down-projection (striped).
+            let mut bi = tid;
+            while bi < b {
+                unsafe {
+                    let ffn_out =
+                        std::slice::from_raw_parts(ffn_out_ptr[bi] as *const f32, intermediate);
+                    let ffn_int8 =
+                        std::slice::from_raw_parts_mut(ffn_int8_ptr[bi] as *mut i8, intermediate);
+                    *(scales_addr as *mut f32).add(4 * bi + 3) =
+                        kernels::quantize_into(ffn_int8, ffn_out);
+                }
+                bi += nt;
+            }
+            barrier.wait();
+
+            // Stage: down-projection with fused residual add (x += ffn @ down), batched.
+            {
+                let (s, e) = kernels::range_for(tid, nt, dim);
+                let yp = mut_f32(&x_ptr);
+                let bp = const_f32(&x_ptr);
+                let fi = const_i8(&ffn_int8_ptr);
+                let xs = scales_at(3);
+                unsafe {
+                    kernels::int8_matvec_range_batched(
+                        b, &yp[..b], &fi[..b], &xs[..b],
+                        layer.down_int8.as_ptr(), layer.down_int8_scales.as_ptr(),
+                        Some(&bp[..b]), intermediate, s, e,
+                    );
+                }
+            }
+            barrier.wait();
+        }
+
+        // Stage: final RMS norm per session (striped) — mirrors the
+        // single-session epilogue (x = rms_norm(x, decoder.norm)).
+        let mut bi = tid;
+        while bi < b {
+            unsafe {
+                let x = std::slice::from_raw_parts(x_ptr[bi] as *const f32, dim);
+                let x_norm = std::slice::from_raw_parts_mut(x_norm_ptr[bi] as *mut f32, dim);
+                kernels::rms_norm(x_norm, x, &decoder.norm, 1, dim, eps);
+                let x_mut = std::slice::from_raw_parts_mut(x_ptr[bi] as *mut f32, dim);
+                x_mut.copy_from_slice(x_norm);
+            }
+            bi += nt;
+        }
+    });
+
+    for (bi, s) in sessions.iter_mut().enumerate() {
+        s.kv_cache.len = pos[bi] + 1;
+    }
+
+    // lm_head argmax: stream the head weights once for ALL live sessions.
+    // Same index-stable tie-break as the single-session path (R12-E2).
+    let lm_out_dim = cfg.lm_head_dim();
+    if let (Some(int8_data), Some(lm_scales)) =
+        (&decoder.lm_head_int8, &decoder.lm_head_int8_scales)
+    {
+        let xs: Vec<&[f32]> = sessions.iter().map(|s| &s.bufs.x[..dim]).collect();
+        let best = kernels::argmax_matvec_int8_batched(&xs, int8_data, lm_scales, dim, lm_out_dim);
+        for (dst, &t) in out_tokens[..b].iter_mut().zip(best.iter()) {
+            *dst = t as i32;
+        }
+    } else {
+        for (bi, s) in sessions.iter().enumerate() {
+            out_tokens[bi] = lm_head_argmax(decoder, &s.bufs.x[..dim], dim, lm_out_dim);
+        }
+    }
+
+    // Speculative bookkeeping for the next step (same as the single-session tail).
+    for s in sessions.iter_mut() {
+        let next_pos = s.kv_cache.len;
+        s.kv_cache.grow(next_pos + 1);
+        s.rope.ensure(next_pos + 1, head_dim, theta);
+    }
+}
+
 /// Score the vocabulary and return the argmax token id. Uses the INT8 lm_head
 /// on aarch64 when available, else the BF16 path. Bit-identical regardless of
 /// the effective thread count (the underlying matvec argmax is row-partitioned
