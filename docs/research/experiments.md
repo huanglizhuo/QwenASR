@@ -6853,6 +6853,112 @@ never batches); (d) self-speculative decode reusing the same batched kernels
 (B speculative continuations of one stream); (e) the pool downsize hazard
 above if anything ever needs `set_threads` shrink-then-dispatch.
 
+### R12-F1: reduce lockstep prefill's contribution to long-audio wall — Rejected
+
+Goal: shrink the ~40 core-seconds of nt=1-pinned prefill that R12-E3 identified
+as the binding constraint on segmented long-audio, on the premise (from the
+planner) that lockstep decode is DRAM-bandwidth-bound while prefill is
+Accelerate/AMX **compute**-bound, so prefill could run "in the memory-stall
+shadow of decode with little contention." **MEASURE FIRST.** All numbers are
+long-10min `-S 30` on M5 Pro (5P+10E). Instrumentation added to
+`transcribe_splits_lockstep` (temporary, reverted): region wall, summed
+lockstep-step decode wall, step count, average live batch `avg_b`, time to
+first prefill completion (`ramp`), and summed per-segment prefill core-time.
+
+**Profiling breakdown (default B=8, lookahead 6, cool machine).**
+
+| region | decode_steps | steps | avg_b | ramp (=first prefill) | prefill_core (21 segs) |
+|-------:|-------------:|------:|------:|----------------------:|-----------------------:|
+| ~10.4 s | ~6.5 s (62%) | ~267 | 6.8 | ~3.9 s | ~72 s |
+
+The structure is **`region ≈ ramp + decode_steps`** (10.4 ≈ 3.9 + 6.5). Steady-
+state overlap is already near-perfect: `avg_b` sits at 6.8/8, and ~68 core-s of
+prefill completes hidden under the 6.5 s decode phase (~10.5× effective
+parallelism). The apparent loss is the ~3.9 s **ramp** — the time to first
+prefill, during which no session is decodable yet. So the question was: is the
+ramp reducible?
+
+**Contention sweep — `QWEN_ASR_SEG_MAXINFLIGHT` caps concurrent prefills:**
+
+| max_inflight | first prefill | prefill_core (Σ) | region | avg_b |
+|-------------:|--------------:|-----------------:|-------:|------:|
+| 1 | 803 ms | 17.3 s | 27.4 s (decode-starved) | 1.0 |
+| 3 | 1.17 s | 29.4 s | 13.4 s | 1.9 |
+| 5 | 1.67 s | 43.0 s | 11.7 s | 5.1 |
+| 8 | 2.75 s | 55.4 s | 11.4–11.8 s | 6.5 |
+| 14 (default) | 3.9 s | 72–79 s | 10.4 s | 6.8 |
+
+Two facts fall out. (1) **Prefill is severely self-contended**: an uncontended
+nt=1 segment prefill is ~0.82 s, but under the default 14-way launch each takes
+~3.8 s (4.6× inflation, Σ core-time 17 s → 79 s). The machine is
+compute+bandwidth-saturated during prefill; extra nt=1 workers do not add
+throughput, they divide it. (2) **Per-step decode time is ~constant (~24 ms/step
+at B=8, ~27 ms/step at B=5) regardless of `b`** — the DRAM-streaming signature —
+so fewer, fuller batches (`avg_b`→8) minimise decode wall. Lowering
+`max_inflight` shortens the ramp but lowers `avg_b` (more, emptier steps): the
+two cancel and `region` is **flat-to-worse**. Clean interleaved A/B (thermal
+drift cancelled): default region ≈ 10.4 s vs mi=8 ≈ 11.4–11.8 s — mi=8's ramp
+drops to 2.75 s but its decode_steps *rise* from 6.5 s to 8.5 s.
+
+**Why shortening the ramp backfires (the crux).** A shorter ramp pushes more
+prefill into the decode window, and that overlap is **not free**: prefill (encoder
+GEMM + decoder prefill over the full weight set) is itself DRAM-heavy, so it
+steals from the same ~115 GB/s bus decode already saturates (R11-D). The
+pooled-GEMM warmup probe (`QWEN_ASR_SEG_WARMUP=k`: prefill the first k segments
+on the main thread with the full pool — offline-quality float, NOT bit-identical —
+then background-nt=1 the rest) makes this unmissable:
+
+| config | first prefill | ramp | decode_steps | region |
+|--------|--------------:|-----:|-------------:|-------:|
+| default | 3.9–4.2 s | 3.9–4.2 s | 6.5–7.5 s (24 ms/step) | 10.8–11.8 s |
+| warmup=4 | **0.44 s** | 2.2 s | **9.6–10.3 s (37 ms/step)** | 11.9–12.5 s |
+| warmup=8 | 0.44 s | 3.9 s | 8.5–9.6 s | 12.4–13.7 s |
+
+Warmup starts decode at 0.44 s (stall=0) yet **regresses**: with only 4–8
+segments warmed, the remaining 13–17 segments' background prefill now fully
+overlaps decode and inflates it +50% (24→37 ms/step). More lookahead
+(`QWEN_ASR_SEG_LOOKAHEAD=10/16`) does the opposite — a *longer* ramp
+front-loads more prefill uncontended, cleaning decode to ~5.5 s (48% of region)
+— but the sum is the same (~11.3 s), and interleaved def-vs-la10 over 6 rounds
+is a dead heat (medians ~12.2 s vs ~12.3 s in a thermally-warm state).
+
+**Conclusion — a conservation wall, not a schedule.** `region ≈
+prefill_machine_time + decode_bandwidth_time`, held ~constant because prefill and
+decode both need the saturated DRAM bus and therefore **cannot overlap for
+free** — every ~1 s of prefill moved under decode adds ~1–1.5 s to decode
+(measured: warmup=4 overlapped ~2.1 s of prefill work for +3.1 s decode). The
+planner's premise (prefill compute-bound, decode bandwidth-bound → disjoint
+resources) does **not hold on this machine**: prefill is bandwidth-heavy too
+(it streams the full weight set for the prompt). Consequently:
+- The bit-identical overlap lever has **no headroom** — the R12-E3 scheduler
+  already sits at the optimum (front-load prefill in the ramp, keep only light
+  recycled prefill overlapping a clean decode). Every reschedule (mi throttle,
+  more/less lookahead) is a wash or a regression.
+- The pooled-GEMM throughput lever **also fails**: pooled prefill (~345 ms/seg)
+  has the same *aggregate* throughput as nt=1×8 (both machine-saturated, ~2.75 s
+  to fill 8), cannot run concurrently with lockstep decode (single global pool /
+  dispatch-slot, the L3 SIGSEGV constraint), and when used as a warmup it makes
+  the overlap contention worse. No bit-identity was traded and no WER gate was
+  run, because nothing beat HEAD to gate.
+
+**Decision: Rejected.** No lever improves long-audio segmented ≥5% (KEEP gate
+fails); every candidate is flat-to-worse. Code fully reverted — the reverted
+binary is **byte-identical** to HEAD on long-10min `-S 30`
+(md5 `9501e287…` both). Verification: zero warnings (default features and
+`-p qwen-asr --no-default-features`, CLI crate); `cargo test --release` = **59
+passed**. Only this log entry is kept.
+
+Remaining headroom (unchanged from R12-E3, now better characterised): the
+segmented long-audio floor is the **shared DRAM bandwidth** carrying both the
+per-token decode weight stream and the prefill weight reads. The remaining
+~37% gap between `region` (~10.4 s) and the pure-decode floor (~6.5 s) is
+prefill bytes that must cross the same bus and cannot be hidden by scheduling.
+Real levers are now bandwidth-reducing, not scheduling: cheaper prefill
+(fewer weight bytes read during prefill — e.g. quantised prefill weights) or
+cheaper decode (the R11-D wall). B > 8 would help decode amortisation but is
+gated by prefill's inability to feed a larger live set faster. Streaming
+lockstep (c), self-speculative decode (d) from R12-E3 remain untouched.
+
 ---
 
 ## Autoresearch Program Baseline Experiments
