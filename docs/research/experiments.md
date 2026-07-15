@@ -6961,6 +6961,96 @@ lockstep (c), self-speculative decode (d) from R12-E3 remain untouched.
 
 ---
 
+### R12-F2: INT8 decoder prefill GEMM — Rejected
+
+Hypothesis (from R12-F1's exit note "cheaper prefill = fewer weight bytes read"):
+`decoder_prefill` streams BF16 weights (2 B/weight, `linear_nobias_bf16_scratch`
+= bf16→f32 conversion + a full f32 scratch matrix + Accelerate sgemm) for
+Q/K/V/O/gate/up/down every layer. The INT8-quantized versions of those weights
+are already resident (built at load for single-token decode). Routing prefill
+through a multi-row INT8 GEMM against the resident INT8 weights would read
+~1 B/weight (half the BF16 stream, none of the f32 scratch), directly attacking
+R12-F1's prefill-bandwidth term — helping both offline (one big prefill) and
+segmented/long-audio (per-segment prefill overlapping lockstep decode).
+
+**Why revisit E11 (which rejected "INT8 GEMM for decoder prefill" on analysis).**
+E11 argued a hand-written NEON INT8 GEMM cannot beat Accelerate's f32 AMX path
+and never built one. Two things changed that warranted a *measured* retry: (1)
+R12-E3 made prefill a co-equal cost (decode is now amortised ÷B), and R12-F1
+measured prefill as bandwidth-heavy in aggregate — so the byte-halving motive is
+real now; (2) R12-E2 already ships batched INT8 SDOT kernels, so the kernel was a
+small extension, not the "tens of thousands of tiny matvec dispatches" strawman
+E11 imagined — this is a proper weight-row-outer / position-inner GEMM.
+
+**Kernel design (built, tested, then reverted).** `neon::int8_gemm_rows`:
+`Y[seq×out] = A[seq×in] @ Wᵀ`, activations quantized per-position (per-row INT8 +
+per-row scale via `quantize_rows_int8`), weights the resident per-row-scaled
+INT8. Loop order is **weight-row outer, position inner** (2-row blocked, reusing
+each activation-chunk load across both rows) so the static weight matrix crosses
+DRAM exactly once per prefill at 1 B/weight while activations stay L2-resident.
+A fused `int8_swiglu_gemm_rows` consumes the resident interleaved `gate_up_int8`
+(silu(gate)·up per position). Pooled over output rows via
+`parallel_for_dynamic` (64-row items). Each `Y[i][j]` is **bit-identical** to the
+trusted single-token `matvec_int8`/`int8_swiglu_range` for the same quantized
+inputs (integer SDOT sums are order-exact; scale multiply order matched) — three
+new exactness/tolerance unit tests assert this (62 tests pass). BF16 path kept
+for non-aarch64.
+
+**Measured — every mode regresses (M5 Pro, 5P+10E, cool machine).** Isolated
+prefill-projection wall (offline 28 s sample, `--profile`): HEAD `bf16_matvec`
+176 ms vs NEW `int8_prefill` **212 ms (+20%)** — the INT8 NEON GEMM is *slower*
+than bf16→f32+AMX in isolation, exactly E11's claim, because at prefill seq_len
+(~hundreds of frames) the weight is reused across all positions → the projection
+is **compute-bound**, and Apple's AMX f32 (~2 TFLOP/s) beats NEON SDOT even at
+half the bytes.
+
+3-mode median inference, 28 s sample, runs=5:
+
+| Mode | HEAD | NEW | Δ |
+|------|-----:|----:|--:|
+| offline | 615 ms | 693 ms | +12.7% |
+| segmented | 621 ms | 695 ms | +11.9% |
+| streaming | 594 ms | 674 ms | +13.5% |
+
+Long-audio `long-10min -S 30` segmented, median-of-3 inference:
+
+| binary | inference | realtime | WER |
+|--------|----------:|---------:|----:|
+| HEAD | 10 070 ms | 59.8× | 0.0324 |
+| NEW | 14 345 ms | 42.0× | 0.0360 |
+
+**+42%** on the segmented long-audio case F2 was meant to *help*, with WER also
+worse. WER on the 28 s offline/segmented sample was unchanged (0.0270 both), so
+the full dev-clean WER gate was not run — the speed gate fails decisively and no
+WER win could rescue it.
+
+**Why segmented regresses far more than the isolated +20% (the real lesson,
+beyond E11).** In R12-E3 lockstep long-audio, per-segment prefill runs
+*concurrently* with batched decode. On HEAD prefill executes on the **AMX
+coprocessor** (via Accelerate sgemm) while decode runs INT8 SDOT on the **NEON
+pipelines** — two disjoint execution units, so prefill overlaps decode nearly for
+free. Routing prefill onto NEON SDOT puts it on the *same* units and the *same*
+thread pool as decode: the two now contend for pipelines and pool slots, so the
+overlap R12-E3 relied on collapses. R12-F1 framed the wall as shared *DRAM*
+bandwidth; F2 exposes a second shared resource — the NEON/pool execution units —
+that AMX prefill was quietly sidestepping. Halving weight *bytes* cannot pay for
+losing the free AMX/NEON parallelism (and the isolated compute was slower
+anyway). No projection subset is keepable: each group moved to NEON is strictly
+worse, in isolation and under overlap.
+
+**Decision: Rejected.** No mode improves; segmented long-audio regresses 42%.
+Code fully reverted (kernels `int8_gemm_rows`/`int8_swiglu_gemm_rows`/
+`int8_prefill_gemm`/`int8_prefill_swiglu`/`quantize_rows_int8`, the
+`int8_prefill` profile counter, `DecoderBuffers` INT8 prefill scratch, and the
+`decoder_prefill` INT8 routing) — the reverted tree is byte-identical to HEAD
+(`cargo test --release` = 59 passed; zero warnings default + `--no-default-features`
+lib + CLI). Only this log entry is kept. Standing conclusion sharpened: prefill
+must stay on **AMX f32** — it is both faster there for these compute-bound sizes
+*and* free to overlap NEON decode. The remaining bandwidth lever from R12-F1 is
+therefore cheaper **decode** (the R11-D INT8 DRAM wall), not cheaper prefill.
+
+---
+
 ## Autoresearch Program Baseline Experiments
 
 These experiments come from the initial `codex-auto-research` autoresearch program baseline (`programs.md`). They are structural buffer-reuse optimizations that predate the numbered round structure above.
