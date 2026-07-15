@@ -7051,6 +7051,72 @@ therefore cheaper **decode** (the R11-D INT8 DRAM wall), not cheaper prefill.
 
 ---
 
+### R12-G1: exact micro-optimization sweep
+
+Swept the three remaining P1 "Opportunity Backlog" items (#5 direct KV-cache
+write, #4 conv reorder elimination, #6 reusable embedding workspace) as
+independent, byte-identical micro-optimizations. Protocol per candidate:
+implement the safest bit-identical form, confirm transcripts byte-identical to
+the HEAD binary on `bench/samples/audio.wav` (offline / `-S 30` / `--stream`)
+and `bench/long/` 2-min & 10-min (offline + seg), then drift-cancelling
+interleaved A/B (`bench/run.sh --runs 5`, three H/C iterations) on the affected
+mode. Keep bar: ≥1.5% repeatable on the affected mode, beyond the ±3% machine
+noise. `cargo test --release` = 59 passed, zero warnings. **All three dropped;
+the reverted tree is byte-identical to HEAD.**
+
+**Candidate 1 — direct KV-cache write for prefill K/V (backlog #5).**
+Implemented `kernels::apply_rope_neox_to_dst` (NeoX RoPE with a head-contiguous
+strided output) plus `KvCache::k_write_rope`, fusing the K rope with the
+head-contiguous cache scatter so the separate `k_write_pos` pass is removed. V
+still scatters (V has no rope/norm, comes straight from its GEMM). Bit-identity:
+**7/7 byte-identical** (rope math unchanged, only the write destination moves).
+Prefill-heavy A/B (offline, tight interleave, `--runs 5`): deltas HEAD−CAND =
+`−27 / +8 / +28 ms` on a ~640 ms base (sign-flipping, median ≈ +8 ms ≈ 1%).
+**Dropped.** The result matches the theoretical ceiling: the fused pass only
+removes the *K* scatter (a bare memcpy of `seq·kv_dim` f32 — profile shows the
+whole rope at 3.1 ms / 685 ms), so the ceiling is well under 1% and V still
+scatters. This is the deeper form of R7-B (which reordered the same scatter and
+also measured ≈0.13% noise); the scatter is simply not a real bucket. Code
+reverted; only this entry kept.
+
+**Candidate 2 — eliminate `conv3 → reshaped → conv_out` reorder (backlog #4).**
+Analyzed rather than landed. `c3` is already a dense `[conv_proj_dim=7680 × w3]`
+row-major matrix, so the reshape is a per-frame transpose into `[w3 × 7680]` for
+the projection GEMM. Cost is tiny: 366 encoder tokens × 7680 ≈ 2.8 M f32
+(≈11 MB) transposed across the whole file, ~0.3% of the 620 ms inference —
+consistent with R7-D, which already measured touching this reorder as
+sub-noise. Eliminating it means reformulating the projection as a transposed
+(TT) sgemm consuming `c3` directly. Two problems make this a net-negative, not a
+win: (a) the current projection runs through the **R10 `sgemm_nt_pooled`**
+pool-parallel column-sliced path (Accelerate sgemm is not internally threaded —
+R10); a raw Accelerate TT call bypasses that and would *regress* the much-larger
+projection GEMM, while a pooled-TT kernel is disproportionate new code for a
+sub-0.3% copy; (b) a NT→TT GEMM reformulation changes the microkernel FP
+reduction order, so it is **not guaranteed byte-identical** (fails the mandatory
+bit-identity bar). No safe bit-identical elimination beats the pooled NT path.
+**Dropped** without code churn (grounded in R7-D + the R10 pooled-GEMM
+architecture + the quantified reshape cost).
+
+**Candidate 3 — reusable transcription embedding workspace (backlog #6).**
+Hoisted the per-chunk `input_embeds` / `prefill_keys` allocations out of the
+`transcribe_stream` chunk loop into reusable buffers (clear + resize each
+iteration; every row is fully overwritten before use, so reuse is bit-identical
+to a fresh zeroed `vec!`). Bit-identity: **7/7 byte-identical**. Streaming A/B
+(tight interleave, `--runs 5`): deltas HEAD−CAND = `−17 / +4 / +8 ms` on a
+~605 ms base (sign-flipping, median ≈ +4 ms ≈ 0.7%). **Dropped.** Streaming on
+`audio.wav` runs ~14 chunks, so this saves ~14 small `malloc`/`free`s over the
+run — far below the noise band, matching R9-B (workspace zero-fill removal
+rejected) and the already-landed streaming assembly work (`stream-direct-enc-copy`,
+`prefill-row-keys`). The offline/segmented `prefill_segment_core` allocation is
+once per file/segment and even smaller, so it was not pursued. Code reverted;
+only this entry kept.
+
+**Net: nothing kept.** All three are bit-identical but sub-noise; the affected
+buckets (KV scatter, conv reshape, per-chunk embed alloc) are each well under the
+1.5% bar and align with prior rejections (R7-B, R7-D, R9-B). No churn landed.
+
+---
+
 ## Autoresearch Program Baseline Experiments
 
 These experiments come from the initial `codex-auto-research` autoresearch program baseline (`programs.md`). They are structural buffer-reuse optimizations that predate the numbered round structure above.
