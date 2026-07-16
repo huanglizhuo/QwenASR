@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.8.2](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-cli-v0.8.1...qwen-asr-cli-v0.8.2) (2026-07-16)
+
+
+### Performance Improvements
+
+* pool-parallel GEMM slices and E-core-aware default threads ([9a0c19e](https://github.com/huanglizhuo/QwenASR/commit/9a0c19ea26c94a8989e77ecf7f32219055911335))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * qwen-asr bumped from 0.8.1 to 0.9.0
+
 ## [0.8.1](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-cli-v0.8.0...qwen-asr-cli-v0.8.1) (2026-07-09)
 
 
