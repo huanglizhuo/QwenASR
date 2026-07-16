@@ -61,6 +61,7 @@ pub mod config;
 pub mod context;
 pub mod decoder;
 pub mod encoder;
+pub mod int8_sidecar;
 #[cfg(feature = "android")]
 pub mod jni_api;
 pub mod kernels;

@@ -1,6 +1,9 @@
 .DS_Store
 /target
 /qwen3-asr-0.6b
+# R12-H1: mmap-backed INT8 weight sidecar (rebuilt on demand next to the model)
+*.sidecar
+qwen-asr-int8.sidecar
 /bench/results/
 /bench/long/samples/
 /bench/long/results/

@@ -1,10 +1,42 @@
 //! Qwen3 LLM decoder with GQA, KV cache, and generation.
 
 use crate::config::*;
+use crate::int8_sidecar::{self, SidecarLayout, SidecarMmap, WeightBuf};
 use crate::kernels;
 use crate::safetensors::MultiSafetensors;
 
 use crate::kernels::superpage_vec;
+
+/// Reinterpret an INT8 slice as raw bytes (for sidecar serialization).
+fn i8_bytes(s: &[i8]) -> &[u8] {
+    unsafe { std::slice::from_raw_parts(s.as_ptr() as *const u8, s.len()) }
+}
+/// Reinterpret an f32 slice as raw bytes (for sidecar serialization).
+fn f32_bytes(s: &[f32]) -> &[u8] {
+    unsafe { std::slice::from_raw_parts(s.as_ptr() as *const u8, std::mem::size_of_val(s)) }
+}
+
+/// Interleave gate+up rows into the fused buffer used as the INT8 quantization
+/// source (and, on non-aarch64, the runtime bf16 SwiGLU decode weight).
+fn build_gate_up_fused(
+    gate_bf16: *const u16,
+    up_bf16: *const u16,
+    inter: usize,
+    hidden: usize,
+) -> Vec<u16> {
+    let mut gate_up_fused = vec![0u16; 2 * inter * hidden];
+    unsafe {
+        let gate_slice = std::slice::from_raw_parts(gate_bf16, inter * hidden);
+        let up_slice = std::slice::from_raw_parts(up_bf16, inter * hidden);
+        for r in 0..inter {
+            gate_up_fused[2 * r * hidden..(2 * r + 1) * hidden]
+                .copy_from_slice(&gate_slice[r * hidden..(r + 1) * hidden]);
+            gate_up_fused[(2 * r + 1) * hidden..(2 * r + 2) * hidden]
+                .copy_from_slice(&up_slice[r * hidden..(r + 1) * hidden]);
+        }
+    }
+    gate_up_fused
+}
 
 /// Quantize a BF16 weight matrix into INT8 and store the (large) INT8 buffer
 /// in superpage-aligned memory.
@@ -44,21 +76,26 @@ pub struct DecLayer {
     pub gate_up_fused_bf16: Vec<u16>,
     /// INT8 quantized attention weights + per-row scales — populated only for
     /// non-aligner configs (used by aarch64 single-token decode). Empty for aligner.
-    pub wq_int8: Vec<i8>,
-    pub wq_int8_scales: Vec<f32>,
-    pub wk_int8: Vec<i8>,
-    pub wk_int8_scales: Vec<f32>,
-    pub wv_int8: Vec<i8>,
-    pub wv_int8_scales: Vec<f32>,
-    pub wo_int8: Vec<i8>,
-    pub wo_int8_scales: Vec<f32>,
+    ///
+    /// Each INT8/scale buffer is a [`WeightBuf`]: either an owned superpage `Vec`
+    /// (freshly quantized this run) or a slice borrowed IN PLACE from the mmap'd
+    /// INT8 sidecar (R12-H1). The hot kernels see the same `*const i8`/`&[i8]`
+    /// either way (via `Deref`), so the decode path is unchanged.
+    pub wq_int8: WeightBuf<i8>,
+    pub wq_int8_scales: WeightBuf<f32>,
+    pub wk_int8: WeightBuf<i8>,
+    pub wk_int8_scales: WeightBuf<f32>,
+    pub wv_int8: WeightBuf<i8>,
+    pub wv_int8_scales: WeightBuf<f32>,
+    pub wo_int8: WeightBuf<i8>,
+    pub wo_int8_scales: WeightBuf<f32>,
     /// INT8 quantized FFN weights (per-row scales) for the aarch64 single-token
     /// decode path — fused interleaved gate_up and down_proj. Quantized from the
     /// original BF16 weights. Empty for aligner.
-    pub gate_up_int8: Vec<i8>,
-    pub gate_up_int8_scales: Vec<f32>,
-    pub down_int8: Vec<i8>,
-    pub down_int8_scales: Vec<f32>,
+    pub gate_up_int8: WeightBuf<i8>,
+    pub gate_up_int8_scales: WeightBuf<f32>,
+    pub down_int8: WeightBuf<i8>,
+    pub down_int8_scales: WeightBuf<f32>,
 }
 
 unsafe impl Send for DecLayer {}
@@ -71,8 +108,12 @@ pub struct Decoder {
     /// Separate lm_head for forced aligner (None = tied weights with tok_embeddings)
     pub lm_head_bf16: Option<*const u16>,
     /// INT8 quantized lm_head weights for fast argmax — None for aligner (uses bf16 path).
-    pub lm_head_int8: Option<Vec<i8>>,
-    pub lm_head_int8_scales: Option<Vec<f32>>,
+    /// Owned (freshly quantized) or borrowed from the mmap'd sidecar (R12-H1).
+    pub lm_head_int8: Option<WeightBuf<i8>>,
+    pub lm_head_int8_scales: Option<WeightBuf<f32>>,
+    /// mmap of the INT8 sidecar, kept alive so every `WeightBuf::Mapped` above
+    /// stays valid for the decoder's lifetime. `None` on a cold run (owned Vecs).
+    pub _int8_sidecar: Option<SidecarMmap>,
 }
 
 unsafe impl Send for Decoder {}
@@ -99,7 +140,13 @@ fn load_bf16_direct(ms: &MultiSafetensors, name: &str) -> Option<*const u16> {
 /// for aligner configs (which only ever runs prefill) we skip those — saving
 /// roughly 700 MB across the model — and let the prefill code stream BF16
 /// weights through a shared f32 scratch buffer.
-fn load_dec_layer(ms: &MultiSafetensors, cfg: &QwenConfig, i: usize) -> Option<DecLayer> {
+fn load_dec_layer(
+    ms: &MultiSafetensors,
+    cfg: &QwenConfig,
+    i: usize,
+    sidecar: Option<&SidecarMmap>,
+    layout: &SidecarLayout,
+) -> Option<DecLayer> {
     let lp = format!("thinker.model.layers.{}", i);
 
     let wq = load_bf16_direct(ms, &format!("{}.self_attn.q_proj.weight", lp))?;
@@ -128,22 +175,30 @@ fn load_dec_layer(ms: &MultiSafetensors, cfg: &QwenConfig, i: usize) -> Option<D
          wv_int8, wv_int8_scales, wo_int8, wo_int8_scales,
          gate_up_int8, gate_up_int8_scales, down_int8, down_int8_scales) = if is_aligner {
         (Vec::new(),
-         Vec::new(), Vec::new(), Vec::new(), Vec::new(),
-         Vec::new(), Vec::new(), Vec::new(), Vec::new(),
-         Vec::new(), Vec::new(), Vec::new(), Vec::new())
+         WeightBuf::empty(), WeightBuf::empty(), WeightBuf::empty(), WeightBuf::empty(),
+         WeightBuf::empty(), WeightBuf::empty(), WeightBuf::empty(), WeightBuf::empty(),
+         WeightBuf::empty(), WeightBuf::empty(), WeightBuf::empty(), WeightBuf::empty())
+    } else if let Some(sc) = sidecar {
+        // Warm path: borrow every INT8 buffer IN PLACE from the mmap'd sidecar.
+        // No quantization, no gate_up fusion on aarch64 (where the fused bf16 is
+        // unused at runtime — INT8 is the decode weight). Non-aarch64 still needs
+        // the fused bf16 for its SwiGLU decode path, so build it there.
+        #[cfg(target_arch = "aarch64")]
+        let gate_up_fused_kept: Vec<u16> = Vec::new();
+        #[cfg(not(target_arch = "aarch64"))]
+        let gate_up_fused_kept: Vec<u16> = build_gate_up_fused(gate_bf16, up_bf16, inter, hidden);
+
+        let b = |j: usize| sc.i8_buf(layout.layer_buf(i, j));
+        let s = |j: usize| sc.f32_buf(layout.layer_buf(i, j));
+        (gate_up_fused_kept,
+         b(0), s(1), b(2), s(3), b(4), s(5), b(6), s(7),
+         b(8), s(9), b(10), s(11))
     } else {
-        // Fuse gate+up: interleave rows
-        let mut gate_up_fused = vec![0u16; 2 * inter * hidden];
-        unsafe {
-            let gate_slice = std::slice::from_raw_parts(gate_bf16, inter * hidden);
-            let up_slice = std::slice::from_raw_parts(up_bf16, inter * hidden);
-            for r in 0..inter {
-                gate_up_fused[2 * r * hidden..(2 * r + 1) * hidden]
-                    .copy_from_slice(&gate_slice[r * hidden..(r + 1) * hidden]);
-                gate_up_fused[(2 * r + 1) * hidden..(2 * r + 2) * hidden]
-                    .copy_from_slice(&up_slice[r * hidden..(r + 1) * hidden]);
-            }
-        }
+        // Cold path: quantize into owned superpage Vecs (as before). The fused
+        // gate_up buffer is the INT8 quantization source; on aarch64 it is
+        // dropped afterward (INT8 is the decode weight), on other arches it is
+        // kept as the bf16 SwiGLU decode weight.
+        let gate_up_fused = build_gate_up_fused(gate_bf16, up_bf16, inter, hidden);
 
         let (wq_int8, wq_int8_scales) = quantize_to_superpage(wq, q_dim, hidden);
         let (wk_int8, wk_int8_scales) = quantize_to_superpage(wk, kv_dim, hidden);
@@ -156,11 +211,6 @@ fn load_dec_layer(ms: &MultiSafetensors, cfg: &QwenConfig, i: usize) -> Option<D
             quantize_to_superpage(gate_up_fused.as_ptr(), 2 * inter, hidden);
         let (down_int8, down_int8_scales) = quantize_to_superpage(down_bf16, hidden, inter);
 
-        // On aarch64 the fused bf16 buffer was only needed as the INT8
-        // quantization source above — the runtime decode path uses `gate_up_int8`.
-        // Drop it here (store an empty Vec) to reclaim ~350 MB RSS across the
-        // model (R12-A). Non-aarch64 still consumes it in the bf16 SwiGLU decode
-        // path, so keep it there.
         #[cfg(target_arch = "aarch64")]
         let gate_up_fused_kept = {
             drop(gate_up_fused);
@@ -170,9 +220,9 @@ fn load_dec_layer(ms: &MultiSafetensors, cfg: &QwenConfig, i: usize) -> Option<D
         let gate_up_fused_kept = gate_up_fused;
 
         (gate_up_fused_kept,
-         wq_int8, wq_int8_scales, wk_int8, wk_int8_scales,
-         wv_int8, wv_int8_scales, wo_int8, wo_int8_scales,
-         gate_up_int8, gate_up_int8_scales, down_int8, down_int8_scales)
+         wq_int8.into(), wq_int8_scales.into(), wk_int8.into(), wk_int8_scales.into(),
+         wv_int8.into(), wv_int8_scales.into(), wo_int8.into(), wo_int8_scales.into(),
+         gate_up_int8.into(), gate_up_int8_scales.into(), down_int8.into(), down_int8_scales.into())
     };
 
     Some(DecLayer {
@@ -204,14 +254,29 @@ fn load_dec_layer(ms: &MultiSafetensors, cfg: &QwenConfig, i: usize) -> Option<D
 }
 
 impl Decoder {
-    pub fn load(ms: &MultiSafetensors, cfg: &QwenConfig) -> Option<Self> {
+    pub fn load(ms: &MultiSafetensors, cfg: &QwenConfig, model_dir: &str) -> Option<Self> {
         let tok_embeddings_bf16 = load_bf16_direct(ms, "thinker.model.embed_tokens.weight")?;
+
+        // R12-H1: try to mmap a valid INT8 sidecar next to the model. On a warm
+        // run this borrows every INT8 weight IN PLACE (no quantization, no bulk
+        // copy). Aligner has no INT8 weights, so it never uses a sidecar.
+        let use_sidecar = !cfg.is_aligner() && int8_sidecar::enabled();
+        let layout = SidecarLayout::compute(cfg);
+        let sc_path = int8_sidecar::sidecar_path(model_dir);
+        let sidecar = if use_sidecar {
+            SidecarMmap::open_valid(&sc_path, model_dir, cfg, &layout)
+        } else {
+            None
+        };
+        let have_sidecar = sidecar.is_some();
 
         // Per-layer weight loading is independent and conversion-heavy
         // (bf16->f32 prefill + INT8 quantization), so load layers in parallel.
         let nlayers = cfg.dec_layers;
         let nthreads = kernels::get_num_cpus().min(nlayers).max(1);
         let chunk = nlayers.div_ceil(nthreads);
+        let sidecar_ref = sidecar.as_ref();
+        let layout_ref = &layout;
         let mut indexed: Vec<(usize, DecLayer)> = std::thread::scope(|s| {
             let mut handles = Vec::new();
             for t in 0..nthreads {
@@ -223,7 +288,7 @@ impl Decoder {
                 handles.push(s.spawn(move || {
                     let mut out = Vec::with_capacity(end - start);
                     for i in start..end {
-                        out.push((i, load_dec_layer(ms, cfg, i)?));
+                        out.push((i, load_dec_layer(ms, cfg, i, sidecar_ref, layout_ref)?));
                     }
                     Some(out)
                 }));
@@ -250,15 +315,46 @@ impl Decoder {
 
         // Quantize lm_head to INT8 for fast argmax — skipped for aligner since
         // aligner never does single-token decode (all logits read out of prefill).
-        let (lm_int8_opt, lm_scales_opt) = if cfg.is_aligner() {
-            (None, None)
-        } else {
-            let lm_weight = lm_head_bf16.unwrap_or(tok_embeddings_bf16);
-            let lm_out_dim = cfg.lm_head_dim();
-            let lm_in_dim = cfg.dec_hidden;
-            let (lm_int8, lm_scales) = quantize_to_superpage(lm_weight, lm_out_dim, lm_in_dim);
-            (Some(lm_int8), Some(lm_scales))
-        };
+        // Warm sidecar: borrow it IN PLACE instead of quantizing.
+        let (lm_int8_opt, lm_scales_opt): (Option<WeightBuf<i8>>, Option<WeightBuf<f32>>) =
+            if cfg.is_aligner() {
+                (None, None)
+            } else if let Some(sc) = sidecar_ref {
+                let idx = layout.lm_head_idx(nlayers);
+                (Some(sc.i8_buf(idx)), Some(sc.f32_buf(idx + 1)))
+            } else {
+                let lm_weight = lm_head_bf16.unwrap_or(tok_embeddings_bf16);
+                let lm_out_dim = cfg.lm_head_dim();
+                let lm_in_dim = cfg.dec_hidden;
+                let (lm_int8, lm_scales) = quantize_to_superpage(lm_weight, lm_out_dim, lm_in_dim);
+                (Some(lm_int8.into()), Some(lm_scales.into()))
+            };
+
+        // Cold run with sidecar enabled: persist the freshly-quantized buffers so
+        // the next run mmaps them. Best-effort — failure just means we re-quantize
+        // next time. First run pays this one-time write on top of quantization.
+        if use_sidecar && !have_sidecar {
+            let mut bufs: Vec<&[u8]> = Vec::with_capacity(nlayers * 12 + 2);
+            for l in &layers {
+                bufs.push(i8_bytes(&l.wq_int8));
+                bufs.push(f32_bytes(&l.wq_int8_scales));
+                bufs.push(i8_bytes(&l.wk_int8));
+                bufs.push(f32_bytes(&l.wk_int8_scales));
+                bufs.push(i8_bytes(&l.wv_int8));
+                bufs.push(f32_bytes(&l.wv_int8_scales));
+                bufs.push(i8_bytes(&l.wo_int8));
+                bufs.push(f32_bytes(&l.wo_int8_scales));
+                bufs.push(i8_bytes(&l.gate_up_int8));
+                bufs.push(f32_bytes(&l.gate_up_int8_scales));
+                bufs.push(i8_bytes(&l.down_int8));
+                bufs.push(f32_bytes(&l.down_int8_scales));
+            }
+            if let (Some(lm), Some(lms)) = (lm_int8_opt.as_ref(), lm_scales_opt.as_ref()) {
+                bufs.push(i8_bytes(lm));
+                bufs.push(f32_bytes(lms));
+                int8_sidecar::write_sidecar(&sc_path, model_dir, cfg, &layout, &bufs);
+            }
+        }
 
         Some(Decoder {
             tok_embeddings_bf16,
@@ -267,6 +363,7 @@ impl Decoder {
             lm_head_bf16,
             lm_head_int8: lm_int8_opt,
             lm_head_int8_scales: lm_scales_opt,
+            _int8_sidecar: sidecar,
         })
     }
 }

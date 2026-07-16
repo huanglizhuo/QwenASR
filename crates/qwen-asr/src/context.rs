@@ -102,7 +102,7 @@ impl QwenModel {
         }
         let decoder = {
             let _pg = kernels::ProfileGuard::new(&kernels::PROF.decoder_load);
-            Decoder::load(&ms, &cfg)?
+            Decoder::load(&ms, &cfg, model_dir)?
         };
 
         if kernels::verbose() >= 1 {

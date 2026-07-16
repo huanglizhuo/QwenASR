@@ -7115,6 +7115,109 @@ only this entry kept.
 buckets (KV scatter, conv reshape, per-chunk embed alloc) are each well under the
 1.5% bar and align with prior rejections (R7-B, R7-D, R9-B). No churn landed.
 
+### R12-H1: mmap-backed INT8 weight sidecar — KEPT
+
+The decoder quantizes every non-aligner decode weight to INT8 (per-row scales)
+at load into superpage-owned `Vec`s (`decoder::quantize_to_superpage`), plus
+builds the interleaved gate_up fusion. That BF16→INT8 pass costs measurable
+startup time and holds the INT8 copies as anonymous (dirty) RSS. R12-H1 persists
+the quantized buffers into a memory-mappable sidecar next to the model so warm
+runs skip quantization entirely and borrow the INT8 weights **in place**.
+
+**How this differs from the prior rejections.** The Round 3 "A1" weight cache,
+and the deferred F19/F20 and G23 sidecar ideas, were all rejected for one
+reason: they read the cache back into owned `Vec`s. The B1-section note spelled
+it out — "copying 3.2 GB from the cache file is a net regression … A mmap-based
+cache could reverse this … left as future work." R12-H1 is exactly that future
+work. The sidecar is `mmap`'d `PROT_READ` and consumed with **zero bulk copies**:
+there is no `to_vec`/`copy_from_slice` over the weight set. The only new
+ownership machinery is a `WeightBuf<T>` enum (`Owned(Vec<T>)` or
+`Mapped { ptr, len }`) that `Deref`s to `&[T]`; the hot INT8 kernels still take
+`*const i8`/`&[i8]` (obtained via `.as_ptr()` / deref coercion) and are byte-for-
+byte unchanged.
+
+**Design.**
+- **Weight storage.** `DecLayer`'s twelve INT8/scale fields and `Decoder`'s
+  `lm_head_int8{,_scales}` become `WeightBuf`. Cold run → `Owned` superpage
+  `Vec`s (as before). Warm run → `Mapped` slices into the mmap. The mmap
+  (`SidecarMmap`) is kept alive in `Decoder._int8_sidecar`; the existing
+  `unsafe impl Send + Sync` on `DecLayer`/`Decoder` (already there for the BF16
+  mmap pointers) covers the raw sidecar pointers.
+- **Layout.** One file: 64-byte fixed header + `(offset u64, len u64)` table +
+  data. Buffer order is deterministic from config (per layer: wq, wq_scales, wk,
+  wk_scales, wv, wv_scales, wo, wo_scales, gate_up, gate_up_scales, down,
+  down_scales; then lm_head, lm_head_scales). Each buffer is padded to a 16 KiB
+  boundary in-file.
+- **Alignment (the one surprise).** The owned path uses `superpage_vec`
+  (2 MiB-aligned) as a TLB hint. `mmap` only guarantees page alignment, so the
+  sidecar cannot reproduce superpage backing. This is safe: the AArch64 NEON
+  INT8 kernels (`ldr`/`vld1`) have **no** alignment requirement beyond the
+  element, so 16 KiB page alignment is more than sufficient for correctness, and
+  the inference A/B below confirms losing the superpage hint costs nothing
+  measurable. Documented in `int8_sidecar.rs`.
+- **Invalidation.** Header carries magic + version + an fnv-1a hash over the
+  model files' (name, size, mtime) + `model_total_size` + all decoder dims +
+  the full offset/len table. Any mismatch → the sidecar is ignored and rebuilt;
+  a stale cache is never silently used. Written to a temp file and atomically
+  renamed so a crash mid-write can't leave a file that passes validation.
+- **Gating.** Default path `<model>/qwen-asr-int8.sidecar`; disable with
+  `QWEN_ASR_SIDECAR=0`. Aligner configs have no INT8 weights and never touch it.
+  Sidecar pattern gitignored; nothing committed.
+
+**Startup (M5 Pro, `--profile`, median of 5, ms).** Cold = first run building +
+writing the sidecar; Warm = subsequent run mmap'ing it.
+
+| Phase | HEAD | Cold (build) | Warm (mmap) |
+|-------|-----:|-------------:|------------:|
+| `decoder_load` | 59.3 | 115.1 | **2.1** |
+| `model_load` (total) | 126.2 | 181.3 | **74.0** |
+
+Warm mmap removes essentially the entire decoder quantization pass (59 → 2 ms)
+and cuts total model load ~41% (126 → 74 ms). Cold is ~+55 ms over HEAD (the
+one-time write), as expected.
+
+**Peak RSS (per mode; `/usr/bin/time -l` max RSS, MB).**
+
+| Mode | HEAD | Warm | Δ |
+|------|-----:|-----:|--:|
+| offline | 3652 | 3355 | −297 |
+| segmented | 3669 | 3359 | −310 |
+| streaming | 3670 | 3352 | −318 |
+
+`vmmap --summary` during a 10-min decode shows the mechanism: anonymous dirty
+`MALLOC_LARGE` drops **2.2 G → 1.6 G** (~600 MB, the INT8 copies move to
+file-backed clean pages) and Apple's "Physical footprint" drops **2.5 G →
+1.8 G**. The sidecar shows up under `mapped file` (clean, reclaimable, shareable
+across processes), so peak *anonymous* RSS strictly improves — no regression.
+
+**Bit-identity.** Warm-sidecar transcripts are **byte-identical** to the HEAD
+binary on all seven: `audio.wav` offline / `-S 30` / `--stream`, and
+`long-2min` + `long-10min` offline + seg. (Same quantization values, just
+mmap'd instead of owned.)
+
+**Inference (`bench/run.sh --runs 5`, median inference ms, HEAD vs Warm).**
+
+| Mode | HEAD | Warm | Δ |
+|------|-----:|-----:|--:|
+| offline | 591 | 595 | +0.7% |
+| segmented | 588 | 596 | +1.4% |
+| streaming | 556 | 562 | +1.1% |
+
+All within the ±1.5% noise floor; WER unchanged (0.0270 / 0.0270 / 0.2973).
+The decode path is untouched, so this is expected — losing superpage backing on
+the INT8 weights does not measurably move inference.
+
+**Tests.** `cargo test --release` = 60 passed (59 + a new `tests/sidecar.rs`:
+cold-build then warm-mmap, asserts the mmap'd INT8 weights/scales are byte-equal
+to freshly quantized and that a corrupted magic / mismatched identity hash
+triggers a rebuild rather than a stale read). Zero warnings on lib (default),
+`--no-default-features` lib, and CLI.
+
+Decision: **KEPT.** Warm-start load drops measurably (−52 ms total, −57 ms in
+the decoder), peak anonymous RSS drops ~600 MB, transcripts are byte-identical,
+and inference stays within noise — all four KEEP-gate conditions met. This is a
+startup/memory win, not an inference-speed win, and is judged as such.
+
 ---
 
 ## Autoresearch Program Baseline Experiments
