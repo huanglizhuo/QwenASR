@@ -7218,6 +7218,127 @@ the decoder), peak anonymous RSS drops ~600 MB, transcripts are byte-identical,
 and inference stays within noise — all four KEEP-gate conditions met. This is a
 startup/memory win, not an inference-speed win, and is judged as such.
 
+### R13-A: multi-token greedy verifier core — landed (infrastructure, no callsite)
+
+First phase of R13 (multi-token greedy verifier, plan in
+`docs/research/r13-mtgv-plan.md`). Lands the verifier primitive that a future
+speculative-decode caller (streaming overlap-draft, R13-B; offline layer-skip
+draft, R13-D) will drive. **No production callsite in this phase** — gate is
+tests + zero warnings only, no bench movement expected.
+
+**Change.**
+- New `decoder::decoder_forward_verify` (aarch64-only), a variant of
+  `decoder_forward_batched` where the `k` batch lanes are `k` *consecutive
+  positions of one session* sharing ONE `KvCache`/`RopeCache`. Signature:
+  `(decoder, cfg, kv_cache, rope, bufs: &mut [DecoderBuffers], input_embeds:
+  &[f32] (k×dim), k, out_argmax: &mut [i32])`. It advances the session by `k`
+  positions `base..base+k` (`base = kv_cache.len` on entry) in a single fused
+  parallel region, writes K/V for all `k`, sets `kv_cache.len = base + k`, and
+  returns `out_argmax[i]` = greedy argmax after position `base+i`. The caller
+  applies the acceptance rule and rolls the shared cache back.
+  - `k == 1` delegates to `decoder_forward` (keeps the tuned single-token
+    epilogue).
+  - Grow/ensure ONCE up front (`kv_cache.grow(base+k)`, `rope.ensure(base+k)`)
+    BEFORE capturing raw pointers — the shared cache must not reallocate after
+    pointer capture. `pos[bi] = base+bi`, per-position RoPE rows, attention
+    `total_seq = pos[bi]+1`, all KV pointers alias the one buffer (lanes write
+    distinct `pos` rows; the KV-write-stage barrier before attention gives the
+    same causal ordering as prefill).
+  - Reuses the R12-E2 batched kernels **untouched** (`int8_qkv_range_batched`,
+    `int8_matvec_range_batched`, `int8_swiglu_range_batched`,
+    `argmax_matvec_int8_batched`); no new kernels.
+- Helper `decoder::verify_accepted_len(drafts, out_argmax) -> usize`: pure
+  greedy acceptance rule — longest leading run `a` with
+  `drafts[i] == out_argmax[i]`. Caller commits `t0, d_1..d_a, out_argmax[a]` and
+  rolls back to `kv_cache.len = base + a + 1`.
+- `decoder::VerifyBufferPool`: lazily-grown `Vec<DecoderBuffers>` (decode-only
+  fields allocated, prefill vecs empty) for the `k` independent lane buffers a
+  future caller (QwenCtx) needs. No production callsite yet.
+
+**Results (tests only, no bench).** New `tests/verify.rs`, model-gated with the
+`tests/lockstep.rs` skip pattern + a per-file `TEST_MUTEX`:
+- **Exactness vs sequential** (`verify_exactness_vs_sequential`): prefill a fixed
+  8-token sequence, feed a fixed 16-token continuation one-at-a-time through
+  `decoder_forward` recording every argmax; reset (fresh `KvCache`, same
+  prefill) and replay the continuation through `decoder_forward_verify` in chunks
+  of `k ∈ {2, 5, 8}`. Every `out_argmax` equals the sequential argmax at the same
+  position — **48 positions compared exactly** (3 sweeps × 16), plus `kv.len`
+  asserted `= base + k` at every step.
+- **Rollback + continue** (`verify_rollback_matches_sequential`): greedy
+  generation driven through the verifier + `verify_accepted_len` + rollback under
+  two draft strategies — deliberately-wrong drafts (accepted run 0, heavy
+  rollback) and oracle drafts (full acceptance, commits `k`/step). Both reproduce
+  the pure-sequential 20-token stream byte-identically for `k ∈ {2, 5, 8}`.
+- Full suite `cargo test --release` green (verify 2, regression 9, lockstep 1,
+  session_split 1, + others; model dir present so all actually ran). Zero
+  warnings on `RUSTFLAGS="-C target-cpu=native" cargo build --release` and
+  `cargo build -p qwen-asr --no-default-features`.
+- Test-harness note (not a product bug): the kernel pool spawns workers
+  monotonically (`SPAWNED_THREADS` only grows) and every spawned worker joins
+  each dispatch at the current `n_threads`; dispatching with `n_threads` *below*
+  the spawned count makes extra workers hit the prefill BLAS-per-slice path with
+  N=0. Production never shrinks the thread count, and the verify tests follow the
+  `regression.rs` convention (`set_threads(get_num_cpus())`, pool only grows) to
+  stay on the consistent path.
+
+Decision: **LANDED** (enabling infrastructure). Correctness is exact by
+construction and proven; the speed payoff is deferred to R13-B/-D which add the
+draft source and the production callsite.
+
+---
+
+## Speed Improvement Experiments — Round 13 (multi-token greedy verifier)
+
+Plan: `docs/research/r13-mtgv-plan.md`. Premise: R12-E2/E3 closed the F6/F7
+infrastructure gap (batched INT8 kernels + `argmax_matvec_int8_batched` +
+measured ~constant lockstep step time for B ≤ 8), so a greedy verifier that
+advances one session by K ≤ 8 positions per weight stream is now cheap and
+bit-identical by construction. The open question per draft source: streaming
+overlap re-decode (R13-B) and offline layer-skip self-draft (R13-C/D).
+
+### R13-C: offline layer-skip acceptance probe — Rejected (gate fails decisively)
+
+Change (throwaway, worktree, never merged):
+- Temporary patch to `decoder_forward`: env-gated (`QWEN_ASR_PROBE_LAYERS`)
+  tid-0 snapshot of the residual stream after each probed layer inside the
+  fused region; after the region, `rms_norm(x_L, decoder.norm)` + the real
+  INT8 `lm_head_argmax`, compared against the step's committed token.
+- Probe self-validation: L=28 reproduces the real epilogue at exactly 100%
+  agreement; agreement climbs monotonically 14→20→24→26→27→28 layers as
+  6% → 60% → 83% → 96% → 98% → 100%, so the low early-layer numbers are a
+  model property, not a wiring bug.
+- Corpus: `bench/samples/audio.wav` + 146 LibriSpeech dev-clean utterances,
+  plain offline mode, **3609 decode steps**.
+
+Results — per-layer top-1 agreement with the final argmax:
+
+| L | 4 | 6 | 8 | 10 | 14 |
+|---|--:|--:|--:|---:|---:|
+| agreement | 0.50% | 0.75% | 1.39% | 1.94% | 4.68% |
+
+Verify economics (a = expected accepted run; spd = projected offline decode
+speedup with an 8k shortlist draft head, c=1.15):
+
+| L | K=4 a / spd | K=8 a / spd |
+|---|------------|------------|
+| 4 | 0.005 / 0.62× | 0.005 / 0.48× |
+| 6 | 0.008 / 0.55× | 0.008 / 0.40× |
+| 8 | 0.014 / 0.50× | 0.014 / 0.35× |
+| 10 | 0.020 / 0.45× | 0.020 / 0.31× |
+| 14 | 0.049 / 0.39× | 0.049 / 0.25× |
+
+Every projected speedup is < 1.0 (net slowdown): expected accepted-run length
+is ≈ 0 everywhere a draft would be cheap.
+
+Decision: **Rejected — do not re-probe.** The Qwen3-ASR decoder resolves the
+output token only in its final ~8 layers (agreement is near-zero through
+L=14 and only crosses 90% around L=26 of 28). There is no usable early-exit
+draft signal at any depth cheap enough to fund drafting, with or without a
+shortlist head. The offline layer-skip track (R13-D) is closed; this also
+retro-justifies E13's skepticism for *self*-drafting specifically. Streaming
+overlap drafts (R13-A/B) are unaffected — their draft source is the previous
+chunk's transcript, not an early exit.
+
 ---
 
 ## Autoresearch Program Baseline Experiments
