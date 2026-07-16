@@ -2,34 +2,33 @@
 
 [![OctoCounts](https://api.octocounts.com/badge/huanglizhuo/QwenASR/branch/main)](https://octocounts.com/?q=https%3A%2F%2Fgithub.com%2Fhuanglizhuo%2FQwenASR&ref=main)
 
-A **blazing fast**, pure Rust, CPU-only inference engine for [Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-0.6B) speech-to-text. Zero heavy runtime dependencies (only `libc`). Ported from [antirez/qwen-asr](https://github.com/antirez/qwen-asr).
+A fast, pure-Rust, CPU-only inference engine for [Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-0.6B) speech-to-text. It has no heavyweight runtime dependency—only `libc`—and is optimized for low-latency inference on Apple Silicon.
 
-Supports 0.6B and 1.7B models with offline, segmented, streaming, live capture, VAD live, and forced alignment modes.
+Supports the 0.6B and 1.7B models, offline and streaming transcription, live capture with VAD, subtitles, structured JSON, and forced alignment.
 
 ## Performance
 
-On an Apple M5 Pro, qwen-asr transcribes the standard 28.2-second benchmark clip in **563 ms** in the dedicated local benchmark — about **50× faster than realtime** — while producing the full transcript. In the latest full cross-implementation comparison, the pure-CPU qwen-asr is the **fastest implementation overall**: 1.23× faster than `mlx-audio` on the GPU, 2.4× faster than second-state MLX, and 2.9× faster than the upstream C implementation.
+On an Apple M5 Pro, qwen-asr transcribes the 28.2-second benchmark clip in **613 ms**—**46× faster than realtime**. In the same 10-run comparison, this CPU-only Rust implementation has the lowest median inference latency of all five implementations tested:
+
+- **1.12× faster** than `mlx-audio` on the GPU
+- **2.31× faster** than second-state MLX on the GPU
+- **2.71× faster** than the upstream pure-C implementation
+- **2.77× faster** than the first qwen-asr Rust port
 
 | Implementation | Median inference | Realtime factor |
 |---|---:|---:|
-| **qwen-asr (latest)** | **595 ms** | **47.44×** |
-| mlx-audio Python MLX | 730 ms | 38.56× |
-| second-state/qwen3_asr_rs MLX GPU | 1,446 ms | 19.47× |
-| qwen-asr (first Rust port) | 1,722 ms | 16.38× |
-| pure C upstream | 1,732 ms | 16.26× |
+| **qwen-asr (CPU, latest)** | **613 ms** | **46.00×** |
+| mlx-audio Python MLX (GPU) | 688 ms | 40.94× |
+| second-state MLX (GPU) | 1,414 ms | 19.91× |
+| pure C upstream (CPU) | 1,660 ms | 16.96× |
+| qwen-asr first port (CPU) | 1,698 ms | 16.61× |
 
 <p float="left">
   <img src="docs/benchmarks/charts/benchmark-unified-latency.png" width="48%" alt="Latency comparison" />
   <img src="docs/benchmarks/charts/benchmark-unified-rtf.png" width="48%" alt="Realtime factor comparison" />
 </p>
 
-> Benchmarked on the same 28.2 s sample with 10 runs each, every implementation at its own out-of-the-box default configuration (latest full run: `bench/compare-results/20260711T235106Z`, qwen-asr `50c84d45`). All rows produce the full transcript. The dedicated speed benchmark on the same commit reports 563 ms / 50.09×; the small gap vs the comparison row is run-to-run variance. See [`docs/benchmarks/comparison.md`](docs/benchmarks/comparison.md) for full details, including the thread-policy note explaining why earlier comparison runs (forced `--threads 15`) reported qwen-asr slower than its default configuration.
-
-## Documentation
-
-- [`docs/benchmarks/`](docs/benchmarks/) — benchmark methodology, latest results, and reproduction instructions
-- [`docs/optimizations/overview.md`](docs/optimizations/overview.md) — catalog of implemented performance optimizations
-- [`docs/research/`](docs/research/) — historical autoresearch experiment logs and protocols
+> Apple M5 Pro, 15 cores, 48 GB RAM; same 0.6B model and 28.2 s audio; 10 standalone runs per implementation; median inference latency; each implementation uses its shipped default configuration. Results generated at `d141bca4` in `bench/compare-results/20260716T070644Z`. See the [methodology and full results](docs/benchmarks/comparison.md).
 
 ## Quick Start
 
@@ -45,6 +44,15 @@ qwen-asr -d qwen3-asr-0.6b -i audio.wav
 ```
 
 Or download a pre-built binary from [GitHub Releases](https://github.com/huanglizhuo/QwenASR/releases).
+
+## Why qwen-asr is fast
+
+- Hand-tuned NEON, Accelerate, and AMX-aware kernels for Apple Silicon
+- Quantized decode weights and batched decoding paths that reduce memory traffic
+- Dynamic scheduling across performance and efficiency cores
+- No tensor framework, Python runtime, GPU dispatch, or server process
+
+See the [optimization catalog](docs/optimizations/overview.md) for implementation details and the [research log](docs/research/) for measured experiments.
 
 ## Usage
 
@@ -181,6 +189,13 @@ python3 librispeech-wer-bench/librispeech_wer.py \
 ```
 
 See [`docs/benchmarks/`](docs/benchmarks/) for full details.
+
+## Documentation
+
+- [Benchmark methodology and results](docs/benchmarks/)
+- [Optimization catalog](docs/optimizations/overview.md)
+- [Research and experiment history](docs/research/)
+- [Automated release process](RELEASE_PROCESS.md)
 
 ## OpenClaw Skill
 

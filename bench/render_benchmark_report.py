@@ -120,17 +120,13 @@ def nice_upper_bound(values: list[float]) -> float:
     vmax = max(values)
     if vmax <= 0:
         return 1.0
-    magnitude = 10 ** math.floor(math.log10(vmax))
-    scaled = vmax / magnitude
-    if scaled <= 1.5:
-        nice = 2
-    elif scaled <= 3:
-        nice = 4
-    elif scaled <= 7:
-        nice = 8
-    else:
-        nice = 10
-    return nice * magnitude
+    padded = vmax * 1.15
+    magnitude = 10 ** math.floor(math.log10(padded))
+    scaled = padded / magnitude
+    for candidate in (1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10):
+        if scaled <= candidate:
+            return candidate * magnitude
+    return 10 * magnitude
 
 
 def fmt_ms(value: float | None) -> str:
@@ -174,7 +170,7 @@ def render_bar_chart(rows: list[dict], metric: str, ylabel: str, title: str, sub
 
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, bbox_inches="tight")
+    fig.savefig(output_path, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
 

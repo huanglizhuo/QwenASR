@@ -1,62 +1,136 @@
 # QwenASR Automated Release Process
 
-This guide explains how the automated release pipeline for `QwenASR` works and what you need to do to trigger a new release for both the Rust crate (`crates.io`) and the Flutter library (`pub.dev`).
+This repository uses [Release Please](https://github.com/googleapis/release-please) to version and release three independently tracked components:
 
-This repository utilizes **[Release Please](https://github.com/googleapis/release-please)**. You do not need to manually edit `Cargo.toml`, `pubspec.yaml`, or write `CHANGELOG.md` files anymore.
+| Component | Registry or artifact | Tag format |
+| --- | --- | --- |
+| `crates/qwen-asr` | crates.io package `qwen-asr` | `qwen-asr-vX.Y.Z` |
+| `crates/qwen-asr-cli` | crates.io package `qwen-asr-cli` and GitHub release binaries | `qwen-asr-cli-vX.Y.Z` |
+| `flutter/qwen_asr` | pub.dev package `qwen_asr` | `qwen_asr-vX.Y.Z` |
 
-## 🚀 How to Trigger a New Release
+Release Please updates package versions, dependency versions, manifest entries, and component changelogs. Do not manually create release tags or edit versions and changelogs during the normal release flow.
 
-The release process relies entirely on **Conventional Commits** (e.g., `feat:`, `fix:`).
+## 1. Merge Conventional Commits into `main`
 
-### Step 1: Write Code and Commit
-When merging changes into the `main` branch, ensure your commits follow the conventional format:
+Release Please determines the next version from Conventional Commits that affect each component path:
 
-* `feat: add offline rescoring` -> Triggers a **MINOR** release (e.g., `0.2.0` -> `0.3.0`)
-* `fix: crash on audio initialization` -> Triggers a **PATCH** release (e.g., `0.2.1` -> `0.2.2`)
-* `feat!: breaking API changes` -> Triggers a **MAJOR** release (e.g., `0.2.x` -> `1.0.0`)
-* `chore/docs/test: update readme` -> Does **not** trigger a new release.
+- `feat: add offline rescoring` produces a minor release.
+- `fix: prevent a decoder crash` produces a patch release.
+- `feat!: change the public decoder API` declares a breaking change.
+- `docs:`, `test:`, and `chore:` commits normally do not produce a release by themselves.
 
-### Step 2: The Release Pull Request
-1. Once your code is merged into `main`, GitHub Actions will silently create (or update) a Release PR titled `chore(main): release 0.2.x`.
-2. This automated PR gathers all your `feat` and `fix` commits into a beautiful `CHANGELOG.md` and upgrades the version variables in your code automatically.
-3. As long as you keep pushing code to `main`, the bot will keep updating this pending PR under the hood. It acts as an ongoing draft for your next release.
+Because this is a manifest repository, only components with relevant commits are released. A Rust library release does not imply a Flutter release, for example.
 
-### Step 3: Approve and Publish
-When you are ready to publish the packaged version:
-1. Go to your Github [Pull Requests](https://github.com/huanglizhuo/RustQwenAsr/pulls).
-2. Review the `chore(main): release...` PR.
-3. Click **Squash and Merge** (or a standard merge) to bring it into `main`.
+The `cargo-workspace` plugin links the two Rust packages. When `qwen-asr` changes, it updates the `qwen-asr` version used by `qwen-asr-cli` and may include the CLI in the same release PR with a dependency-only version bump.
 
-**That's it!** The moment you merge the PR, the following happens automatically:
-* Release Please tags the repository using your Personal Access Token (PAT).
-* This Tag triggers two completely automated workflows:
-   * **crates.io Publishing**: Uploads the `qwen-asr` rust library.
-   * **pub.dev Publishing**: Generates Rust bindings, authenticates via OIDC, and uploads the `qwen_asr` flutter package.
+## 2. Review the Release PR
 
----
+Every push to `main` runs `.github/workflows/release-please.yml`. The workflow creates or updates the `release-please--branches--main` pull request, normally titled `chore: release main`.
 
-## 🛠️ Architecture & Workflows
+Before merging it, verify:
 
-If you ever need to debug the pipeline, here is how the GitHub Actions are structured:
+1. The proposed versions match the intended release scope.
+2. Each affected component's `CHANGELOG.md` is complete.
+3. `crates/qwen-asr-cli/Cargo.toml` references the proposed `qwen-asr` version.
+4. `.release-please-manifest.json`, `Cargo.toml` files, `Cargo.lock`, and Flutter `pubspec.yaml` are consistent.
+5. Required tests and CI checks have passed.
 
-1. **`.github/workflows/release-please.yml`**:
-   * Listens to the `main` branch.
-   * Runs the `release-please-action` bot using a custom GitHub `PAT` token.
-   * Automatically publishes the `crates/qwen-asr` library to `crates.io` using the `CARGO_REGISTRY_TOKEN`.
-   * **Does not publish Flutter**. It only tags the repo.
+Useful local preflight checks are:
 
-2. **`.github/workflows/publish-flutter.yml`**:
-   * Listens **strictly for Flutter Tags** (e.g., `qwen_asr-vX.X.X`).
-   * This decoupled pipeline ensures `pub.dev`'s strict OIDC security rules are fulfilled (pub.dev identity token exchange requires an explicit tag-based trigger, not a branch trigger).
-   * It sets up Rust, installs `flutter_rust_bridge_codegen` via `cargo`, builds the bindings, and executes `dart pub publish` securely.
+```bash
+cargo test --workspace
+cargo publish --dry-run -p qwen-asr
+cargo publish --dry-run -p qwen-asr-cli
+```
 
-3. **`release-please-config.json`**:
-   * Explicitly defines the paths (`crates/qwen-asr`, `flutter/qwen_asr`).
-   * Ensures that tags are grouped intelligently and keeps the components separated.
+For a Flutter release, also run:
 
-## ⚠️ Important Configuration State
+```bash
+cd flutter/qwen_asr
+flutter pub get
+flutter analyze
+flutter test
+dart pub publish --dry-run
+```
 
-If you ever clone or copy this setup to a new repository, remember the hidden environment secrets that make this CI work:
-* **`CARGO_REGISTRY_TOKEN`**: Repository Secret used to authorize crates.io publishes.
-* **`PAT`**: Fine-grained Personal Access Token with read/write access to Pull Requests & Contents. It allows the Release Please bot to create tags that are capable of triggering secondary GitHub workflows (like `publish-flutter.yml`). Default `GITHUB_TOKEN` tags are banned from triggering loops.
-* **Pub.dev OIDC Admin**: Configured on the pub.dev admin page for the package. **Tag Pattern MUST be `qwen_asr-v{{version}}`** for OIDC token exchanges to work correctly with this repository's tag formats.
+## 3. Merge the Release PR
+
+Merge the Release Please PR into `main`. The resulting push runs `.github/workflows/release-please.yml` again. Release Please then creates a GitHub tag and GitHub Release for each component included in the PR.
+
+The `PAT` secret is deliberately used instead of the default `GITHUB_TOKEN`. Events created with the default token do not start follow-on workflows, while the CLI binary and Flutter publishing flows depend on tag or release events.
+
+## 4. Automated Publishing
+
+### Rust library: `qwen-asr`
+
+When the Release Please action reports a `crates/qwen-asr` release, `.github/workflows/release-please.yml`:
+
+1. Installs stable Rust and OpenBLAS on Ubuntu.
+2. Runs `cargo publish` from `crates/qwen-asr` with `CARGO_REGISTRY_TOKEN`.
+3. Publishes the version to crates.io.
+
+### Rust CLI: `qwen-asr-cli`
+
+When it reports a `crates/qwen-asr-cli` release, the same workflow:
+
+1. Installs stable Rust and OpenBLAS.
+2. Attempts to publish `qwen-asr` first, allowing an already-published version.
+3. Waits 30 seconds for the crates.io index.
+4. Publishes `qwen-asr-cli` to crates.io.
+
+Creation of a `qwen-asr-cli-vX.Y.Z` GitHub Release also starts `.github/workflows/build-binaries.yml`. It builds, packages, and uploads these release assets:
+
+- Apple Silicon macOS: `aarch64-apple-darwin`
+- Linux: `x86_64-unknown-linux-gnu`
+
+The archives are named `qwen-asr-X.Y.Z-TARGET.tar.gz` and contain the `qwen-asr` executable.
+
+### Flutter plugin: `qwen_asr`
+
+Creation of a `qwen_asr-vX.Y.Z` tag starts `.github/workflows/publish-flutter.yml`. It:
+
+1. Installs stable Rust, Flutter, and Dart.
+2. Runs `flutter pub get`.
+3. Installs `flutter_rust_bridge_codegen` and generates the Rust bindings.
+4. Uses pub.dev trusted publishing through OIDC.
+5. Runs `dart pub publish --force` from `flutter/qwen_asr`.
+
+## 5. Verify the Release
+
+After merging the release PR, check the applicable workflows:
+
+```bash
+gh run list --workflow release-please.yml --limit 5
+gh run list --workflow build-binaries.yml --limit 5
+gh run list --workflow publish-flutter.yml --limit 5
+```
+
+Then verify all outputs included in the release:
+
+- The expected tags and GitHub Releases exist.
+- `qwen-asr` and/or `qwen-asr-cli` are visible on crates.io.
+- A CLI GitHub Release contains both expected `.tar.gz` assets.
+- A Flutter release is visible on pub.dev.
+
+## Required Repository Configuration
+
+- `PAT`: a fine-grained GitHub personal access token with Contents and Pull Requests read/write access. It lets Release Please create PRs, tags, and releases whose events can trigger the other workflows.
+- `CARGO_REGISTRY_TOKEN`: a crates.io API token authorized to publish both Rust packages.
+- pub.dev trusted publisher: configured for this GitHub repository and `.github/workflows/publish-flutter.yml`. Its tag pattern must be `qwen_asr-v{{version}}`.
+- GitHub Actions permissions: the workflows require the `contents`, `pull-requests`, and `id-token` permissions declared in their YAML files.
+
+## Failure Recovery
+
+Inspect the failed step before retrying. Package registries do not allow republishing the same version, so first check whether the package reached crates.io or pub.dev even if the job ended in failure.
+
+If the GitHub Release already exists but registry publishing failed, simply rerunning Release Please may skip publishing because the action no longer reports a newly created release. In that case, publish the already-versioned package manually with the appropriate registry credentials, or use a deliberately scoped recovery workflow. Do not create another tag for the same version.
+
+If CLI binary building failed, rerun `.github/workflows/build-binaries.yml` for the existing CLI Release. If Flutter publishing failed, rerun the original tag-triggered `Publish to pub.dev` workflow after fixing its OIDC or build configuration.
+
+## Workflow and Configuration Reference
+
+- `.github/workflows/release-please.yml`: release PRs, GitHub Releases, and crates.io publishing.
+- `.github/workflows/build-binaries.yml`: CLI binaries attached to CLI GitHub Releases.
+- `.github/workflows/publish-flutter.yml`: OIDC publishing for Flutter tags.
+- `release-please-config.json`: component paths, release types, and Cargo workspace integration.
+- `.release-please-manifest.json`: most recently released version of each component.

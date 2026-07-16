@@ -7,7 +7,7 @@ This folder collects the benchmark methodology, scripts, and latest results for 
 | Script | Path | Purpose |
 |---|---|---|
 | `run.sh` | `bench/run.sh` | Core micro-benchmark driver for the local `qwen-asr` binary. Runs offline/segmented/streaming modes, repeats each config `--runs` times, picks the median inference run, computes WER/CER, and writes per-mode JSON files plus a `summary.json`. |
-| `benchmark-all.sh` | `bench/benchmark-all.sh` | Full cross-implementation benchmark. Builds/runs qwen-asr first (`bf52daf`), qwen-asr latest (HEAD), upstream C, `second-state/qwen3_asr_rs` MLX, and `mlx-audio`. Produces a timestamped `bench/compare-results/<timestamp>/` directory and updates root `report.md` and `bench/charts/`. |
+| `benchmark-all.sh` | `bench/benchmark-all.sh` | Full cross-implementation benchmark. Builds/runs qwen-asr first (`bf52daf`), qwen-asr latest (HEAD), upstream C, `second-state/qwen3_asr_rs` MLX, and `mlx-audio`. Produces a timestamped `bench/compare-results/<timestamp>/` directory and updates root `report.md`, `bench/charts/`, and the chart copies under `docs/benchmarks/charts/`. |
 | `benchmark-second-state.sh` | `bench/benchmark-second-state.sh` | Compares current qwen-asr against `second-state/qwen3_asr_rs` (libtorch CPU and MLX Metal GPU) and `mlx-audio`. |
 | `compare.sh` | `bench/compare.sh` | Compares two existing result directories under `bench/results/<baseline>` vs `bench/results/<current>`. Emits a markdown table and/or JSON. |
 | `render_benchmark_report.py` | `bench/render_benchmark_report.py` | Reads `summary.json` and renders the official `report.md` plus bar charts into `bench/charts/`. |
@@ -94,6 +94,7 @@ It also updates:
 - `report.md` in the project root
 - `bench/charts/benchmark-unified-latency.png`
 - `bench/charts/benchmark-unified-rtf.png`
+- matching chart copies in `docs/benchmarks/charts/`
 
 > **Note:** this script clones/builds three external implementations and can take 30–60 minutes.
 
