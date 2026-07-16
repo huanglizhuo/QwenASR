@@ -5,6 +5,8 @@ use crate::audio;
 use crate::config::*;
 use crate::context::QwenCtx;
 use crate::decoder::{self, tok_embed_bf16_to_f32, Decoder, DecoderBuffers, KvCache, RopeCache};
+#[cfg(target_arch = "aarch64")]
+use crate::decoder::{decoder_forward_verify, verify_accepted_len};
 use crate::encoder::{Encoder, EncoderBuffers};
 use crate::kernels;
 use crate::output::{SegmentResult, TranscriptionResult, WordTimestamp};
@@ -1518,6 +1520,237 @@ pub fn transcribe_stdin(ctx: &mut QwenCtx) -> Option<String> {
     transcribe_audio(ctx, &samples)
 }
 
+/// Per-chunk telemetry from [`stream_decode_tail`], surfaced at
+/// `kernels::verbose() >= 2` for the R13-B overlap-draft verifier. All counts
+/// are in the current chunk's coordinate space.
+#[derive(Default)]
+struct DecodeTailStats {
+    /// Tokens committed this chunk (`== chunk_tokens.len()`).
+    committed: usize,
+    /// Draft tokens supplied this chunk (previous chunk's saved tail length).
+    draft_len: usize,
+    /// Longest common prefix between the draft stream and this chunk's
+    /// regenerated tail, aligned by position — the acceptance *ceiling*.
+    draft_lcp: usize,
+    /// Multi-token verify steps executed (`decoder_forward_verify` calls).
+    verify_steps: usize,
+    /// Draft tokens actually accepted across all verify steps.
+    accepted_drafts: usize,
+    /// Tokens committed via the verifier path (t0 + accepted drafts, per step).
+    verified_commits: usize,
+}
+
+/// Whether the streaming overlap-draft verifier is enabled for this run.
+/// `QWEN_ASR_VERIFY=0` forces the pure single-token decode path (kill switch).
+fn stream_verify_enabled() -> bool {
+    std::env::var("QWEN_ASR_VERIFY")
+        .map(|v| v != "0")
+        .unwrap_or(true)
+}
+
+/// Shared autoregressive decode-tail loop for both streaming paths
+/// (`transcribe_stream` and `stream_push_audio`).
+///
+/// On entry the decoder KV cache is positioned right after the prefill and
+/// `first_token` is the pending token produced by the prefill's final
+/// `decoder_forward` (not yet fed). The loop greedily generates the chunk tail,
+/// returning the committed token stream (`chunk_tokens`), exactly as the former
+/// inline loop did.
+///
+/// R13-B overlap-draft speculation (aarch64, `verify_enabled`, non-empty
+/// `prev_tail`): `prev_tail` is the previous chunk's regenerated tail, aligned
+/// so that `prev_tail[j]` predicts this chunk's token at committed index `j`.
+/// The pending token `t0` (committed index `chunk_tokens.len()`) is always fed
+/// as-is; the drafts `prev_tail[cursor+1 ..]` predict the following positions.
+/// Each verify step feeds `[t0, d1..d_k]` through [`decoder_forward_verify`],
+/// commits the accepted run plus the free next token, and rolls `kv_cache.len`
+/// back to the committed length. On the first draft mismatch all remaining
+/// drafts are dropped (no realignment in v1) and the chunk finishes on the
+/// single-token path. Every committed token equals the sequential greedy
+/// argmax by construction, so the returned stream is byte-identical to the
+/// pure single-token loop; EOS and `max_new_tokens` truncation are applied
+/// per-token exactly as sequential decode would.
+#[allow(clippy::too_many_arguments)]
+fn stream_decode_tail(
+    ctx: &mut QwenCtx,
+    cfg: &QwenConfig,
+    tok_emb: *const u16,
+    dim: usize,
+    tmp_embed: &mut [f32],
+    first_token: i32,
+    max_new_tokens: i32,
+    prev_tail: &[i32],
+    verify_enabled: bool,
+    stats: &mut DecodeTailStats,
+) -> Vec<i32> {
+    let mut chunk_tokens: Vec<i32> = Vec::new();
+    let mut n_generated: i32 = 0;
+    let mut token = first_token;
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        if verify_enabled && !prev_tail.is_empty() {
+            const K_MAX: usize = kernels::MAX_BATCH;
+            let mut embeds = vec![0f32; K_MAX * dim];
+            let mut out = vec![0i32; K_MAX];
+            let mut drafts_live = true;
+
+            'outer: while n_generated < max_new_tokens {
+                // Draft cursor == number of tokens already committed; the pending
+                // token occupies committed index `cursor` (predicted by
+                // prev_tail[cursor]); drafts predict the following positions.
+                let cursor = chunk_tokens.len();
+                let ndraft = if drafts_live {
+                    prev_tail
+                        .len()
+                        .saturating_sub(cursor + 1)
+                        .min(K_MAX - 1)
+                } else {
+                    0
+                };
+
+                if ndraft == 0 {
+                    // No aligned drafts left: plain single-token step (identical
+                    // math and control flow to the pure path below).
+                    n_generated += 1;
+                    if token == TOKEN_ENDOFTEXT || token == TOKEN_IM_END {
+                        break;
+                    }
+                    chunk_tokens.push(token);
+                    unsafe {
+                        tok_embed_bf16_to_f32(tmp_embed, tok_emb, token, dim);
+                    }
+                    token = decoder::decoder_forward(
+                        &ctx.model.decoder,
+                        cfg,
+                        &mut ctx.kv_cache,
+                        &mut ctx.rope_cache,
+                        &mut ctx.dec_bufs,
+                        tmp_embed,
+                    );
+                    continue;
+                }
+
+                // Build the verify window [t0, d1..d_ndraft].
+                let kk = 1 + ndraft;
+                unsafe {
+                    tok_embed_bf16_to_f32(&mut embeds[..dim], tok_emb, token, dim);
+                }
+                for i in 0..ndraft {
+                    let d = prev_tail[cursor + 1 + i];
+                    unsafe {
+                        tok_embed_bf16_to_f32(
+                            &mut embeds[(i + 1) * dim..(i + 2) * dim],
+                            tok_emb,
+                            d,
+                            dim,
+                        );
+                    }
+                }
+
+                let base = ctx.kv_cache.len;
+                let bufs = ctx.verify_pool.ensure(kk, cfg);
+                decoder_forward_verify(
+                    &ctx.model.decoder,
+                    cfg,
+                    &mut ctx.kv_cache,
+                    &mut ctx.rope_cache,
+                    bufs,
+                    &embeds[..kk * dim],
+                    kk,
+                    &mut out[..kk],
+                );
+                // kv_cache.len == base + kk here.
+
+                let drafts = &prev_tail[cursor + 1..cursor + 1 + ndraft];
+                let a = verify_accepted_len(drafts, &out[..kk]);
+                stats.verify_steps += 1;
+                stats.accepted_drafts += a;
+
+                // The committed run is [t0, d1..d_a]; the free next token out[a]
+                // becomes the next pending token. Feed the run through the exact
+                // sequential stop logic (budget then EOS), rolling kv_cache.len
+                // back to reflect only the tokens actually committed/fed.
+                let run_first = token;
+                let mut pushed = 0usize;
+                let mut stop = false;
+                for idx in 0..(a + 1) {
+                    let c = if idx == 0 { run_first } else { drafts[idx - 1] };
+                    if n_generated >= max_new_tokens {
+                        stop = true;
+                        break;
+                    }
+                    n_generated += 1;
+                    if c == TOKEN_ENDOFTEXT || c == TOKEN_IM_END {
+                        stop = true;
+                        break;
+                    }
+                    chunk_tokens.push(c);
+                    pushed += 1;
+                }
+                ctx.kv_cache.len = base + pushed;
+                stats.verified_commits += pushed;
+                if stop {
+                    break 'outer;
+                }
+
+                // Whole run committed; free token is the next pending token.
+                token = out[a];
+                // First mismatch drops all remaining drafts (no realignment).
+                if a < ndraft {
+                    drafts_live = false;
+                }
+            }
+
+            let mut lcp = 0usize;
+            while lcp < prev_tail.len()
+                && lcp < chunk_tokens.len()
+                && prev_tail[lcp] == chunk_tokens[lcp]
+            {
+                lcp += 1;
+            }
+            stats.committed = chunk_tokens.len();
+            stats.draft_len = prev_tail.len();
+            stats.draft_lcp = lcp;
+            return chunk_tokens;
+        }
+    }
+
+    // Pure single-token path: byte-identical to the original inline decode loop
+    // (x86_64, verifier disabled, or no drafts available).
+    let _ = verify_enabled;
+    while n_generated < max_new_tokens {
+        n_generated += 1;
+        if token == TOKEN_ENDOFTEXT || token == TOKEN_IM_END {
+            break;
+        }
+        chunk_tokens.push(token);
+        unsafe {
+            tok_embed_bf16_to_f32(tmp_embed, tok_emb, token, dim);
+        }
+        token = decoder::decoder_forward(
+            &ctx.model.decoder,
+            cfg,
+            &mut ctx.kv_cache,
+            &mut ctx.rope_cache,
+            &mut ctx.dec_bufs,
+            tmp_embed,
+        );
+    }
+
+    let mut lcp = 0usize;
+    while lcp < prev_tail.len()
+        && lcp < chunk_tokens.len()
+        && prev_tail[lcp] == chunk_tokens[lcp]
+    {
+        lcp += 1;
+    }
+    stats.committed = chunk_tokens.len();
+    stats.draft_len = prev_tail.len();
+    stats.draft_lcp = lcp;
+    chunk_tokens
+}
+
 /// Streaming transcription: processes audio in chunks, emitting tokens via
 /// `ctx.token_cb` as they become stable.
 ///
@@ -1526,6 +1759,7 @@ pub fn transcribe_stdin(ctx: &mut QwenCtx) -> Option<String> {
 pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
     let cfg = ctx.config.clone();
     let dim = cfg.dec_hidden;
+    let verify_enabled = stream_verify_enabled();
     let chunk_samples = (ctx.stream_chunk_sec * SAMPLE_RATE as f32) as usize;
     let rollback = ctx.stream_rollback;
     let unfixed_chunks = ctx.stream_unfixed_chunks;
@@ -1811,7 +2045,7 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         ctx.perf_decode_ms += prefill_ms;
 
         let last_embed = &input_embeds[prefill_len * dim..(prefill_len + 1) * dim];
-        let mut token = decoder::decoder_forward(
+        let token = decoder::decoder_forward(
             &ctx.model.decoder,
             &cfg,
             &mut ctx.kv_cache,
@@ -1820,32 +2054,41 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
             last_embed,
         );
 
-        // Autoregressive decode
+        // Autoregressive decode (R13-B: overlap-draft speculation). The tail of
+        // `raw_tokens` about to be regenerated (positions `n_prefix_tokens..`,
+        // the previous chunk's output at the same absolute positions) is the
+        // draft stream; capture it BEFORE the truncate below.
+        let prev_tail: Vec<i32> = raw_tokens[n_prefix_tokens..].to_vec();
         let t0 = get_time_ms();
-        let mut chunk_tokens: Vec<i32> = Vec::new();
-        let mut n_generated = 0;
-
-        while n_generated < max_new_tokens {
-            n_generated += 1;
-            if token == TOKEN_ENDOFTEXT || token == TOKEN_IM_END {
-                break;
-            }
-            chunk_tokens.push(token);
-            unsafe {
-                tok_embed_bf16_to_f32(&mut tmp_embed, tok_emb, token, dim);
-            }
-            token = decoder::decoder_forward(
-                &ctx.model.decoder,
-                &cfg,
-                &mut ctx.kv_cache,
-                &mut ctx.rope_cache,
-                &mut ctx.dec_bufs,
-                &tmp_embed,
-            );
-        }
+        let mut tail_stats = DecodeTailStats::default();
+        let chunk_tokens = stream_decode_tail(
+            ctx,
+            &cfg,
+            tok_emb,
+            dim,
+            &mut tmp_embed,
+            token,
+            max_new_tokens,
+            &prev_tail,
+            verify_enabled,
+            &mut tail_stats,
+        );
 
         let decode_ms = elapsed_ms(t0);
         ctx.perf_decode_ms += decode_ms;
+
+        if kernels::verbose() >= 2 {
+            eprintln!(
+                "  [stream chunk {} verify] committed={} draft_len={} lcp={} verify_steps={} accepted_drafts={} verified_commits={}",
+                chunk_idx,
+                tail_stats.committed,
+                tail_stats.draft_len,
+                tail_stats.draft_lcp,
+                tail_stats.verify_steps,
+                tail_stats.accepted_drafts,
+                tail_stats.verified_commits,
+            );
+        }
 
         // Update raw token history
         raw_tokens.truncate(n_prefix_tokens);
@@ -2076,6 +2319,7 @@ pub fn stream_push_audio(
 ) -> Option<String> {
     let cfg = ctx.config.clone();
     let dim = cfg.dec_hidden;
+    let verify_enabled = stream_verify_enabled();
     let chunk_samples = (ctx.stream_chunk_sec * SAMPLE_RATE as f32) as usize;
     let rollback = ctx.stream_rollback;
     let unfixed_chunks = ctx.stream_unfixed_chunks;
@@ -2349,7 +2593,7 @@ pub fn stream_push_audio(
         }
 
         let last_embed = &input_embeds[prefill_len * dim..(prefill_len + 1) * dim];
-        let mut token = decoder::decoder_forward(
+        let token = decoder::decoder_forward(
             &ctx.model.decoder,
             &cfg,
             &mut ctx.kv_cache,
@@ -2374,32 +2618,41 @@ pub fn stream_push_audio(
             );
         }
 
-        // ---- Autoregressive decode ----
+        // ---- Autoregressive decode (R13-B: overlap-draft speculation) ----
+        // The tail of `raw_tokens` about to be regenerated (positions
+        // `n_prefix_tokens..`, the previous chunk's output at the same absolute
+        // positions) is the draft stream; capture it BEFORE the truncate below.
+        let prev_tail: Vec<i32> = state.raw_tokens[n_prefix_tokens..].to_vec();
         let t0 = get_time_ms();
-        let mut chunk_tokens: Vec<i32> = Vec::new();
-        let mut n_generated = 0;
-
-        while n_generated < max_new_tokens {
-            n_generated += 1;
-            if token == TOKEN_ENDOFTEXT || token == TOKEN_IM_END {
-                break;
-            }
-            chunk_tokens.push(token);
-            unsafe {
-                tok_embed_bf16_to_f32(&mut tmp_embed, tok_emb, token, dim);
-            }
-            token = decoder::decoder_forward(
-                &ctx.model.decoder,
-                &cfg,
-                &mut ctx.kv_cache,
-                &mut ctx.rope_cache,
-                &mut ctx.dec_bufs,
-                &tmp_embed,
-            );
-        }
+        let mut tail_stats = DecodeTailStats::default();
+        let chunk_tokens = stream_decode_tail(
+            ctx,
+            &cfg,
+            tok_emb,
+            dim,
+            &mut tmp_embed,
+            token,
+            max_new_tokens,
+            &prev_tail,
+            verify_enabled,
+            &mut tail_stats,
+        );
 
         let decode_ms = elapsed_ms(t0);
         ctx.perf_decode_ms += decode_ms;
+
+        if kernels::verbose() >= 2 {
+            eprintln!(
+                "  [stream chunk {} verify] committed={} draft_len={} lcp={} verify_steps={} accepted_drafts={} verified_commits={}",
+                state.chunk_idx,
+                tail_stats.committed,
+                tail_stats.draft_len,
+                tail_stats.draft_lcp,
+                tail_stats.verify_steps,
+                tail_stats.accepted_drafts,
+                tail_stats.verified_commits,
+            );
+        }
 
         // ---- Detect speech end (decoder produced EOT on silence) ----
         // When chunk_tokens is empty, the decoder saw silence/end-of-speech.

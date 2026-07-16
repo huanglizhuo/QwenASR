@@ -7341,6 +7341,105 @@ chunk's transcript, not an early exit.
 
 ---
 
+### R13-B: streaming overlap-draft speculative decode — landed
+
+Second phase of R13 (plan `docs/research/r13-mtgv-plan.md`). Drives the R13-A
+verifier from a real draft source: the previous chunk's regenerated tail. When
+streaming re-decodes an overlapping audio window, the tokens at each absolute
+transcript position mostly reconverge, so the previous chunk's output is a
+high-fidelity prediction of this chunk's — exactly the drafts the multi-token
+verifier needs.
+
+**Change.**
+- Factored the autoregressive decode-tail loop shared by both streaming paths
+  (`transcribe_stream` and `stream_push_audio`) into one helper
+  `stream_decode_tail`. The pure single-token path is byte-for-byte the former
+  inline loop (still used on x86_64, when disabled, and when no drafts exist).
+- aarch64 verifier path: the draft cursor is `chunk_tokens.len()` (the pending
+  token `t0` sits at committed index `cursor`, predicted by `prev_tail[cursor]`;
+  drafts are `prev_tail[cursor+1 ..]`). Each step feeds `[t0, d1..d_k]`
+  (`k ≤ MAX_BATCH-1` drafts) through `decoder_forward_verify`, commits the
+  accepted run + the free next token via `verify_accepted_len`, and rolls
+  `kv_cache.len` back to the committed length. `t0` is never draft-checked (it
+  is always the true pending token); only `d1..d_k` are verified. On the first
+  draft mismatch all remaining drafts are dropped (no realignment in v1) and the
+  chunk finishes single-token.
+- `prev_tail` is `raw_tokens[n_prefix_tokens..]` captured **before** the
+  `raw_tokens.truncate(n_prefix_tokens)`; alignment verified against the code —
+  `chunk_tokens[j]` and `prev_tail[j]` share absolute transcript position
+  `n_prefix_tokens + j` (the LCP-reused prefix is prefilled, decode regenerates
+  from position `n_prefix_tokens`).
+- EOS / `max_new_tokens` truncation is applied per-token over each committed
+  run exactly as sequential decode would (find the first terminal / budget stop
+  inside the run, push only the tokens before it, set `kv_cache.len = base +
+  pushed`) — so the session state and committed stream equal sequential greedy.
+- `QwenCtx` gains a lazily-grown `verify_pool: VerifyBufferPool` (aarch64-only);
+  kill switch `QWEN_ASR_VERIFY=0` forces the pure single-token path.
+- Verbose (`kernels::verbose() >= 2`) per-chunk counters in both paths:
+  committed / draft_len / draft-LCP (acceptance ceiling) / verify_steps /
+  accepted_drafts / verified_commits.
+
+**Path note (important for benchmarking).** `transcribe_stream` (the `--stream`
+CLI / `bench/run.sh` streaming mode) decodes **only the final chunk** with the
+default `unfixed_chunks = 99` (non-final chunks are encoder-cache-only), so it
+has no previous-chunk draft and the verifier is **inert** there. The
+overlap-draft path is exercised by `stream_push_audio` (the incremental `--live`
+path), which decodes **every** chunk and regenerates the running transcript — a
+strong draft stream. Both paths share the helper and both are gated on
+byte-identity.
+
+**Acceptance (measured, `stream_push_audio` on `bench/samples/audio.wav`,
+`verbose=2`, `chunk_sec=3`, 2 s incremental pushes).** Once the transcript
+stabilizes, drafts fully match and the verifier saturates `MAX_BATCH`:
+
+| chunk | committed | draft LCP | verify_steps | accepted_drafts | tok/verify-step |
+|------:|----------:|----------:|-------------:|----------------:|----------------:|
+| 3 | 12 | 12 | 2 | 10 | 6.0 |
+| 5 | 32 | 27 | 4 | 23 | 8.0 (capped) |
+| 7–9 | 32 | 32 | 4 | 28 | 8.0 (full `MAX_BATCH`) |
+
+On stabilized chunks the whole 32-token regen commits in 4 verify steps
+(≈8 tokens/step, i.e. ~7 drafts accepted + 1 free per step) vs 32 single-token
+decoder passes — an ~8× reduction in decode weight streams for those chunks.
+
+**Speed.** `stream_push_audio` A/B (verify ON vs OFF), median of 5, long-2min:
+
+| workload | VERIFY_ON | VERIFY_OFF | speedup |
+|----------|----------:|-----------:|--------:|
+| long-2min push stream (wall) | 11144 ms | 14060 ms | **1.262×** |
+
+Transcript byte-identical (135 bytes) ON vs OFF. Total wall includes the
+verifier-unaffected encoder; decode-only speedup is higher.
+
+`bench/run.sh`-style interleaved A/B (R13-B binary vs `main`, median of 10,
+`audio.wav`) — all three CLI modes flat within the ±1.5% noise floor, as
+expected (offline/segmented untouched; `--stream` is the inert single-decode
+path):
+
+| mode | R13-B median | main median | ratio |
+|------|-------------:|------------:|------:|
+| offline | 639 ms | 629 ms | 0.984× |
+| segmented -S30 | 638 ms | 636 ms | 0.997× |
+| streaming (`--stream`) | 596 ms | 582 ms | 0.977× |
+
+**Byte-identity.** 7/7 of the standard set (`audio.wav` offline / -S30 /
+`--stream`; long-2min offline + -S30; long-10min offline + -S30) byte-identical
+between the R13-B binary and `main`. New `tests/stream_verify.rs` (model-gated,
+`tests/lockstep.rs` skip pattern + per-file `TEST_MUTEX`) asserts
+`QWEN_ASR_VERIFY` ON vs OFF transcripts are byte-identical for BOTH
+`transcribe_stream` (forced multi-chunk via `unfixed_chunks=1`) and
+`stream_push_audio`. Full suite `cargo test --release` green; zero warnings on
+`RUSTFLAGS="-C target-cpu=native" cargo build --release` and
+`cargo build -p qwen-asr --no-default-features`.
+
+Decision: **LANDED.** Correct by construction (byte-identical to sequential
+greedy, proven 7/7 + ON/OFF) and a real 1.26× on the incremental/live streaming
+path. The default `--stream` bench mode is unaffected because it decodes a
+single chunk — the win is in the multi-chunk re-decode scenario the phase
+targets.
+
+---
+
 ## Autoresearch Program Baseline Experiments
 
 These experiments come from the initial `codex-auto-research` autoresearch program baseline (`programs.md`). They are structural buffer-reuse optimizations that predate the numbered round structure above.

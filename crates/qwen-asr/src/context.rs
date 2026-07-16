@@ -166,6 +166,13 @@ pub struct QwenCtx {
     // RoPE cache
     pub rope_cache: RopeCache,
 
+    /// Lazily-grown buffer pool for the R13-B streaming multi-token verifier.
+    /// One [`DecoderBuffers`] set per candidate position in a verify window;
+    /// reused across chunks/steps so steady-state verification never allocates.
+    /// aarch64-only (the verifier core is aarch64-only).
+    #[cfg(target_arch = "aarch64")]
+    pub verify_pool: VerifyBufferPool,
+
     // Token streaming callback
     pub token_cb: Option<TokenCallback>,
 
@@ -239,6 +246,8 @@ impl QwenCtx {
             dec_bufs,
             enc_bufs: EncoderBuffers::new(),
             rope_cache: RopeCache::new(),
+            #[cfg(target_arch = "aarch64")]
+            verify_pool: VerifyBufferPool::new(),
             token_cb: None,
             segment_sec: 0.0,
             search_sec: 3.0,
