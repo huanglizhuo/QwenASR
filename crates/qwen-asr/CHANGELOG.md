@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.9.0](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.8.1...qwen-asr-v0.9.0) (2026-07-16)
+
+
+### Features
+
+* batched INT8 decode kernels for lockstep decode (R12-E2 stage) ([930dc1c](https://github.com/huanglizhuo/QwenASR/commit/930dc1c23346bd04f48f1b623e9c91fcfea071f5))
+
+
+### Bug Fixes
+
+* revert INT4 decode FFN weights to INT8 to restore WER (R12-B5) ([04fb434](https://github.com/huanglizhuo/QwenASR/commit/04fb4341a9adb91c0740350608eda88af61e967e))
+
+
+### Performance Improvements
+
+* drop aarch64 runtime copy of fused gate_up bf16 weights (R12-A) ([97b521c](https://github.com/huanglizhuo/QwenASR/commit/97b521c92cdfc0397eab5a78a2279aa99fcf0eff))
+* dynamic chunk scheduling across P/E cores ([cc7f49d](https://github.com/huanglizhuo/QwenASR/commit/cc7f49d48a5a9361070438dc004e90d5910a06fb))
+* INT4 group-quantized decode weights (tier 1) ([6ed3952](https://github.com/huanglizhuo/QwenASR/commit/6ed3952646ba0d9e710a63305952a1f1405c3dd3))
+* lockstep batched segment decode amortizes decode weight stream (R12-E3) ([f80fe8f](https://github.com/huanglizhuo/QwenASR/commit/f80fe8fdb05af48da70ce4d4cb179f773d0e84d4))
+* mmap-backed INT8 weight sidecar cuts startup quantization (R12-H1) ([2e49dcc](https://github.com/huanglizhuo/QwenASR/commit/2e49dccb40a7db72cc837db8c7cce1412642ca28))
+* pool-parallel GEMM slices and E-core-aware default threads ([9a0c19e](https://github.com/huanglizhuo/QwenASR/commit/9a0c19ea26c94a8989e77ecf7f32219055911335))
+* raise default thread count for dynamic-scheduling era ([963a404](https://github.com/huanglizhuo/QwenASR/commit/963a404106730a334a25556b75c924313bdfe3ce))
+
 ## [0.8.1](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.8.0...qwen-asr-v0.8.1) (2026-07-09)
 
 
