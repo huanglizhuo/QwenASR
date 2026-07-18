@@ -11,6 +11,14 @@ import 'package:qwen_asr/qwen_asr.dart';
 ///
 /// Run:
 ///   cd flutter/qwen_asr && flutter test test/qwen_asr_api_test.dart
+/// Lowercase, strip punctuation, collapse whitespace — word-level equality
+/// that is stable under FP-reorder punctuation drift.
+String normalizeWords(String s) => s
+    .toLowerCase()
+    .replaceAll(RegExp(r'[^\p{L}\p{N}\s]', unicode: true), '')
+    .replaceAll(RegExp(r'\s+'), ' ')
+    .trim();
+
 void main() {
   const projectRoot = '/Users/lizhuo/owork/q-asr';
   const modelDir = '$projectRoot/qwen3-asr-0.6b';
@@ -52,7 +60,10 @@ void main() {
 
     expect(result.toLowerCase(), contains('shenyang'));
     expect(result.toLowerCase(), contains('disappointing'));
-    expect(result, equals(refText));
+    // Offline float GEMMs are not reduction-order-invariant across thread
+    // counts/machines, so punctuation can flip (e.g. "you know," vs
+    // "you know") between environments. Compare words, not punctuation.
+    expect(normalizeWords(result), equals(normalizeWords(refText)));
   });
 
   test('transcribePcm accepts raw samples', () async {

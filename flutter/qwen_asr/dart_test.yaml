@@ -1,0 +1,3 @@
+# Each suite loads the full 1.7 GB model (mmap + INT8 sidecar); running suites
+# concurrently multiplies peak memory and races model/sidecar setup. Serialize.
+concurrency: 1
