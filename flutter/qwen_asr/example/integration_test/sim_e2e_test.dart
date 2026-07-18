@@ -111,7 +111,7 @@ void main() {
     tester,
   ) async {
     await engine.streamReset();
-    engine.setStreamChunkSec(kEngineChunkSec);
+    engine.setStreamChunkSec(kSimEngineChunkSec);
     engine.setStreamUnfixedChunks(kUnfixedChunks);
     engine.setPastTextConditioning(true);
     // Push 3s of low-level noise in 0.5s chunks like the mic path would.

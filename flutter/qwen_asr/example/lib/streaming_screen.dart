@@ -17,13 +17,20 @@ const int kSampleRate = 16000;
 /// larger = fewer FFI round-trips. 0.5 s is a good default (see report).
 const double kMicChunkSec = 0.5;
 
-/// Engine internal streaming chunk in seconds. This is the accuracy/latency
-/// knob. 8.0 s is the engine default and the ONLY value that reproduces the
-/// offline transcript exactly for the bench clip; smaller values emit partials
-/// sooner but introduce punctuation/duplication drift (see streaming_test.dart
-/// tuning sweep). Kept at 8.0 for correctness; the finalize (Stop) pass still
-/// produces the full accurate transcript.
-const double kEngineChunkSec = 8.0;
+/// Engine internal streaming chunk in seconds — the accuracy/latency knob.
+/// The engine only decodes once a full chunk has accumulated, so no partial
+/// can appear before the first chunk boundary.
+///
+/// 8.0 s is the ONLY value that reproduces the offline transcript exactly for
+/// the bench clip (see streaming_test.dart tuning sweep); the simulated-mic
+/// verification path uses it. It is the wrong trade-off for a live mic:
+/// speech shorter than 8 s would show nothing until Stop/finalize.
+const double kSimEngineChunkSec = 8.0;
+
+/// Live-mic engine chunk: partials appear every ~2 s of speech. Costs minor
+/// punctuation/duplication drift in intermediate partials vs the 8 s setting;
+/// the finalize (Stop) pass still re-decodes the tail for the final text.
+const double kLiveEngineChunkSec = 2.0;
 
 /// Leading chunks kept "unfixed" before committing tokens to the stable
 /// transcript. Small value = progressive live partials. The engine default
@@ -66,8 +73,8 @@ class _StreamingScreenState extends State<StreamingScreen> {
   @override
   void initState() {
     super.initState();
-    // Configure the engine streaming session for correct progressive partials.
-    widget.engine.setStreamChunkSec(kEngineChunkSec);
+    // Session-independent streaming config; the engine chunk size is set
+    // per-session (live vs simulated) in _startMic/_startSimulated.
     widget.engine.setStreamUnfixedChunks(kUnfixedChunks);
     widget.engine.setPastTextConditioning(true);
     if (widget.autoSimWavPath != null) {
@@ -162,6 +169,7 @@ class _StreamingScreenState extends State<StreamingScreen> {
       setState(() => _status = 'Microphone permission denied');
       return;
     }
+    widget.engine.setStreamChunkSec(kLiveEngineChunkSec);
     await widget.engine.streamReset();
     setState(() {
       _running = true;
@@ -190,11 +198,15 @@ class _StreamingScreenState extends State<StreamingScreen> {
     await _recorder.stop();
     await _drain(finalize: true);
     if (!mounted) return;
+    final perf = _computePerf();
     setState(() {
       _running = false;
       _status = 'Done';
-      _perf = _computePerf();
+      _perf = perf;
     });
+    // Test/automation hook: emit final result to logcat (grep QASR_).
+    debugPrint('QASR_METRIC mic_perf | $perf');
+    debugPrint('QASR_TRANSCRIPT mic | $_transcript');
   }
 
   // ---------------------------------------------------------------------------
@@ -214,6 +226,7 @@ class _StreamingScreenState extends State<StreamingScreen> {
       return;
     }
 
+    widget.engine.setStreamChunkSec(kSimEngineChunkSec);
     await widget.engine.streamReset();
     setState(() {
       _simulating = true;
@@ -232,11 +245,15 @@ class _StreamingScreenState extends State<StreamingScreen> {
     }
     await _drain(finalize: true);
     if (!mounted) return;
+    final perf = _computePerf();
     setState(() {
       _simulating = false;
       _status = 'Done (simulated)';
-      _perf = _computePerf();
+      _perf = perf;
     });
+    // Test/automation hook: emit final result to logcat (grep QASR_).
+    debugPrint('QASR_METRIC sim_perf | $perf');
+    debugPrint('QASR_TRANSCRIPT sim | $_transcript');
   }
 
   // ---------------------------------------------------------------------------
