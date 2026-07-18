@@ -37,7 +37,17 @@ class QAsrEngine {
     int verbosity = 0,
   }) async {
     if (!_initialized) {
-      await RustLib.init();
+      try {
+        await RustLib.init();
+      } catch (_) {
+        // The plugin statically links the Rust library (cargokit `-force_load`
+        // on iOS/macOS), so its symbols live in the running process rather than
+        // a separate framework/dylib. The default frb loader only looks for a
+        // framework; fall back to process-symbol lookup.
+        await RustLib.init(
+          externalLibrary: ExternalLibrary.process(iKnowHowToUseIt: true),
+        );
+      }
       _initialized = true;
     }
     final engine = await QwenAsrEngine.load(

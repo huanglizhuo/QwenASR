@@ -24,9 +24,13 @@ void main() {
   late Float32List samples;
   late String refText;
 
+  // Thread count for the loaded engine (0 = auto). Override per run with
+  // --dart-define=THREADS=N to measure thread scaling.
+  const threads = int.fromEnvironment('THREADS', defaultValue: 0);
+
   setUpAll(() async {
     await QAsrEngine.initWith(dylibPath: dylibPath);
-    engine = await QAsrEngine.load(modelDir, verbosity: 0);
+    engine = await QAsrEngine.load(modelDir, threads: threads, verbosity: 0);
     samples = _parseWavPcm16(File(wavPath).readAsBytesSync());
     refText = File(refPath).readAsStringSync().trim();
   });
@@ -81,6 +85,18 @@ void main() {
       expect(text.trim(), equals(refText));
     },
   );
+
+  test('THREADS measurement (release, one engine per run)', () async {
+    final (text, rtf, firstMs) = await runStream(
+      micChunkSec: 0.5,
+      engineChunkSec: 8.0,
+    );
+    print(
+      'THREADS=${threads == 0 ? "auto" : threads} engineChunk=8.0s '
+      'rtf=${rtf.toStringAsFixed(2)}x firstPartial=${firstMs}ms '
+      'match=${text.trim() == refText}',
+    );
+  });
 
   test('TUNING SWEEP: engine chunk size', () async {
     print('\n=== TUNING SWEEP (macOS desktop, functional) ===');

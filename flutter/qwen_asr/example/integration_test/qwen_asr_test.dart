@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
@@ -43,7 +44,9 @@ void main() {
     final wavBytes = File(wavPath).readAsBytesSync();
     final refText = File(refPath).readAsStringSync().trim();
 
-    final result = await engine.transcribeWavBuffer(Uint8List.fromList(wavBytes));
+    final result = await engine.transcribeWavBuffer(
+      Uint8List.fromList(wavBytes),
+    );
     expect(result, isNotEmpty);
     print('transcribeWavBuffer result: $result');
 
@@ -83,7 +86,9 @@ void main() {
   test('setSegmentSec + transcribe works', () async {
     engine.setSegmentSec(30);
     final wavBytes = File(wavPath).readAsBytesSync();
-    final result = await engine.transcribeWavBuffer(Uint8List.fromList(wavBytes));
+    final result = await engine.transcribeWavBuffer(
+      Uint8List.fromList(wavBytes),
+    );
     expect(result, isNotEmpty);
     print('segmented result: $result');
     engine.setSegmentSec(0); // reset

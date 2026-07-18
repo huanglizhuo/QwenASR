@@ -1,0 +1,30 @@
+# Cargokit build options.
+#
+# Cargokit invokes `cargo build --manifest-path ... --target-dir <temp>` from a
+# working directory OUTSIDE this crate, so `rust/.cargo/config.toml` is NOT
+# picked up. Without it the aarch64 NEON kernels (which use `dotprod`
+# instructions) fail to assemble on the iOS targets:
+#   error: instruction requires: dotprod
+#
+# Inject the required `target-cpu` via `--config` flags (always applied
+# regardless of CWD) for the iOS device and simulator targets, mirroring
+# rust/.cargo/config.toml.
+cargo:
+  debug:
+    extra_flags:
+      - --config
+      - 'target.aarch64-apple-ios-sim.rustflags=["-C", "target-cpu=apple-a14"]'
+      - --config
+      - 'target.aarch64-apple-ios.rustflags=["-C", "target-cpu=apple-a14"]'
+  profile:
+    extra_flags:
+      - --config
+      - 'target.aarch64-apple-ios-sim.rustflags=["-C", "target-cpu=apple-a14"]'
+      - --config
+      - 'target.aarch64-apple-ios.rustflags=["-C", "target-cpu=apple-a14"]'
+  release:
+    extra_flags:
+      - --config
+      - 'target.aarch64-apple-ios-sim.rustflags=["-C", "target-cpu=apple-a14"]'
+      - --config
+      - 'target.aarch64-apple-ios.rustflags=["-C", "target-cpu=apple-a14"]'

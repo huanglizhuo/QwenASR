@@ -1,0 +1,22 @@
+PODS:
+  - Flutter (1.0.0)
+  - qwen_asr (0.1.0):
+    - Flutter
+
+DEPENDENCIES:
+  - Flutter (from `Flutter`)
+  - qwen_asr (from `.symlinks/plugins/qwen_asr/ios`)
+
+EXTERNAL SOURCES:
+  Flutter:
+    :path: Flutter
+  qwen_asr:
+    :path: ".symlinks/plugins/qwen_asr/ios"
+
+SPEC CHECKSUMS:
+  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  qwen_asr: df21f2f8607e14e11d86db7ec27ad5810bcf7303
+
+PODFILE CHECKSUM: 3c63482e143d1b91d2d2560aee9fb04ecc74ac7e
+
+COCOAPODS: 1.16.2
