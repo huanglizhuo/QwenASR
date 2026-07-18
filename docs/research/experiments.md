@@ -7505,6 +7505,45 @@ provisional text is a possible UX follow-up.
 Decision: **KEPT.** Android streaming is real-time (1.72× compute headroom)
 on a flagship SoC; the no-BLAS fallback is no longer the bottleneck class.
 
+### R13-Android-UX: surface the unfixed tail as provisional (grey) text — landed
+
+Follow-up to the note above. The streaming push path already computes a full
+hypothesis every chunk but only ever returned committed *stable* text —
+`unfixed_chunks=2` holds back the newest ~2 chunks, so the trailing hypothesis
+sat in `raw_tokens` unseen. First visible text therefore trailed speech by the
+whole unfixed window.
+
+Change (additive, all three layers):
+- Core: new `StreamState.provisional_bytes` + `provisional_text()`; after each
+  push, decode `raw_tokens` beyond `stable_text_tokens` (via a shared
+  `stream_text_start` helper so the slice matches the commit block exactly).
+  Replaced each push, cleared on reset/degen-reset, empty after finalize. No
+  change to any existing return value, `token_cb`, or the non-push path.
+- Bridge: `stream_push` now returns `StreamPartial { text, provisional }`
+  (frb 2.11.1 regen) instead of `Option<String>`; stable `text` semantics
+  unchanged.
+- Example app: stable text normal + provisional tail grey italic
+  (`SelectableText.rich`); perf line reports both `firstPartial` (first-visible
+  = stable OR provisional) and `firstStable`. Also fixed a demo-harness
+  finalize race (`_drain` dropped the finalize when a drain was already
+  in-flight under sub-real-time RTF, truncating the final transcript).
+
+Device (Xiaomi, arm64, release, simulated-mic real-time paced, full 28.2 s
+`bench/samples/audio.wav`), first-visible-text latency before → after:
+
+| profile | before firstPartial (stable-only) | after firstProvisional | after firstStable |
+|---|--:|--:|--:|
+| 8 s sim engine chunk | ~27.8 s | **13.1 s** | 27.2 s |
+| 2 s live engine chunk | ~8.2 s | **5.8 s** (3.8–5.8 s across runs) | 9.5 s |
+
+Provisional surfaces the held-back tail ~2 chunks (~14 s at 8 s chunk, ~3.8 s
+at 2 s chunk) earlier than stable, roughly halving time-to-first-text on the
+8 s profile. RTF 0.85–0.91×; final transcript word-correct vs `audio.txt` (same
+"you know," comma variant). Host `flutter test` 12/12 green;
+`cargo test --release` + `--no-default-features` green; analyze/format clean.
+
+Decision: **KEPT.**
+
 ---
 
 ## Autoresearch Program Baseline Experiments

@@ -127,7 +127,17 @@ class _StreamingScreenState extends State<StreamingScreen> {
   /// Serialized drain: pushes one chunk at a time, awaiting each so engine
   /// calls never overlap and partial results arrive in order.
   Future<void> _drain({bool finalize = false}) async {
-    if (_draining) return;
+    if (_draining) {
+      // A non-finalizing drain can be dropped (another is already draining the
+      // shared buffer). A finalize must NOT be dropped: when the engine runs
+      // slower than real time, an in-flight drain is still consuming the buffer
+      // as the last audio arrives, so wait for it to finish, then flush the
+      // remaining tail. Otherwise the final transcript is silently truncated.
+      if (!finalize) return;
+      while (_draining) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+    }
     _draining = true;
     try {
       while (_pending.length >= _chunkSamples) {
