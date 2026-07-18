@@ -6,6 +6,8 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `EngineInner`
+
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<QwenAsrEngine>>
 abstract class QwenAsrEngine implements RustOpaqueInterface {
   /// Load model from a directory path. Returns None if loading fails.
@@ -25,8 +27,56 @@ abstract class QwenAsrEngine implements RustOpaqueInterface {
   /// Set the forced language. Returns false if the language is invalid.
   bool setLanguage({required String language});
 
+  /// Enable reusing previously decoded text as decoder context across chunks
+  /// (prefix rollback). Recommended `true` for live streaming quality; matches
+  /// the CLI `--stream` path.
+  void setPastTextConditioning({required bool enabled});
+
   /// Set the segment duration in seconds (0 = no segmentation).
   void setSegmentSec({required double sec});
+
+  /// Configure the engine's internal streaming chunk size in seconds
+  /// (default 8.0). Smaller values emit partial transcripts more frequently
+  /// (lower latency) at some throughput cost. This is the primary live-latency
+  /// tuning knob and is independent of the mic push-buffer size on the Dart
+  /// side.
+  void setStreamChunkSec({required double sec});
+
+  /// Configure max new tokens decoded per chunk (default 32).
+  void setStreamMaxNewTokens({required int tokens});
+
+  /// Configure the streaming token rollback window (default 5). Larger values
+  /// re-decode more of the tail each chunk for higher stability.
+  void setStreamRollback({required int tokens});
+
+  /// Configure how many leading chunks stay "unfixed" before tokens are
+  /// progressively committed to the stable transcript.
+  ///
+  /// The engine default (99) effectively holds all output until `finalize`,
+  /// which for a fast-pushed live stream truncates at `max_new_tokens`. Set a
+  /// small value (e.g. 2) for correct progressive incremental streaming.
+  void setStreamUnfixedChunks({required int chunks});
+
+  /// Push a new chunk of PCM audio into the live streaming session and return
+  /// the **current full transcript** (partial result) accumulated so far.
+  ///
+  /// `samples`: new PCM chunk (f32, 16 kHz, mono, values in -1.0..1.0).
+  /// `finalize`: set true on the final push (Stop) to flush remaining audio
+  ///             and emit all rollback-buffered tokens.
+  ///
+  /// Returns the full transcript text, or None if nothing has been emitted
+  /// yet. Runs on a flutter_rust_bridge worker thread, so the UI stays
+  /// responsive while a push is in flight.
+  Future<String?> streamPush({
+    required List<double> samples,
+    required bool finalize,
+  });
+
+  /// Reset the streaming session for a new utterance. Clears the accumulated
+  /// audio buffer and token history but keeps the loaded tokenizer/model.
+  ///
+  /// Call once before starting a fresh live-capture session.
+  Future<void> streamReset();
 
   /// Transcribe a WAV file at the given path.
   Future<String?> transcribeFile({required String wavPath});

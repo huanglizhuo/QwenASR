@@ -93,6 +93,66 @@ class QAsrEngine {
     return _engine.perfStats();
   }
 
+  // -------------------------------------------------------------------------
+  // Live streaming API
+  // -------------------------------------------------------------------------
+
+  /// Reset the live streaming session for a fresh utterance.
+  ///
+  /// Call once before starting microphone capture. Clears accumulated audio
+  /// and token history while keeping the loaded model.
+  Future<void> streamReset() => _engine.streamReset();
+
+  /// Push a chunk of PCM audio into the live streaming session.
+  ///
+  /// [samples] is a [Float32List] of 16 kHz mono audio in the range
+  /// -1.0..1.0 (typically ~0.5 s per call). Set [finalize] to `true` on the
+  /// last push (Stop) to flush remaining audio.
+  ///
+  /// Returns the current **full transcript** accumulated so far (partial
+  /// result), or an empty string if nothing has been emitted yet.
+  Future<String> streamPush(
+    Float32List samples, {
+    bool finalize = false,
+  }) async {
+    final result = await _engine.streamPush(
+      samples: samples.toList(),
+      finalize: finalize,
+    );
+    return result ?? '';
+  }
+
+  /// Set the engine's internal streaming chunk size in seconds (default 8.0).
+  ///
+  /// This is the primary live-latency knob: smaller values emit partial
+  /// transcripts more frequently. Independent of the Dart-side mic push size.
+  void setStreamChunkSec(double sec) {
+    _engine.setStreamChunkSec(sec: sec);
+  }
+
+  /// Set the streaming token rollback window (default 5).
+  void setStreamRollback(int tokens) {
+    _engine.setStreamRollback(tokens: tokens);
+  }
+
+  /// Set max new tokens decoded per streaming chunk (default 32).
+  void setStreamMaxNewTokens(int tokens) {
+    _engine.setStreamMaxNewTokens(tokens: tokens);
+  }
+
+  /// Set how many leading chunks stay "unfixed" before tokens are committed
+  /// to the stable transcript (default engine value 99 holds all until stop;
+  /// use a small value like 2 for progressive live streaming).
+  void setStreamUnfixedChunks(int chunks) {
+    _engine.setStreamUnfixedChunks(chunks: chunks);
+  }
+
+  /// Enable reusing previously decoded text as decoder context across chunks.
+  /// Recommended `true` for live streaming quality.
+  void setPastTextConditioning(bool enabled) {
+    _engine.setPastTextConditioning(enabled: enabled);
+  }
+
   /// Dispose the engine and free resources.
   void dispose() {
     _engine.dispose();

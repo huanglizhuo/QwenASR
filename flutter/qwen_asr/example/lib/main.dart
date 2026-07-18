@@ -1,6 +1,19 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:qwen_asr/qwen_asr.dart';
+
+import 'download_screen.dart';
+import 'file_screen.dart';
+import 'model_manager.dart';
+import 'streaming_screen.dart';
+
+// --- Test / automation hooks (via --dart-define) ---
+// Override the download base URL and auto-start the download.
+const String _kBaseUrl = String.fromEnvironment('DOWNLOAD_BASE_URL');
+const bool _kAutoDownload = bool.fromEnvironment('AUTO_DOWNLOAD');
+// Path to a WAV to auto-run through the simulated-mic path once loaded.
+const String _kAutoSimWav = String.fromEnvironment('AUTO_SIM_WAV');
+// Thread count for the engine (0 = auto). Used for tuning experiments.
+const int _kThreads = int.fromEnvironment('THREADS', defaultValue: 0);
 
 void main() {
   runApp(const QAsrDemoApp());
@@ -14,132 +27,153 @@ class QAsrDemoApp extends StatelessWidget {
     return MaterialApp(
       title: 'Qwen ASR Demo',
       theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.blue),
-      home: const HomePage(),
+      home: const AppRoot(),
     );
   }
 }
 
-class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+enum _Phase { checking, needDownload, loading, ready, error }
+
+class AppRoot extends StatefulWidget {
+  const AppRoot({super.key});
 
   @override
-  State<HomePage> createState() => _HomePageState();
+  State<AppRoot> createState() => _AppRootState();
 }
 
-class _HomePageState extends State<HomePage> {
-  final _modelDirController = TextEditingController();
+class _AppRootState extends State<AppRoot> {
+  _Phase _phase = _Phase.checking;
   QAsrEngine? _engine;
-  String _status = 'Not loaded';
-  String _transcript = '';
-  String _perfStats = '';
-  bool _loading = false;
+  String _error = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _bootstrap();
+  }
 
   @override
   void dispose() {
     _engine?.dispose();
-    _modelDirController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadModel() async {
-    final dir = _modelDirController.text.trim();
-    if (dir.isEmpty) return;
-
-    setState(() {
-      _loading = true;
-      _status = 'Loading model...';
-    });
-
-    try {
-      _engine?.dispose();
-      final engine = await QAsrEngine.load(dir, verbosity: 1);
-      setState(() {
-        _engine = engine;
-        _status = 'Model loaded';
-        _loading = false;
-      });
-    } catch (e) {
-      setState(() {
-        _status = 'Load failed: $e';
-        _loading = false;
-      });
+  Future<void> _bootstrap() async {
+    setState(() => _phase = _Phase.checking);
+    if (await ModelManager.isModelReady()) {
+      await _loadEngine();
+    } else {
+      setState(() => _phase = _Phase.needDownload);
     }
   }
 
-  Future<void> _transcribeAsset() async {
-    if (_engine == null) return;
-
-    setState(() {
-      _loading = true;
-      _status = 'Transcribing...';
-      _transcript = '';
-    });
-
+  Future<void> _loadEngine() async {
+    setState(() => _phase = _Phase.loading);
     try {
-      final data = await rootBundle.load('test_fixtures/audio.wav');
-      final result =
-          await _engine!.transcribeWavBuffer(data.buffer.asUint8List());
+      final dir = await ModelManager.modelDir();
+      final engine = await QAsrEngine.load(dir, threads: _kThreads);
+      if (!mounted) return;
       setState(() {
-        _transcript = result;
-        _perfStats = _engine!.perfStats();
-        _status = 'Done';
-        _loading = false;
+        _engine = engine;
+        _phase = _Phase.ready;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
-        _status = 'Transcribe failed: $e';
-        _loading = false;
+        _error = '$e';
+        _phase = _Phase.error;
       });
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    switch (_phase) {
+      case _Phase.checking:
+      case _Phase.loading:
+        return _busyScaffold(
+          _phase == _Phase.checking
+              ? 'Checking for model...'
+              : 'Loading model...',
+        );
+      case _Phase.needDownload:
+        return DownloadScreen(
+          initialBaseUrl: _kBaseUrl.isNotEmpty ? _kBaseUrl : null,
+          autoStart: _kAutoDownload,
+          onComplete: _loadEngine,
+        );
+      case _Phase.error:
+        return Scaffold(
+          appBar: AppBar(title: const Text('Error')),
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Failed to load model:\n$_error',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton(
+                    onPressed: () async {
+                      await ModelManager.deleteModel();
+                      _bootstrap();
+                    },
+                    child: const Text('Delete & Re-download'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      case _Phase.ready:
+        return HomeTabs(engine: _engine!);
+    }
+  }
+
+  Widget _busyScaffold(String message) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Qwen ASR Demo')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
+      body: Center(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(
-              controller: _modelDirController,
-              decoration: const InputDecoration(
-                labelText: 'Model directory path',
-                hintText: '/path/to/qwen3-asr-0.6b',
-                border: OutlineInputBorder(),
-              ),
+            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
+            Text(message),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class HomeTabs extends StatelessWidget {
+  final QAsrEngine engine;
+  const HomeTabs({super.key, required this.engine});
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Qwen ASR Demo'),
+          bottom: const TabBar(
+            tabs: [
+              Tab(icon: Icon(Icons.mic), text: 'Live'),
+              Tab(icon: Icon(Icons.audiotrack), text: 'File'),
+            ],
+          ),
+        ),
+        body: TabBarView(
+          children: [
+            StreamingScreen(
+              engine: engine,
+              autoSimWavPath: _kAutoSimWav.isNotEmpty ? _kAutoSimWav : null,
             ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                ElevatedButton(
-                  onPressed: _loading ? null : _loadModel,
-                  child: const Text('Load Model'),
-                ),
-                const SizedBox(width: 12),
-                ElevatedButton(
-                  onPressed: _loading || _engine == null
-                      ? null
-                      : _transcribeAsset,
-                  child: const Text('Transcribe Asset'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text('Status: $_status'),
-            if (_perfStats.isNotEmpty) Text('Perf: $_perfStats'),
-            const SizedBox(height: 12),
-            const Text('Transcript:',
-                style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 4),
-            Expanded(
-              child: SingleChildScrollView(
-                child: SelectableText(
-                  _transcript.isEmpty ? '(none)' : _transcript,
-                ),
-              ),
-            ),
+            FileScreen(engine: engine),
           ],
         ),
       ),
