@@ -7440,6 +7440,64 @@ targets.
 
 ---
 
+### R13-Android: NEON pool-parallel no-BLAS GEMM fallback
+
+Problem: on Android the `blas` feature is off (no Accelerate/OpenBLAS), so every
+GEMM fell through the `#[cfg(not(feature = "blas"))]` naive scalar triple loops
+in `kernels/mod.rs` (`matmul_nn`, `matmul_t`, `linear`, `linear_accumulate`, and
+the conv2d GEMM) — single-threaded, no SIMD. Measured on a Snapdragon 8 Elite
+(release): encode = 28 513 ms for 3.5 s audio, decode_ms = 40 290 ms for 8
+tokens (decode_ms includes per-chunk prefill). ~100–800× off the AMX reference
+(Mac encode = 168 ms for 28 s).
+
+Change: replaced the scalar fallbacks with NEON-vectorized, pool-parallel
+kernels at the sgemm-equivalent seam, so all callers (encoder conv/attention,
+decoder prefill, lm_head prefill) benefit with no call-site edits. aarch64-only
+NEON; other no-BLAS arches keep the scalar loops.
+
+Design:
+- **A·Bᵀ family** (`linear`, `linear_accumulate`, `matmul_t`): `y[s,o] =
+  bias[o] + dot(x[s], w[o])`. Per-output-row `neon::dot_f32` (4-lane FMA,
+  4 accumulators). Loop order `o` outer / `s` inner streams each weight row from
+  DRAM exactly once and reuses it across all activations (weights are the giant
+  operand). Output rows partitioned across the pool in 64-row items via
+  `parallel_for_dynamic`.
+- **A·B family** (`matmul_nn`, conv2d GEMM): `c[m,:] = Σ_k a[m,k]·b[k,:]`, an
+  axpy accumulation over B's contiguous rows (`neon::vec_axpy_inplace`). Rows
+  partitioned in 16-row items.
+- Dispatch threshold (R10 lesson): parallel only when `nt>1`, MACs ≥ 4M, and
+  cols ≥ 128 (nt) / n ≥ 64 (nn); small GEMMs run single-threaded inline.
+- Reduction order changes vs the scalar loop (vectorized dot tree + FMA);
+  acceptable for no-BLAS — nothing depends on its exact bits, and BLAS
+  desktop/default builds are untouched (`feature = "blas"` paths unchanged).
+
+Tests: `crates/qwen-asr/tests/kernels.rs::noblas_gemm` (gated
+`#[cfg(not(feature = "blas"))]`) checks all four public entry points against a
+naive f32 reference on random matrices across edge cases (m/n/k = 1, odd sizes,
+non-multiple-of-4 k, with/without bias, small inline + large pool-parallel
+paths), rel-err < 1e-4. 13 kernel tests pass under
+`cargo test -p qwen-asr --release --no-default-features`; the full default
+(BLAS) suite stays green; zero warnings on
+`RUSTFLAGS="-C target-cpu=native" cargo build --release` and
+`cargo build -p qwen-asr --no-default-features`. Cross-compiles clean for
+`aarch64-linux-android` (no-blas, `+dotprod`).
+
+Device before/after (simulated-mic, 8 s engine chunk, `bench/samples/audio.wav`):
+
+| metric | before (naive scalar) | after |
+|---|--:|--:|
+| encode_ms | 28 513 (3.5 s clip) | pending on-device run |
+| decode_ms | 40 290 (8 tokens) | pending on-device run |
+
+NOTE: the on-device before/after measurement could not be completed in the
+implementation session — the target phone (Xiaomi, adb `3de8f372`) was not
+reachable over USB (`adb devices` empty, no Android device on the host USB bus).
+The code change, host correctness tests, and `aarch64-linux-android`
+cross-compile are all verified; the on-device encode/decode/RTF numbers and
+transcript check remain to be captured once the device is reattached.
+
+---
+
 ## Autoresearch Program Baseline Experiments
 
 These experiments come from the initial `codex-auto-research` autoresearch program baseline (`programs.md`). They are structural buffer-reuse optimizations that predate the numbered round structure above.

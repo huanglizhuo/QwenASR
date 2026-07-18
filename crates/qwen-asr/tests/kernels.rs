@@ -123,6 +123,135 @@ fn test_silu() {
     assert!(err < 1e-5, "SiLU mismatch, max_err={}", err);
 }
 
+// ========================================================================
+// No-BLAS NEON GEMM fallback tests (R13 Android track).
+//
+// These only compile/run under `--no-default-features`, where `matmul_nn`,
+// `matmul_t`, `linear`, and `linear_accumulate` route through the new NEON
+// pool-parallel fallback (on aarch64) or the scalar loops (other arches).
+// Each is checked against a naive f32 reference on random matrices across edge
+// cases (m/n/k = 1, odd sizes, non-multiple-of-4 k, with/without bias).
+// ========================================================================
+#[cfg(not(feature = "blas"))]
+mod noblas_gemm {
+    use qwen_asr::kernels;
+
+    struct Rng(u64);
+    impl Rng {
+        fn new(seed: u64) -> Self { Rng(seed) }
+        fn next_u32(&mut self) -> u32 {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (self.0 >> 32) as u32
+        }
+        fn f32_pm1(&mut self) -> f32 { (self.next_u32() as f32 / u32::MAX as f32) * 2.0 - 1.0 }
+        fn vec(&mut self, n: usize) -> Vec<f32> { (0..n).map(|_| self.f32_pm1()).collect() }
+    }
+
+    // Relative max error: max|a-b| / max(1, max|ref|).
+    fn rel_err(got: &[f32], reference: &[f32]) -> f32 {
+        let max_ref = reference.iter().fold(0.0f32, |m, &v| m.max(v.abs())).max(1.0);
+        got.iter().zip(reference)
+            .map(|(&g, &r)| (g - r).abs())
+            .fold(0.0f32, f32::max) / max_ref
+    }
+
+    // Naive references (match the non-aarch64 fallback bodies exactly).
+    fn ref_nn(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
+        let mut c = vec![0.0f32; m * n];
+        for mi in 0..m {
+            for ni in 0..n {
+                let mut s = 0.0f32;
+                for ki in 0..k { s += a[mi * k + ki] * b[ki * n + ni]; }
+                c[mi * n + ni] = s;
+            }
+        }
+        c
+    }
+    fn ref_nt(x: &[f32], w: &[f32], bias: Option<&[f32]>, seq: usize, k: usize, out: usize) -> Vec<f32> {
+        let mut y = vec![0.0f32; seq * out];
+        for s in 0..seq {
+            for o in 0..out {
+                let mut sum = bias.map_or(0.0, |b| b[o]);
+                for ki in 0..k { sum += x[s * k + ki] * w[o * k + ki]; }
+                y[s * out + o] = sum;
+            }
+        }
+        y
+    }
+
+    // Cover both the small (inline single-thread) and large (pool-parallel)
+    // dispatch paths, odd sizes, and non-multiple-of-4 k.
+    const SHAPES: &[(usize, usize, usize)] = &[
+        (1, 1, 1), (1, 1, 130), (3, 1, 129), (1, 17, 1), (7, 5, 3),
+        (2, 4, 200), (5, 33, 133), (200, 130, 140), (1, 1024, 300), (130, 1024, 300),
+    ];
+
+    #[test]
+    fn matmul_nn_matches_reference() {
+        let mut rng = Rng::new(0xA5A5_1234);
+        for &(m, k, n) in SHAPES {
+            let a = rng.vec(m * k);
+            let b = rng.vec(k * n);
+            let mut c = vec![0.0f32; m * n];
+            kernels::matmul_nn(&mut c, &a, &b, m, k, n);
+            let want = ref_nn(&a, &b, m, k, n);
+            let e = rel_err(&c, &want);
+            assert!(e < 1e-4, "matmul_nn m={m} k={k} n={n} rel_err={e}");
+        }
+    }
+
+    #[test]
+    fn matmul_t_matches_reference() {
+        let mut rng = Rng::new(0xBEEF_9);
+        for &(m, k, n) in SHAPES {
+            // matmul_t: A[m,k] @ B[n,k]^T -> C[m,n]; treat as ref_nt(x=A, w=B, no bias).
+            let a = rng.vec(m * k);
+            let b = rng.vec(n * k);
+            let mut c = vec![0.0f32; m * n];
+            kernels::matmul_t(&mut c, &a, &b, m, k, n);
+            let want = ref_nt(&a, &b, None, m, k, n);
+            let e = rel_err(&c, &want);
+            assert!(e < 1e-4, "matmul_t m={m} k={k} n={n} rel_err={e}");
+        }
+    }
+
+    #[test]
+    fn linear_matches_reference() {
+        let mut rng = Rng::new(0xF00D_77);
+        for &(seq, k, out) in SHAPES {
+            for use_bias in [false, true] {
+                let x = rng.vec(seq * k);
+                let w = rng.vec(out * k);
+                let bias = if use_bias { Some(rng.vec(out)) } else { None };
+                let mut y = vec![0.0f32; seq * out];
+                kernels::linear(&mut y, &x, &w, bias.as_deref(), seq, k, out);
+                let want = ref_nt(&x, &w, bias.as_deref(), seq, k, out);
+                let e = rel_err(&y, &want);
+                assert!(e < 1e-4, "linear seq={seq} k={k} out={out} bias={use_bias} rel_err={e}");
+            }
+        }
+    }
+
+    #[test]
+    fn linear_accumulate_matches_reference() {
+        let mut rng = Rng::new(0x1357_9BDF);
+        for &(seq, k, out) in SHAPES {
+            for use_bias in [false, true] {
+                let x = rng.vec(seq * k);
+                let w = rng.vec(out * k);
+                let bias = if use_bias { Some(rng.vec(out)) } else { None };
+                let y0 = rng.vec(seq * out); // pre-existing residual
+                let mut y = y0.clone();
+                kernels::linear_accumulate(&mut y, &x, &w, bias.as_deref(), seq, k, out);
+                let delta = ref_nt(&x, &w, bias.as_deref(), seq, k, out);
+                let want: Vec<f32> = y0.iter().zip(&delta).map(|(a, b)| a + b).collect();
+                let e = rel_err(&y, &want);
+                assert!(e < 1e-4, "linear_accumulate seq={seq} k={k} out={out} bias={use_bias} rel_err={e}");
+            }
+        }
+    }
+}
+
 #[test]
 fn test_vec_ops() {
     let n = 256;

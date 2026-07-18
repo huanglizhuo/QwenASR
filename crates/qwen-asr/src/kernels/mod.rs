@@ -378,6 +378,157 @@ pub fn add_inplace(a: &mut [f32], b: &[f32], n: usize) {
 // Matrix Operations
 // ========================================================================
 
+// ------------------------------------------------------------------------
+// No-BLAS NEON pool-parallel GEMM fallbacks (R13 Android track)
+//
+// On Android the `blas` feature is off, so every GEMM would otherwise fall
+// through a naive scalar triple loop (single-threaded, no SIMD) — ~100-800x
+// slower than the AMX/BLAS reference. These helpers replace that fallback with
+// NEON-vectorized, pool-parallel kernels at the sgemm-equivalent seam, so every
+// caller (encoder conv/attention, decoder prefill, lm_head prefill) benefits
+// with no call-site changes. Compiled ONLY for `not(feature = "blas")` +
+// aarch64; other no-BLAS arches keep the scalar loops inline in each wrapper.
+//
+// Two shapes are covered:
+//   * A·Bᵀ (dot-product style): `y[s,o] = bias[o] + dot(x[s], w[o])`, weight
+//     rows contiguous — mapped to per-output-row `neon::dot_f32`. Used by
+//     `linear`, `linear_accumulate`, `matmul_t`.
+//   * A·B (row-major B): `c[m,n] = sum_k a[m,k]*b[k,n]` — mapped to an
+//     axpy accumulation over B's contiguous rows. Used by `matmul_nn` and the
+//     conv2d GEMM.
+//
+// Output rows are partitioned across the persistent pool with
+// `parallel_for_dynamic`; small GEMMs stay single-threaded inline (R10 >=4M MAC
+// / >=128 col dispatch threshold). Vectorized dots reorder float summation vs
+// the old scalar loop — acceptable for no-BLAS (nothing depends on its exact
+// bits; BLAS builds are untouched).
+// ------------------------------------------------------------------------
+
+/// Dispatch threshold shared by the fallbacks: below this many MACs a GEMM
+/// stays single-threaded (pool wake/join cost would dominate).
+#[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+const FALLBACK_MIN_MACS: usize = 1 << 22; // 4M
+
+/// Compute output columns (weight rows) `[start, end)` for all `seq_len` rows of
+/// the A·Bᵀ fallback: `y[s,o] = (accumulate ? y[s,o] : 0) + bias[o] + dot(x[s], w[o])`.
+/// Each weight row `w[o]` is streamed once and reused across every activation
+/// row via `neon::dot_f32`.
+///
+/// # Safety
+/// `x`/`w`/`y` must be valid for `seq_len*in_dim`, `out_dim*in_dim`,
+/// `seq_len*out_dim` elements; `bias` (if set) for `out_dim`. `[start,end)`
+/// must be within `[0,out_dim)`.
+#[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+#[allow(clippy::too_many_arguments)]
+unsafe fn gemm_nt_rows(
+    y: *mut f32, x: *const f32, w: *const f32, bias: Option<*const f32>,
+    seq_len: usize, in_dim: usize, out_dim: usize,
+    start: usize, end: usize, accumulate: bool,
+) {
+    for o in start..end {
+        let w_row = std::slice::from_raw_parts(w.add(o * in_dim), in_dim);
+        let bo = match bias { Some(b) => *b.add(o), None => 0.0 };
+        for s in 0..seq_len {
+            let x_row = std::slice::from_raw_parts(x.add(s * in_dim), in_dim);
+            let d = neon::dot_f32(x_row, w_row, in_dim) + bo;
+            let cell = y.add(s * out_dim + o);
+            if accumulate { *cell += d; } else { *cell = d; }
+        }
+    }
+}
+
+/// NEON pool-parallel A·Bᵀ GEMM fallback (`linear`/`linear_accumulate`/`matmul_t`).
+/// Partitions the `out_dim` weight rows across the pool; each item writes a
+/// disjoint output-column range of every `y` row.
+#[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+#[allow(clippy::too_many_arguments)]
+fn gemm_nt_fallback(
+    y: &mut [f32], x: &[f32], w: &[f32], bias: Option<&[f32]>,
+    seq_len: usize, in_dim: usize, out_dim: usize, accumulate: bool,
+) {
+    const MIN_COLS: usize = 128;
+    let nt = get_num_threads();
+    let parallel = nt > 1
+        && out_dim >= MIN_COLS
+        && seq_len.saturating_mul(in_dim).saturating_mul(out_dim) >= FALLBACK_MIN_MACS;
+    if !parallel {
+        // SAFETY: single-threaded full-range pass; slices sized by the wrapper.
+        unsafe {
+            gemm_nt_rows(y.as_mut_ptr(), x.as_ptr(), w.as_ptr(), bias.map(|b| b.as_ptr()),
+                         seq_len, in_dim, out_dim, 0, out_dim, accumulate);
+        }
+        return;
+    }
+    let y_send = y.as_mut_ptr() as usize;
+    let x_send = x.as_ptr() as usize;
+    let w_send = w.as_ptr() as usize;
+    let b_send = bias.map(|b| b.as_ptr() as usize);
+    // Fixed 64-row output blocks grabbed dynamically so P-cores take more than
+    // E-cores; boundaries depend only on out_dim, so the split is deterministic.
+    const ROWS: usize = 64;
+    let n_items = out_dim.div_ceil(ROWS);
+    parallel_for_dynamic(n_items, |item| {
+        let start = item * ROWS;
+        let end = (start + ROWS).min(out_dim);
+        if start >= end { return; }
+        // SAFETY: items write disjoint output-column ranges [start,end).
+        unsafe {
+            gemm_nt_rows(y_send as *mut f32, x_send as *const f32, w_send as *const f32,
+                         b_send.map(|p| p as *const f32),
+                         seq_len, in_dim, out_dim, start, end, accumulate);
+        }
+    });
+}
+
+/// Compute rows `[start, end)` of the A·B fallback: `c[mi,:] = sum_k a[mi,k]*b[k,:]`,
+/// accumulated as axpy over B's contiguous rows. Overwrites `c[mi,:]` (no read).
+///
+/// # Safety
+/// `a`/`b`/`c` valid for `m*k`, `k*n`, `m*n` elements; `[start,end)` within `[0,m)`.
+#[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+unsafe fn gemm_nn_rows(
+    c: *mut f32, a: *const f32, b: *const f32, k: usize, n: usize, start: usize, end: usize,
+) {
+    for mi in start..end {
+        let c_row = std::slice::from_raw_parts_mut(c.add(mi * n), n);
+        for v in c_row.iter_mut() { *v = 0.0; }
+        for ki in 0..k {
+            let av = *a.add(mi * k + ki);
+            let b_row = std::slice::from_raw_parts(b.add(ki * n), n);
+            neon::vec_axpy_inplace(c_row, b_row, av, n);
+        }
+    }
+}
+
+/// NEON pool-parallel A·B GEMM fallback (`matmul_nn` / conv2d GEMM).
+/// Partitions the `m` output rows across the pool.
+#[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+fn gemm_nn_fallback(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: usize) {
+    let nt = get_num_threads();
+    let parallel = nt > 1
+        && m >= 2
+        && n >= 64
+        && m.saturating_mul(k).saturating_mul(n) >= FALLBACK_MIN_MACS;
+    if !parallel {
+        // SAFETY: single-threaded full-range pass; slices sized by the wrapper.
+        unsafe { gemm_nn_rows(c.as_mut_ptr(), a.as_ptr(), b.as_ptr(), k, n, 0, m); }
+        return;
+    }
+    let c_send = c.as_mut_ptr() as usize;
+    let a_send = a.as_ptr() as usize;
+    let b_send = b.as_ptr() as usize;
+    // Fixed 16-row output blocks grabbed dynamically.
+    const ROWS: usize = 16;
+    let n_items = m.div_ceil(ROWS);
+    parallel_for_dynamic(n_items, |item| {
+        let start = item * ROWS;
+        let end = (start + ROWS).min(m);
+        if start >= end { return; }
+        // SAFETY: items write disjoint output rows [start,end) of c.
+        unsafe { gemm_nn_rows(c_send as *mut f32, a_send as *const f32, b_send as *const f32, k, n, start, end); }
+    });
+}
+
 /// C = A @ B (no transpose): `A[M,K]`, `B[K,N]`, `C[M,N]`
 pub fn matmul_nn(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: usize) {
     #[cfg(feature = "blas")]
@@ -393,6 +544,10 @@ pub fn matmul_nn(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: usi
 
     #[cfg(not(feature = "blas"))]
     {
+        #[cfg(target_arch = "aarch64")]
+        { gemm_nn_fallback(c, a, b, m, k, n); }
+
+        #[cfg(not(target_arch = "aarch64"))]
         for mi in 0..m {
             for ni in 0..n {
                 let mut sum = 0.0f32;
@@ -420,6 +575,10 @@ pub fn matmul_t(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: usiz
 
     #[cfg(not(feature = "blas"))]
     {
+        #[cfg(target_arch = "aarch64")]
+        { gemm_nt_fallback(c, a, b, None, m, k, n, false); }
+
+        #[cfg(not(target_arch = "aarch64"))]
         for mi in 0..m {
             for ni in 0..n {
                 let mut sum = 0.0f32;
@@ -512,6 +671,10 @@ pub fn linear(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>, seq_len: u
 
     #[cfg(not(feature = "blas"))]
     {
+        #[cfg(target_arch = "aarch64")]
+        { gemm_nt_fallback(y, x, w, b, seq_len, in_dim, out_dim, false); }
+
+        #[cfg(not(target_arch = "aarch64"))]
         for s in 0..seq_len {
             let x_row = &x[s * in_dim..(s + 1) * in_dim];
             for o in 0..out_dim {
@@ -559,6 +722,10 @@ pub fn linear_accumulate(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>,
 
     #[cfg(not(feature = "blas"))]
     {
+        #[cfg(target_arch = "aarch64")]
+        { gemm_nt_fallback(y, x, w, b, seq_len, in_dim, out_dim, true); }
+
+        #[cfg(not(target_arch = "aarch64"))]
         for s in 0..seq_len {
             let x_row = &x[s * in_dim..(s + 1) * in_dim];
             for o in 0..out_dim {
@@ -1069,6 +1236,11 @@ fn conv2d_impl(out: &mut [f32], input: &[f32], weight: &[f32], bias: Option<&[f3
 
     #[cfg(not(feature = "blas"))]
     {
+        // out[c_out, spatial_out] = weight[c_out, patch_size] @ cols[patch_size, spatial_out]
+        #[cfg(target_arch = "aarch64")]
+        { gemm_nn_fallback(out, weight, cols, c_out, patch_size, spatial_out); }
+
+        #[cfg(not(target_arch = "aarch64"))]
         for oc in 0..c_out {
             for s in 0..spatial_out {
                 let mut sum = 0.0f32;
