@@ -215,6 +215,28 @@ class _StreamingScreenState extends State<StreamingScreen> {
 
   Future<void> _startSimulated(String wavPath) async {
     if (_running || _simulating) return;
+    // Automation hook: an http(s) AUTO_SIM_WAV is fetched into app documents
+    // first — release builds have no adb access to the app sandbox, so
+    // on-device test tooling provisions the clip over the network instead.
+    if (wavPath.startsWith('http://') || wavPath.startsWith('https://')) {
+      setState(() => _status = 'Fetching sim WAV...');
+      try {
+        final docs = await getApplicationDocumentsDirectory();
+        final dest = File('${docs.path}/sim.wav');
+        final client = HttpClient();
+        final req = await client.getUrl(Uri.parse(wavPath));
+        final resp = await req.close();
+        if (resp.statusCode != 200) {
+          throw HttpException('status ${resp.statusCode}');
+        }
+        await resp.pipe(dest.openWrite());
+        client.close();
+        wavPath = dest.path;
+      } catch (e) {
+        setState(() => _status = 'Sim WAV fetch failed: $e');
+        return;
+      }
+    }
     final file = File(wavPath);
     if (!await file.exists()) {
       setState(() => _status = 'Sim WAV not found: $wavPath');

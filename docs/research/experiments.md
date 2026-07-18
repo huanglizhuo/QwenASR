@@ -7482,19 +7482,28 @@ paths), rel-err < 1e-4. 13 kernel tests pass under
 `cargo build -p qwen-asr --no-default-features`. Cross-compiles clean for
 `aarch64-linux-android` (no-blas, `+dotprod`).
 
-Device before/after (simulated-mic, 8 s engine chunk, `bench/samples/audio.wav`):
+Device before/after (Snapdragon 8 Elite, release, simulated-mic real-time
+paced, 8 s engine chunk). Before was a 3.5 s live-mic capture, after is the
+full 28.2 s `bench/samples/audio.wav`, so compare per-audio-second /
+per-token rates:
 
-| metric | before (naive scalar) | after |
-|---|--:|--:|
-| encode_ms | 28 513 (3.5 s clip) | pending on-device run |
-| decode_ms | 40 290 (8 tokens) | pending on-device run |
+| metric | before (naive scalar) | after (NEON pool GEMM) | speedup |
+|---|--:|--:|--:|
+| encode per audio-second | 8 146 ms/s (28 513 ms / 3.5 s) | 189 ms/s (5 325 ms / 28.2 s) | **~43×** |
+| decode_ms per token (incl. prefill) | 5 036 ms (40 290 / 8) | 241 ms (11 090 / 46) | **~21×** |
+| compute RTF (audio / total_ms) | 0.05× | **1.72×** (16.4 s for 28.2 s) | — |
+| wall (real-time paced push) | — | 31.6 s = 28.2 s pacing + 3.4 s finalize | — |
 
-NOTE: the on-device before/after measurement could not be completed in the
-implementation session — the target phone (Xiaomi, adb `3de8f372`) was not
-reachable over USB (`adb devices` empty, no Android device on the host USB bus).
-The code change, host correctness tests, and `aarch64-linux-android`
-cross-compile are all verified; the on-device encode/decode/RTF numbers and
-transcript check remain to be captured once the device is reattached.
+Warm model load 2 755 ms (mmap'd INT8 sidecar). Transcript word-correct vs
+`audio.txt` (the known "you know," comma variant). Memory during run:
+TOTAL PSS 2.72 GB / RSS 1.74 GB (mmap-dominated, file-backed pages evictable).
+First stable partial appears only after unfixed_chunks clears (~3 chunks):
+with the 8 s sim chunk that is ~27.8 s in; the live-mic 2 s chunk profile
+surfaces stable text after ~6 s of speech. Surfacing the unfixed tail as
+provisional text is a possible UX follow-up.
+
+Decision: **KEPT.** Android streaming is real-time (1.72× compute headroom)
+on a flagship SoC; the no-BLAS fallback is no longer the bottleneck class.
 
 ---
 
