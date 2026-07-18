@@ -9,6 +9,14 @@
 # Inject the required `target-cpu` via `--config` flags (always applied
 # regardless of CWD) for the iOS device and simulator targets, mirroring
 # rust/.cargo/config.toml.
+#
+# NOTE: The Android aarch64 NEON kernels also require the `dotprod` (SDOT)
+# feature to assemble, but `--config target.*.rustflags` does NOT work for
+# Android: cargokit sets `CARGO_ENCODED_RUSTFLAGS` (a libgcc-workaround `-L`
+# flag) for Android targets, and that env var makes cargo ignore all
+# `target.<triple>.rustflags` from config/CLI. The Android `+dotprod` feature is
+# therefore injected into `CARGO_ENCODED_RUSTFLAGS` itself, in
+# cargokit/build_tool/lib/src/android_environment.dart.
 cargo:
   debug:
     extra_flags:

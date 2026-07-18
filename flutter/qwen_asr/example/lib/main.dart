@@ -71,7 +71,11 @@ class _AppRootState extends State<AppRoot> {
     setState(() => _phase = _Phase.loading);
     try {
       final dir = await ModelManager.modelDir();
+      final sw = Stopwatch()..start();
       final engine = await QAsrEngine.load(dir, threads: _kThreads);
+      sw.stop();
+      // Test/automation hook: emit load time to logcat (grep QASR_METRIC).
+      debugPrint('QASR_METRIC load_ms=${sw.elapsedMilliseconds} threads=$_kThreads');
       if (!mounted) return;
       setState(() {
         _engine = engine;

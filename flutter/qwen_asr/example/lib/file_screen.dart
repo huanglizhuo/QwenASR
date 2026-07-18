@@ -29,12 +29,16 @@ class _FileScreenState extends State<FileScreen> {
         data.buffer.asUint8List(),
       );
       if (!mounted) return;
+      final perf = widget.engine.perfStats();
       setState(() {
         _transcript = result;
-        _perf = widget.engine.perfStats();
+        _perf = perf;
         _status = 'Done';
         _busy = false;
       });
+      // Test/automation hook: emit final result to logcat (grep QASR_).
+      debugPrint('QASR_METRIC file_perf | $perf');
+      debugPrint('QASR_TRANSCRIPT file | $result');
     } catch (e) {
       if (!mounted) return;
       setState(() {

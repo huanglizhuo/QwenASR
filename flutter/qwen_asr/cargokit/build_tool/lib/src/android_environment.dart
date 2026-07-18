@@ -129,7 +129,20 @@ class AndroidEnvironment {
 
     final ndkVersionParsed = Version.parse(ndkVersion);
     final rustFlagsKey = 'CARGO_ENCODED_RUSTFLAGS';
-    final rustFlagsValue = _libGccWorkaround(targetTempDir, ndkVersionParsed);
+    var rustFlagsValue = _libGccWorkaround(targetTempDir, ndkVersionParsed);
+    // The aarch64 NEON kernels in the qwen-asr crate use `sdot` (dotprod)
+    // inline-asm instructions that the generic aarch64-linux-android target-cpu
+    // does not assemble ("error: instruction requires: dotprod"). Enable the
+    // minimal `+dotprod` feature. This must go through CARGO_ENCODED_RUSTFLAGS
+    // (not `--config target.*.rustflags`), because the env var set above makes
+    // cargo ignore all target rustflags from config/CLI. Do NOT add i8mm/sve:
+    // the kernels don't use them and they raise the CPU baseline needlessly.
+    if (target.rust == 'aarch64-linux-android') {
+      const sep = '\x1f'; // CARGO_ENCODED_RUSTFLAGS arg separator (unit sep)
+      final dotprod = '-C${sep}target-feature=+dotprod';
+      rustFlagsValue =
+          rustFlagsValue.isEmpty ? dotprod : '$dotprod$sep$rustFlagsValue';
+    }
 
     final runRustTool =
         Platform.isWindows ? 'run_build_tool.cmd' : 'run_build_tool.sh';
