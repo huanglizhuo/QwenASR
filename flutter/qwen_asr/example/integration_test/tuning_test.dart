@@ -33,11 +33,15 @@ void main() {
     int? firstMs;
     for (var i = 0; i < samples.length; i += chunk) {
       final end = (i + chunk) > samples.length ? samples.length : i + chunk;
-      last = await engine.streamPush(
+      final res = await engine.streamPush(
         Float32List.sublistView(samples, i, end),
         finalize: end >= samples.length,
       );
-      if (last.isNotEmpty && firstMs == null) firstMs = sw.elapsedMilliseconds;
+      last = res.text;
+      if ((res.text.isNotEmpty || res.provisional.isNotEmpty) &&
+          firstMs == null) {
+        firstMs = sw.elapsedMilliseconds;
+      }
     }
     final audioSec = samples.length / kEngineSampleRate;
     return (last, audioSec / (sw.elapsedMilliseconds / 1000.0), firstMs);

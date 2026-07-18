@@ -22,6 +22,19 @@ pub struct QwenAsrEngine {
     inner: Mutex<EngineInner>,
 }
 
+/// Result of a single [`QwenAsrEngine::stream_push`] call.
+///
+/// `text` is the committed **stable** transcript accumulated so far (same value
+/// the push path returned previously). `provisional` is the newest unfixed tail
+/// — a lower-confidence hypothesis held back from the stable commit by the
+/// rollback / unfixed-chunks window. Render `provisional` distinctly (e.g. grey)
+/// and expect it to be revised or promoted to `text` on later pushes. Both are
+/// empty when nothing has been produced; `provisional` is empty after finalize.
+pub struct StreamPartial {
+    pub text: String,
+    pub provisional: String,
+}
+
 impl QwenAsrEngine {
     /// Load model from a directory path. Returns None if loading fails.
     pub fn load(model_dir: String, n_threads: i32, verbosity: i32) -> Option<QwenAsrEngine> {
@@ -104,16 +117,17 @@ impl QwenAsrEngine {
     }
 
     /// Push a new chunk of PCM audio into the live streaming session and return
-    /// the **current full transcript** (partial result) accumulated so far.
+    /// the current **stable** transcript plus the newest **provisional** tail.
     ///
     /// `samples`: new PCM chunk (f32, 16 kHz, mono, values in -1.0..1.0).
     /// `finalize`: set true on the final push (Stop) to flush remaining audio
     ///             and emit all rollback-buffered tokens.
     ///
-    /// Returns the full transcript text, or None if nothing has been emitted
-    /// yet. Runs on a flutter_rust_bridge worker thread, so the UI stays
-    /// responsive while a push is in flight.
-    pub fn stream_push(&self, samples: Vec<f32>, finalize: bool) -> Option<String> {
+    /// Returns a [`StreamPartial`]: `text` is the committed stable transcript
+    /// (same as before), `provisional` is the unfixed tail (empty when none, and
+    /// always empty after finalize). Runs on a flutter_rust_bridge worker thread,
+    /// so the UI stays responsive while a push is in flight.
+    pub fn stream_push(&self, samples: Vec<f32>, finalize: bool) -> StreamPartial {
         let mut g = self.inner.lock().unwrap();
         let inner = &mut *g;
 
@@ -130,11 +144,9 @@ impl QwenAsrEngine {
             finalize,
         );
 
-        let text = inner.stream_state.text();
-        if text.is_empty() {
-            None
-        } else {
-            Some(text)
+        StreamPartial {
+            text: inner.stream_state.text(),
+            provisional: inner.stream_state.provisional_text(),
         }
     }
 

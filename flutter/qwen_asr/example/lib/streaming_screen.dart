@@ -32,6 +32,14 @@ const double kSimEngineChunkSec = 8.0;
 /// the finalize (Stop) pass still re-decodes the tail for the final text.
 const double kLiveEngineChunkSec = 2.0;
 
+/// Optional override for the simulated-mic engine chunk, in seconds, injected
+/// via `--dart-define=SIM_ENGINE_CHUNK_SEC=2.0`. Lets automation exercise the
+/// live-mic (short-chunk) latency profile through the sim path when no real
+/// microphone input is available. Empty string = use [kSimEngineChunkSec].
+const String kSimEngineChunkOverride = String.fromEnvironment(
+  'SIM_ENGINE_CHUNK_SEC',
+);
+
 /// Leading chunks kept "unfixed" before committing tokens to the stable
 /// transcript. Small value = progressive live partials. The engine default
 /// (99) holds everything until finalize, which truncates a fast live stream.
@@ -56,6 +64,7 @@ class _StreamingScreenState extends State<StreamingScreen> {
   StreamSubscription<Uint8List>? _micSub;
 
   String _transcript = '';
+  String _provisional = '';
   String _status = 'Idle';
   String _perf = '';
   bool _running = false;
@@ -66,7 +75,10 @@ class _StreamingScreenState extends State<StreamingScreen> {
   bool _draining = false;
   int _samplesPushed = 0;
   int? _firstPushMs;
+  // First moment ANY text (stable OR provisional) is visible.
   int? _firstPartialMs;
+  // First moment committed STABLE text is visible.
+  int? _firstStableMs;
 
   int get _chunkSamples => (kMicChunkSec * kSampleRate).round();
 
@@ -100,7 +112,9 @@ class _StreamingScreenState extends State<StreamingScreen> {
     _samplesPushed = 0;
     _firstPushMs = null;
     _firstPartialMs = null;
+    _firstStableMs = null;
     _transcript = '';
+    _provisional = '';
     _perf = '';
   }
 
@@ -134,13 +148,22 @@ class _StreamingScreenState extends State<StreamingScreen> {
   Future<void> _pushChunk(Float32List chunk, {required bool finalize}) async {
     _firstPushMs ??= DateTime.now().millisecondsSinceEpoch;
     _samplesPushed += chunk.length;
-    final text = await widget.engine.streamPush(chunk, finalize: finalize);
+    final res = await widget.engine.streamPush(chunk, finalize: finalize);
     if (!mounted) return;
-    if (text.isNotEmpty && _firstPartialMs == null) {
-      _firstPartialMs = DateTime.now().millisecondsSinceEpoch;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    // First VISIBLE text = stable OR provisional becomes non-empty. This is the
+    // latency the provisional-tail change is meant to slash.
+    if ((res.text.isNotEmpty || res.provisional.isNotEmpty) &&
+        _firstPartialMs == null) {
+      _firstPartialMs = now;
+    }
+    // First COMMITTED stable text (the old firstPartial semantics).
+    if (res.text.isNotEmpty && _firstStableMs == null) {
+      _firstStableMs = now;
     }
     setState(() {
-      if (text.isNotEmpty) _transcript = text;
+      if (res.text.isNotEmpty) _transcript = res.text;
+      _provisional = res.provisional;
     });
   }
 
@@ -152,10 +175,14 @@ class _StreamingScreenState extends State<StreamingScreen> {
     final firstLatency = (_firstPushMs != null && _firstPartialMs != null)
         ? (_firstPartialMs! - _firstPushMs!)
         : null;
+    final firstStableLatency = (_firstPushMs != null && _firstStableMs != null)
+        ? (_firstStableMs! - _firstPushMs!)
+        : null;
     return 'audio=${audioSec.toStringAsFixed(1)}s '
         'wall=${wallSec.toStringAsFixed(1)}s '
         'rtf=${rtf.toStringAsFixed(2)}x'
-        '${firstLatency != null ? ' firstPartial=${firstLatency}ms' : ''}\n'
+        '${firstLatency != null ? ' firstPartial=${firstLatency}ms' : ''}'
+        '${firstStableLatency != null ? ' firstStable=${firstStableLatency}ms' : ''}\n'
         '${widget.engine.perfStats()}';
   }
 
@@ -248,11 +275,18 @@ class _StreamingScreenState extends State<StreamingScreen> {
       return;
     }
 
-    widget.engine.setStreamChunkSec(kSimEngineChunkSec);
+    // Automation may force the short-chunk (live-mic) profile through the sim
+    // path via --dart-define=SIM_ENGINE_CHUNK_SEC so first-provisional latency
+    // can be measured without a real microphone.
+    final simEngineChunk =
+        double.tryParse(kSimEngineChunkOverride) ?? kSimEngineChunkSec;
+    widget.engine.setStreamChunkSec(simEngineChunk);
     await widget.engine.streamReset();
     setState(() {
       _simulating = true;
-      _status = 'Simulating mic from WAV...';
+      _status =
+          'Simulating mic from WAV (engineChunk='
+          '${simEngineChunk.toStringAsFixed(1)}s)...';
       _resetSession();
     });
 
@@ -362,17 +396,53 @@ class _StreamingScreenState extends State<StreamingScreen> {
                 border: Border.all(color: Theme.of(context).dividerColor),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: SingleChildScrollView(
-                child: SelectableText(
-                  _transcript.isEmpty ? '(listening...)' : _transcript,
-                  key: const Key('transcript_text'),
-                  style: const TextStyle(fontSize: 16),
-                ),
-              ),
+              child: SingleChildScrollView(child: _buildTranscript(context)),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  /// Live transcript: committed stable text in normal weight, followed by the
+  /// provisional (unfixed) tail in grey italic. The provisional tail is a
+  /// lower-confidence hypothesis that later pushes may revise or promote to
+  /// stable, so it is styled distinctly. Keeps the `transcript_text` key on the
+  /// SelectableText for automation.
+  Widget _buildTranscript(BuildContext context) {
+    final hasAny = _transcript.isNotEmpty || _provisional.isNotEmpty;
+    final baseStyle = const TextStyle(fontSize: 16);
+    if (!hasAny) {
+      return SelectableText(
+        '(listening...)',
+        key: const Key('transcript_text'),
+        style: baseStyle,
+      );
+    }
+    final provisionalColor =
+        Theme.of(context).textTheme.bodySmall?.color?.withValues(alpha: 0.55) ??
+        Colors.grey;
+    final needsSpace =
+        _transcript.isNotEmpty &&
+        _provisional.isNotEmpty &&
+        !_transcript.endsWith(' ') &&
+        !_provisional.startsWith(' ');
+    return SelectableText.rich(
+      TextSpan(
+        style: baseStyle,
+        children: [
+          if (_transcript.isNotEmpty) TextSpan(text: _transcript),
+          if (_provisional.isNotEmpty)
+            TextSpan(
+              text: (needsSpace ? ' ' : '') + _provisional,
+              style: TextStyle(
+                color: provisionalColor,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+        ],
+      ),
+      key: const Key('transcript_text'),
     );
   }
 

@@ -75,7 +75,9 @@ class _AppRootState extends State<AppRoot> {
       final engine = await QAsrEngine.load(dir, threads: _kThreads);
       sw.stop();
       // Test/automation hook: emit load time to logcat (grep QASR_METRIC).
-      debugPrint('QASR_METRIC load_ms=${sw.elapsedMilliseconds} threads=$_kThreads');
+      debugPrint(
+        'QASR_METRIC load_ms=${sw.elapsedMilliseconds} threads=$_kThreads',
+      );
       if (!mounted) return;
       setState(() {
         _engine = engine;

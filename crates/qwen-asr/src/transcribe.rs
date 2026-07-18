@@ -81,6 +81,25 @@ fn has_prefilled_asr_text(ctx: &QwenCtx) -> bool {
         .is_some_and(|tokens| tokens.contains(&TOKEN_ASR_TEXT))
 }
 
+/// Index into `raw_tokens` where the ASR text region begins.
+///
+/// When the ASR text token was prefilled into the prompt, `raw_tokens`
+/// contains only generated text, so the region starts at 0.  Otherwise the
+/// region starts right after the first `TOKEN_ASR_TEXT` marker.  This mirrors
+/// the slicing used by the streaming commit blocks and must stay identical to
+/// them so the provisional tail lines up exactly with the committed text.
+fn stream_text_start(ctx: &QwenCtx, raw_tokens: &[i32]) -> usize {
+    if !has_prefilled_asr_text(ctx) {
+        raw_tokens
+            .iter()
+            .position(|&t| t == TOKEN_ASR_TEXT)
+            .map(|p| p + 1)
+            .unwrap_or(0)
+    } else {
+        0
+    }
+}
+
 fn prefill_lcp_len(prev: &[PrefillRowKey], current: &[PrefillRowKey], prefill_len: usize) -> usize {
     let cmp_len = prefill_len.min(prev.len()).min(current.len());
     let mut reused = 0usize;
@@ -2220,6 +2239,10 @@ pub struct StreamState {
     raw_tokens: Vec<i32>,
     stable_text_tokens: Vec<i32>,
     result_bytes: Vec<u8>,
+    /// Decoded bytes of the provisional (unfixed) tail: tokens in `raw_tokens`
+    /// beyond what `stable_text_tokens` covers.  Replaced in full on every
+    /// push, cleared on reset/degen-reset; empty after finalize (all stable).
+    provisional_bytes: Vec<u8>,
 
     // Prefill LCP reuse
     prev_prefill_keys: Vec<PrefillRowKey>,
@@ -2259,6 +2282,7 @@ impl StreamState {
             raw_tokens: Vec::new(),
             stable_text_tokens: Vec::new(),
             result_bytes: Vec::new(),
+            provisional_bytes: Vec::new(),
             prev_prefill_keys: Vec::new(),
             prev_tail_snapshot: Vec::new(),
             stale_count: 0,
@@ -2281,6 +2305,7 @@ impl StreamState {
         self.raw_tokens.clear();
         self.stable_text_tokens.clear();
         self.result_bytes.clear();
+        self.provisional_bytes.clear();
         self.prev_prefill_keys.clear();
         self.prev_tail_snapshot.clear();
         self.stale_count = 0;
@@ -2296,6 +2321,15 @@ impl StreamState {
     /// Get the current stable transcription result.
     pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.result_bytes).into_owned()
+    }
+
+    /// Get the current provisional (unfixed) tail text.
+    ///
+    /// This is the newest hypothesis text held back from the stable commit by
+    /// the rollback / `unfixed_chunks` window.  It is recomputed on every push
+    /// and is empty once the stream has been finalized.
+    pub fn provisional_text(&self) -> String {
+        String::from_utf8_lossy(&self.provisional_bytes).into_owned()
     }
 
     /// Get how many samples have been processed so far.
@@ -2664,16 +2698,7 @@ pub fn stream_push_audio(
 
         if speech_ended {
             // Emit remaining rollback tokens from current raw_tokens (before truncation)
-            let text_start = if !has_prefilled_asr_text(ctx) {
-                state
-                    .raw_tokens
-                    .iter()
-                    .position(|&t| t == TOKEN_ASR_TEXT)
-                    .map(|p| p + 1)
-                    .unwrap_or(0)
-            } else {
-                0
-            };
+            let text_start = stream_text_start(ctx, &state.raw_tokens);
             let candidate_tokens = &state.raw_tokens[text_start..];
             let n_text = candidate_tokens.len();
             let emit_from = state.stable_text_tokens.len();
@@ -2769,16 +2794,7 @@ pub fn stream_push_audio(
 
         // ---- Parse text region and emit stable tokens (non-speech-ended case) ----
         if !speech_ended {
-            let text_start = if !has_prefilled_asr_text(ctx) {
-                state
-                    .raw_tokens
-                    .iter()
-                    .position(|&t| t == TOKEN_ASR_TEXT)
-                    .map(|p| p + 1)
-                    .unwrap_or(0)
-            } else {
-                0
-            };
+            let text_start = stream_text_start(ctx, &state.raw_tokens);
             let n_text_tokens = state.raw_tokens.len().saturating_sub(text_start);
 
             let candidate_len = if is_final {
@@ -2817,6 +2833,22 @@ pub fn stream_push_audio(
             break;
         }
     } // end while loop
+
+    // ---- Compute the provisional (unfixed) tail ----
+    // The tokens in `raw_tokens` beyond what `stable_text_tokens` covers are the
+    // newest hypothesis text that the rollback / unfixed-chunks window holds back
+    // from the stable commit.  Decode them (replacing any prior provisional text)
+    // so callers can render them as low-confidence "grey" text.  After finalize
+    // everything has been committed, so this range is empty.
+    state.provisional_bytes.clear();
+    {
+        let text_start = stream_text_start(ctx, &state.raw_tokens);
+        let candidate_tokens = &state.raw_tokens[text_start..];
+        for i in state.stable_text_tokens.len()..candidate_tokens.len() {
+            let piece_bytes = tokenizer.decode_bytes(candidate_tokens[i]);
+            state.provisional_bytes.extend_from_slice(piece_bytes);
+        }
+    }
 
     Some(String::from_utf8_lossy(&delta_bytes).into_owned())
 }

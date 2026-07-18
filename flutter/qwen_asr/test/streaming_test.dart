@@ -56,11 +56,14 @@ void main() {
     for (var i = 0; i < samples.length; i += chunk) {
       final end = (i + chunk) > samples.length ? samples.length : i + chunk;
       final finalize = end >= samples.length;
-      last = await engine.streamPush(
+      final res = await engine.streamPush(
         Float32List.sublistView(samples, i, end),
         finalize: finalize,
       );
-      if (last.isNotEmpty && firstPartialMs == null) {
+      last = res.text;
+      // First visible text = stable OR provisional becomes non-empty.
+      if ((res.text.isNotEmpty || res.provisional.isNotEmpty) &&
+          firstPartialMs == null) {
         firstPartialMs = sw.elapsedMilliseconds;
       }
     }

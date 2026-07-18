@@ -119,17 +119,16 @@ class QAsrEngine {
   /// -1.0..1.0 (typically ~0.5 s per call). Set [finalize] to `true` on the
   /// last push (Stop) to flush remaining audio.
   ///
-  /// Returns the current **full transcript** accumulated so far (partial
-  /// result), or an empty string if nothing has been emitted yet.
-  Future<String> streamPush(
+  /// Returns a [StreamPartial] whose `text` is the current committed **stable**
+  /// transcript accumulated so far and whose `provisional` is the newest unfixed
+  /// tail (a lower-confidence hypothesis, empty when none and always empty after
+  /// finalize). Render `provisional` distinctly (e.g. grey) since later pushes
+  /// may revise it or promote it into `text`.
+  Future<StreamPartial> streamPush(
     Float32List samples, {
     bool finalize = false,
   }) async {
-    final result = await _engine.streamPush(
-      samples: samples.toList(),
-      finalize: finalize,
-    );
-    return result ?? '';
+    return _engine.streamPush(samples: samples.toList(), finalize: finalize);
   }
 
   /// Set the engine's internal streaming chunk size in seconds (default 8.0).

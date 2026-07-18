@@ -6,3 +6,4 @@
 library;
 
 export 'src/qwen_asr_engine.dart';
+export 'src/rust/api/qwen_asr_bridge.dart' show StreamPartial;

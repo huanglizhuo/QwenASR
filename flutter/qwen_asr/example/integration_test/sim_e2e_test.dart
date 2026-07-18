@@ -96,7 +96,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
       await Future<void>.delayed(const Duration(milliseconds: 300));
       final widget = tester.widget<SelectableText>(transcriptFinder);
-      current = widget.data ?? '';
+      // The transcript is a SelectableText.rich: stable text + grey provisional
+      // tail. At "Done" the provisional tail is empty, so the flattened plain
+      // text equals the final stable transcript.
+      current = widget.textSpan?.toPlainText() ?? widget.data ?? '';
       final statusDone = find
           .textContaining('Done (simulated)')
           .evaluate()
@@ -121,10 +124,11 @@ void main() {
     );
     String out = '';
     for (var c = 0; c < 6; c++) {
-      out = await engine.streamPush(
+      final res = await engine.streamPush(
         Float32List.fromList(rnd),
         finalize: c == 5,
       );
+      out = res.text;
     }
     expect(out, isA<String>());
     print('REAL-MIC SANITY: no crash, out.len=${out.length}');

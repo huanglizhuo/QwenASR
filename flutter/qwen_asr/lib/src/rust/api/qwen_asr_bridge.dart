@@ -58,16 +58,17 @@ abstract class QwenAsrEngine implements RustOpaqueInterface {
   void setStreamUnfixedChunks({required int chunks});
 
   /// Push a new chunk of PCM audio into the live streaming session and return
-  /// the **current full transcript** (partial result) accumulated so far.
+  /// the current **stable** transcript plus the newest **provisional** tail.
   ///
   /// `samples`: new PCM chunk (f32, 16 kHz, mono, values in -1.0..1.0).
   /// `finalize`: set true on the final push (Stop) to flush remaining audio
   ///             and emit all rollback-buffered tokens.
   ///
-  /// Returns the full transcript text, or None if nothing has been emitted
-  /// yet. Runs on a flutter_rust_bridge worker thread, so the UI stays
-  /// responsive while a push is in flight.
-  Future<String?> streamPush({
+  /// Returns a [`StreamPartial`]: `text` is the committed stable transcript
+  /// (same as before), `provisional` is the unfixed tail (empty when none, and
+  /// always empty after finalize). Runs on a flutter_rust_bridge worker thread,
+  /// so the UI stays responsive while a push is in flight.
+  Future<StreamPartial> streamPush({
     required List<double> samples,
     required bool finalize,
   });
@@ -86,4 +87,30 @@ abstract class QwenAsrEngine implements RustOpaqueInterface {
 
   /// Transcribe from a WAV file buffer (bytes).
   Future<String?> transcribeWavBuffer({required List<int> wavData});
+}
+
+/// Result of a single [`QwenAsrEngine::stream_push`] call.
+///
+/// `text` is the committed **stable** transcript accumulated so far (same value
+/// the push path returned previously). `provisional` is the newest unfixed tail
+/// — a lower-confidence hypothesis held back from the stable commit by the
+/// rollback / unfixed-chunks window. Render `provisional` distinctly (e.g. grey)
+/// and expect it to be revised or promoted to `text` on later pushes. Both are
+/// empty when nothing has been produced; `provisional` is empty after finalize.
+class StreamPartial {
+  final String text;
+  final String provisional;
+
+  const StreamPartial({required this.text, required this.provisional});
+
+  @override
+  int get hashCode => text.hashCode ^ provisional.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is StreamPartial &&
+          runtimeType == other.runtimeType &&
+          text == other.text &&
+          provisional == other.provisional;
 }
