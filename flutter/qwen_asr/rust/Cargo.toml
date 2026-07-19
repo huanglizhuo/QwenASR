@@ -13,11 +13,13 @@ flutter_rust_bridge = "=2.11.1"
 [target.'cfg(target_vendor = "apple")'.dependencies]
 qwen_asr = { package = "qwen-asr", path = "../../../crates/qwen-asr" }
 
-# Android: disable blas (no OpenBLAS); enable INT8 decoder-prefill (R13 stage 1).
-# The int8-prefill path compiles ONLY under this feature (+ not blas + aarch64),
-# so it is Android-only at the build-graph level — apple/desktop/CLI never see it.
+# Android: disable blas (no OpenBLAS); enable INT8 decoder-prefill (R13 stage 1)
+# and INT8 encoder weight GEMMs (R13 stage 2). Both paths compile ONLY under
+# their feature (+ not blas + aarch64), so they are Android-only at the
+# build-graph level — apple/desktop/CLI never see them. Independent features so
+# either can be rolled back (drop from this list) without touching the other.
 [target.'cfg(target_os = "android")'.dependencies]
-qwen_asr = { package = "qwen-asr", path = "../../../crates/qwen-asr", default-features = false, features = ["int8-prefill"] }
+qwen_asr = { package = "qwen-asr", path = "../../../crates/qwen-asr", default-features = false, features = ["int8-prefill", "int8-encoder"] }
 
 # Linux (desktop): use default features (blas via OpenBLAS)
 [target.'cfg(all(target_os = "linux", not(target_os = "android")))'.dependencies]

@@ -1106,3 +1106,46 @@ pub unsafe fn swiglu_int8_prefill_rows(
         }
     }
 }
+
+/// INT8 encoder GEMM: output columns `[start, end)` of `Y[seq × out] = A @ Wᵀ`
+/// with an optional per-output-row `bias` and an optional in-place `accumulate`
+/// (`Y[p][o] += …` instead of `=`). `y` is row-major `[seq_len × out_dim]`
+/// (position outer, out-column inner); each worker writes a disjoint output-
+/// column range `[start, end)` of every position's row. `x_int8`/`x_scales` are
+/// the per-position quantized inputs (`seq_len × in_dim` and `seq_len`).
+///
+/// Bit-identical to [`matvec_int8`]'s row-`o` output (plus `bias[o]`, then the
+/// f32 accumulate) for every position — same per-row math via
+/// [`int8_row_dot_f32`], so the batched encoder GEMM equals the trusted single-
+/// vector `matvec_int8` applied position by position. Proven by the exactness
+/// unit tests in `kernels::tests`. R13-Android stage 2. Compiled only for the
+/// no-BLAS aarch64 (Android) build.
+///
+/// # Safety
+/// `y` valid for `seq_len*out_dim`; `x_int8` for `seq_len*in_dim`; `x_scales`
+/// for `seq_len`; `w_int8` for `out_dim*in_dim`; `w_scales` for `out_dim`;
+/// `bias` (if non-null) for `out_dim`. `[start, end)` within `[0, out_dim)`.
+#[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn matvec_int8_encoder_rows(
+    y: *mut f32, x_int8: *const i8, x_scales: *const f32,
+    w_int8: *const i8, w_scales: *const f32, bias: *const f32,
+    in_dim: usize, out_dim: usize, seq_len: usize,
+    start: usize, end: usize, accumulate: bool,
+) {
+    for o in start..end {
+        let w_row = w_int8.add(o * in_dim);
+        let ws = *w_scales.add(o);
+        let b = if bias.is_null() { 0.0 } else { *bias.add(o) };
+        for p in 0..seq_len {
+            let xp = x_int8.add(p * in_dim);
+            let val = int8_row_dot_f32(w_row, xp, *x_scales.add(p), ws, in_dim) + b;
+            let dst = y.add(p * out_dim + o);
+            if accumulate {
+                *dst += val;
+            } else {
+                *dst = val;
+            }
+        }
+    }
+}

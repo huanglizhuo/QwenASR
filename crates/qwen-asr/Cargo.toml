@@ -32,3 +32,9 @@ macos-ffi = []
 # target_arch="aarch64"), so desktop/apple/CLI builds never include it. Wired
 # into the Flutter Android dependency only.
 int8-prefill = []
+# R13-Android stage 2: INT8 encoder weight GEMMs (conv_out, q/k/v/o attn
+# projections, fc1/fc2 FFN, proj1/proj2). Opt-in, NOT default, and INDEPENDENT
+# of int8-prefill so each can be rolled back separately. Same triple gate
+# (feature + not blas + aarch64), so desktop/apple/CLI never compile a line of
+# it. Wired into the Flutter Android dependency only.
+int8-encoder = []

@@ -559,7 +559,8 @@ pub fn int8_prefill_enabled() -> bool {
 /// own absmax scale, writing into caller-provided scratch. Bit-identical, row
 /// by row, to the single-token `quantize_into` (the same per-row absmax used by
 /// the decode path), so the prefill GEMM's quantized inputs match the reference.
-#[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
+/// Shared by the INT8 decoder-prefill (stage 1) and encoder (stage 2) paths.
+#[cfg(all(any(feature = "int8-prefill", feature = "int8-encoder"), not(feature = "blas"), target_arch = "aarch64"))]
 pub(crate) fn quantize_rows_into(
     dst: &mut [i8], scales: &mut [f32], x: &[f32], seq_len: usize, dim: usize,
 ) {
@@ -666,6 +667,101 @@ pub(crate) unsafe fn int8_prefill_swiglu(
                 ffn_send as *mut f32, x_send as *const i8, xs_send as *const f32,
                 w_send as *const i8, ws_send as *const f32,
                 in_dim, n_rows, seq_len, start, end,
+            );
+        }
+    });
+}
+
+// ------------------------------------------------------------------------
+// INT8 encoder weight-GEMM entry points (R13-Android, stage 2)
+//
+// No-BLAS (Android) build only. Route the encoder weight projections (conv_out,
+// attention q/k/v/o, FFN fc1/fc2, proj1/proj2) through resident INT8 weights
+// instead of the f32 `linear`/`linear_accumulate` GEMMs. Activation×activation
+// attention GEMMs (QKᵀ, scores·V) stay f32 — no weights to quantize. Enabled by
+// default when compiled; `QWEN_ASR_INT8_ENCODER=0` falls back to the f32 path.
+// Desktop/BLAS builds never compile any of this. Independent of int8-prefill.
+// ------------------------------------------------------------------------
+
+/// Whether the INT8 encoder path is enabled at runtime. Only exists when the
+/// `int8-encoder` cargo feature is compiled in (opt-in, wired into the Flutter
+/// Android build only), and defaults **ON**; `QWEN_ASR_INT8_ENCODER=0` is a
+/// runtime kill switch. Cached after first read, matching `QWEN_ASR_INT8_PREFILL`.
+#[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+pub fn int8_encoder_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("QWEN_ASR_INT8_ENCODER")
+            .map(|v| v != "0")
+            .unwrap_or(true)
+    })
+}
+
+/// Quantize an f32 weight matrix to INT8 per-row with absmax scaling. Mirrors
+/// [`quantize_bf16_weights_to_int8`] (same per-row absmax → `scale = max/127`,
+/// round-clamp) but reads the encoder's already-prepacked f32 weights (which are
+/// the exact bf16→f32 widening), so the INT8 result equals quantizing the
+/// original bf16 directly. Returns `(int8_data, per_row_scales)`.
+#[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+pub fn quantize_f32_weights_to_int8(w: &[f32], out_dim: usize, in_dim: usize) -> (Vec<i8>, Vec<f32>) {
+    debug_assert_eq!(w.len(), out_dim * in_dim);
+    let mut int8 = vec![0i8; out_dim * in_dim];
+    let mut scales = vec![0.0f32; out_dim];
+    for r in 0..out_dim {
+        scales[r] = quantize_into(&mut int8[r * in_dim..(r + 1) * in_dim], &w[r * in_dim..(r + 1) * in_dim]);
+    }
+    (int8, scales)
+}
+
+/// Pool-parallel INT8 encoder GEMM `y[seq × out] = x @ Wᵀ (+ bias)`, optionally
+/// accumulating in place (`y += …`, for the fused wo/fc2 residual adds).
+/// Partitions the `out_dim` weight rows across the persistent pool in fixed
+/// 64-row blocks; small GEMMs stay single-threaded (R10 dispatch threshold).
+/// `x_int8`/`x_scales` are the per-position quantized inputs.
+///
+/// # Safety
+/// `y` sized `seq_len*out_dim`; `x_int8` sized `seq_len*in_dim`; `x_scales`
+/// sized `seq_len`; `w_int8`/`w_scales` cover `out_dim` rows / `in_dim` cols;
+/// `bias` (if `Some`) covers `out_dim`.
+#[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn int8_encoder_matvec(
+    y: &mut [f32], x_int8: &[i8], x_scales: &[f32],
+    w_int8: *const i8, w_scales: *const f32, bias: Option<&[f32]>,
+    in_dim: usize, out_dim: usize, seq_len: usize, accumulate: bool,
+) {
+    const MIN_COLS: usize = 128;
+    let bias_ptr = bias.map_or(std::ptr::null(), |b| b.as_ptr());
+    let nt = get_num_threads();
+    let parallel = nt > 1
+        && out_dim >= MIN_COLS
+        && seq_len.saturating_mul(in_dim).saturating_mul(out_dim) >= FALLBACK_MIN_MACS;
+    if !parallel {
+        neon::matvec_int8_encoder_rows(
+            y.as_mut_ptr(), x_int8.as_ptr(), x_scales.as_ptr(), w_int8, w_scales, bias_ptr,
+            in_dim, out_dim, seq_len, 0, out_dim, accumulate,
+        );
+        return;
+    }
+    let y_send = y.as_mut_ptr() as usize;
+    let x_send = x_int8.as_ptr() as usize;
+    let xs_send = x_scales.as_ptr() as usize;
+    let w_send = w_int8 as usize;
+    let ws_send = w_scales as usize;
+    let b_send = bias_ptr as usize;
+    const ROWS: usize = 64;
+    let n_items = out_dim.div_ceil(ROWS);
+    parallel_for_dynamic(n_items, |item| {
+        let start = item * ROWS;
+        let end = (start + ROWS).min(out_dim);
+        if start >= end { return; }
+        // SAFETY: items write disjoint output-column ranges [start,end).
+        unsafe {
+            neon::matvec_int8_encoder_rows(
+                y_send as *mut f32, x_send as *const i8, xs_send as *const f32,
+                w_send as *const i8, ws_send as *const f32, b_send as *const f32,
+                in_dim, out_dim, seq_len, start, end, accumulate,
             );
         }
     });
@@ -2698,6 +2794,145 @@ mod tests {
             &[(64usize, 1024usize, 3072usize), (48, 1024, 512), (5, 64, 300)]
         {
             prefill_swiglu_split_check(seq_len, in_dim, n_rows, 0xBEEF_F00D ^ (seq_len as u64));
+        }
+    }
+
+    // ====================================================================
+    // R13-Android INT8 encoder weight-GEMM exactness (no-BLAS build only).
+    //
+    // Each Y[position][out_col] of the batched encoder GEMM must be BIT-
+    // IDENTICAL (exact f32 equality) to the trusted single-vector `matvec_int8`
+    // (with the same optional bias) applied to that position's quantized
+    // activation — and, for the accumulate variant, added onto the same prior
+    // Y. Integer SDOT sums are order-exact and the float bias/accumulate is
+    // byte-for-byte the same, so exact equality is achievable and required.
+    // Exercised across odd in/out dims + tails, bias on/off, accumulate on/off,
+    // and across both the single-threaded and pool-row-split dispatch paths.
+    // ====================================================================
+
+    #[cfg(all(feature = "int8-encoder", not(feature = "blas")))]
+    fn gen_bias(rng: &mut Rng, out_dim: usize) -> Vec<f32> {
+        (0..out_dim).map(|_| rng.f32_pm1() * 0.5).collect()
+    }
+
+    #[cfg(all(feature = "int8-encoder", not(feature = "blas")))]
+    fn encoder_matvec_check(
+        seq_len: usize, in_dim: usize, out_dim: usize, with_bias: bool, accumulate: bool, seed: u64,
+    ) {
+        let mut rng = Rng::new(seed);
+        let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
+        let (xi, xs) = gen_inputs(&mut rng, seq_len, in_dim);
+        let bias = gen_bias(&mut rng, out_dim);
+        let bias_opt: Option<&[f32]> = if with_bias { Some(&bias) } else { None };
+        // Flatten per-position quantized inputs into a contiguous [seq*in] buffer.
+        let mut xq = vec![0i8; seq_len * in_dim];
+        for p in 0..seq_len {
+            xq[p * in_dim..(p + 1) * in_dim].copy_from_slice(&xi[p]);
+        }
+        // Prior Y contents (nonzero so the accumulate path is actually exercised).
+        let mut y_init = vec![0.0f32; seq_len * out_dim];
+        for v in y_init.iter_mut() { *v = rng.f32_pm1() * 4.0; }
+
+        // Reference: single-vector matvec_int8 per position, then f32 combine.
+        let mut y_ref = y_init.clone();
+        for p in 0..seq_len {
+            let mut row = vec![0.0f32; out_dim];
+            unsafe {
+                neon::matvec_int8(
+                    &mut row, xi[p].as_ptr(), xs[p], w.as_ptr(), &ws, bias_opt, in_dim, out_dim,
+                );
+            }
+            for o in 0..out_dim {
+                if accumulate { y_ref[p * out_dim + o] += row[o]; }
+                else { y_ref[p * out_dim + o] = row[o]; }
+            }
+        }
+        // Batched encoder GEMM.
+        let mut y = y_init.clone();
+        unsafe {
+            int8_encoder_matvec(
+                &mut y, &xq, &xs, w.as_ptr(), ws.as_ptr(), bias_opt,
+                in_dim, out_dim, seq_len, accumulate,
+            );
+        }
+        assert_eq!(
+            y, y_ref,
+            "encoder matvec mismatch seq={seq_len} in={in_dim} out={out_dim} bias={with_bias} acc={accumulate}"
+        );
+    }
+
+    /// Pool-parallel dispatch calls `matvec_int8_encoder_rows` over a partition
+    /// of the `out_dim` columns; assert any disjoint split writes the same `Y`
+    /// as the full-range pass (models the dynamic 64-row pool partition).
+    #[cfg(all(feature = "int8-encoder", not(feature = "blas")))]
+    fn encoder_matvec_split_check(
+        seq_len: usize, in_dim: usize, out_dim: usize, accumulate: bool, seed: u64,
+    ) {
+        let mut rng = Rng::new(seed);
+        let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
+        let (xi, xs) = gen_inputs(&mut rng, seq_len, in_dim);
+        let bias = gen_bias(&mut rng, out_dim);
+        let mut xq = vec![0i8; seq_len * in_dim];
+        for p in 0..seq_len {
+            xq[p * in_dim..(p + 1) * in_dim].copy_from_slice(&xi[p]);
+        }
+        let mut y_init = vec![0.0f32; seq_len * out_dim];
+        for v in y_init.iter_mut() { *v = rng.f32_pm1() * 4.0; }
+        let mut y_full = y_init.clone();
+        let mut y_split = y_init.clone();
+        unsafe {
+            neon::matvec_int8_encoder_rows(
+                y_full.as_mut_ptr(), xq.as_ptr(), xs.as_ptr(), w.as_ptr(), ws.as_ptr(), bias.as_ptr(),
+                in_dim, out_dim, seq_len, 0, out_dim, accumulate,
+            );
+            let mut start = 0;
+            while start < out_dim {
+                let end = (start + 64).min(out_dim);
+                neon::matvec_int8_encoder_rows(
+                    y_split.as_mut_ptr(), xq.as_ptr(), xs.as_ptr(), w.as_ptr(), ws.as_ptr(), bias.as_ptr(),
+                    in_dim, out_dim, seq_len, start, end, accumulate,
+                );
+                start = end;
+            }
+        }
+        assert_eq!(
+            y_full, y_split,
+            "encoder matvec split seq={seq_len} in={in_dim} out={out_dim} acc={accumulate}"
+        );
+    }
+
+    #[cfg(all(feature = "int8-encoder", not(feature = "blas")))]
+    #[test]
+    fn int8_encoder_matvec_matches_single() {
+        // Serial full-range exactness vs matvec_int8, across odd sizes, bias
+        // on/off, accumulate on/off.
+        let mut seed = 0x0EDC_0DE5_u64;
+        for &in_dim in &[16usize, 32, 48, 17, 33, 896] {
+            for &out_dim in &[1usize, 2, 7, 16, 31, 128] {
+                for &seq_len in &[1usize, 2, 5, 8, 33] {
+                    for &with_bias in &[false, true] {
+                        for &accumulate in &[false, true] {
+                            seed = seed.wrapping_add(0x9E37_79B9);
+                            encoder_matvec_check(seq_len, in_dim, out_dim, with_bias, accumulate, seed);
+                        }
+                    }
+                }
+            }
+        }
+        // Row-split equivalence (models the dynamic 64-row pool partition), with
+        // real encoder shapes (conv_out 7680→896, q/k/v/o 896→896, fc1 896→3584,
+        // fc2 3584→896, proj2 896→1024).
+        for &(seq_len, in_dim, out_dim) in &[
+            (48usize, 896usize, 896usize),
+            (64, 7680, 896),
+            (48, 896, 3584),
+            (64, 3584, 896),
+            (33, 896, 1024),
+            (5, 64, 200),
+        ] {
+            for &accumulate in &[false, true] {
+                encoder_matvec_split_check(seq_len, in_dim, out_dim, accumulate, 0xC0DE_5EED ^ (seq_len as u64));
+            }
         }
     }
 }
