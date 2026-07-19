@@ -7647,27 +7647,49 @@ the Flutter Android build; on device the path is default-on with the
 `QWEN_ASR_INT8_PREFILL=0` kill switch. Desktop/BLAS is untouched by construction
 (feature never compiled). Stage 2 (INT8 encoder prefill) may build on this.
 
-**RTF knobs added this pass (no numerics change).**
-- Live-mic engine chunk raised 2 s → 3 s (`kLiveEngineChunkSec`,
-  `streaming_screen.dart`); 2 s stays reachable for comparison via
-  `--dart-define=SIM_ENGINE_CHUNK_SEC=2.0` on the sim path.
+**RTF knobs trialled this pass (no numerics change).**
 - Partial-tail re-encode throttle multiplier is now an env knob
   `QWEN_ASR_ENC_THROTTLE` (default 2) in `stream_push_audio` — sweepable without
-  rebuilds; 0 clamps to 1 (re-encode every chunk).
-- Device thread count is already a `--dart-define=THREADS=N` hook
-  (`main.dart` → `QAsrEngine.load(threads:)`), default 0 = auto (8 on the
-  device); 6 is reachable for the sweep with no code change.
+  rebuilds; 0 clamps to 1 (re-encode every chunk). NOTE: this is a Rust env var
+  that does **not** reach the Android app (no dart-define/bridge added), so it
+  could not be swept on-device; it stayed at its default 2 for every device run.
+- Live-mic engine chunk: a 3 s value was trialled (`kLiveEngineChunkSec`,
+  `streaming_screen.dart`) and **rejected** — see device data below — so it stays
+  at 2 s. 3 s remains reachable via `--dart-define=SIM_ENGINE_CHUNK_SEC=3.0`.
+- Device thread count is a `--dart-define=THREADS=N` hook (`main.dart` →
+  `QAsrEngine.load(threads:)`), default 0 = auto (→8 on the device).
 
-**On-device (Xiaomi, adb `3de8f372`) — BLOCKED / not measured.** The phone was
-not attached for the duration of this task (`adb devices` empty across repeated
-checks incl. `adb kill-server`/`start-server`), so no device before/after or the
-{INT8}×{chunk 2/3}×{threads 8/6}×{enc-throttle 2/3} RTF matrix was captured. The
-Android wiring (feature-on) and the RTF knobs are in place for a device run once
-the phone is available. Host-side the INT8 toggle was verified — both `=0` and
-`=1` transcribe `bench/samples/audio.wav` word-correct. Recorded pre-existing
-device baseline (2 s live profile, R13-Android-UX) for continuity: audio 22.1 s,
-wall 42.2 s, RTF 0.52×, encode 11013 ms, decode 29611 ms; the expected
-prefill-dominated decode drop was not measured on-device.
+**On-device (Xiaomi, adb `3de8f372`, release APK, feature-ON, INT8 default-on).**
+Full 28.16 s `bench/samples/audio.wav` through the sim path (real-time-paced
+feed), one factor changed at a time from best-so-far. Word-match gate = final
+transcript matches `audio.txt` (punctuation drift allowed).
+
+| # | chunk | threads | enc-thr | RTF | firstPartial | firstStable | encode ms | decode ms | word-match |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|:--|
+| baseline (R13-Android-UX, pre-INT8) | 2 s | auto | 2 | 0.52× | — | — | 11013 | 29611 | — |
+| **C1 (winner, cool)** | **2 s** | **auto** | **2** | **0.94×** | **2825 ms** | **6780 ms** | **7004** | **6938** | ✅ |
+| C2 | 3 s | auto | 2 | 0.94× | 4441 ms | 10382 ms | 6671 | 7381 | ❌ dup sentence |
+| C3 (×2) | 2 s | 6 | 2 | 0.21× | 7535 ms | 25387 ms | 11341 | ~119000 | ✅ |
+| final confirm (hot) | 2 s | auto | 2 | 0.93× | 8763 ms | 11558 ms | 10028 | 15932 | ✅ |
+
+Findings: **INT8-on winner C1 hits RTF 0.94× vs the 0.52× baseline** — decode
+dropped 29611 → 6938 ms (~4.3×), encode 11013 → 7004 ms. The wall-RTF is
+structurally pinned near 1.0× because the sim feed is real-time-paced (feeding
+28 s takes ~28 s wall regardless), so the knobs really move the finalize tail,
+first-partial/stable latency, and the true processing cost (encode+decode ≈14 s
+for 28 s audio = ~2× real-time headroom). The **3 s chunk (C2) is rejected**: no
+RTF gain, worse latency, and it **duplicated a full sentence** in the final text.
+**threads=6 (C3) is a severe, reproducible regression** (decode ~17× worse, RTF
+0.21×) — auto(→8) maps far better to this device's cores; kept as default. The
+`enc-throttle` factor could not be swept on-device (env var; see above). Runs are
+sequential and thermally coupled — the "final confirm" run (5th consecutive) is
+thermally throttled vs the cool C1 at the identical config, so C1's cool figures
+are the winner's representative numbers. Winning config left installed
+(`kLiveEngineChunkSec`=2 s, threads auto, INT8 default-on). Memory: `dumpsys
+meminfo` TOTAL PSS ≈ **2004 MB** (RSS ≈ 1689 MB, swap-PSS ≈ 427 MB). Remaining
+bottleneck split at the winner: encode ≈ decode (7.0 s vs 6.9 s of the ~14 s
+processing); with prefill now INT8, further RTF beyond the real-time-paced
+ceiling would require a non-paced feed or cutting encoder cost (stage 2).
 
 ---
 

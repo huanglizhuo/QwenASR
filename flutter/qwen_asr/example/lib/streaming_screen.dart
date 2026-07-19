@@ -27,13 +27,13 @@ const double kMicChunkSec = 0.5;
 /// speech shorter than 8 s would show nothing until Stop/finalize.
 const double kSimEngineChunkSec = 8.0;
 
-/// Live-mic engine chunk: partials appear every ~3 s of speech. Raised 2→3 s
-/// (R13-Android stage 1 RTF sweep): fewer partial re-encodes per second of
-/// speech lowers the live-profile RTF cost. The 2 s profile stays reachable for
-/// comparison via `--dart-define=SIM_ENGINE_CHUNK_SEC=2.0` on the sim path.
-/// Costs minor punctuation/duplication drift in intermediate partials vs the
-/// 8 s setting; the finalize (Stop) pass still re-decodes the tail.
-const double kLiveEngineChunkSec = 3.0;
+/// Live-mic engine chunk: partials appear every ~2 s of speech. A 3 s chunk was
+/// trialled on-device (R13-Android stage 1 RTF sweep) but REJECTED: it gave no
+/// wall-RTF gain (the sim feed is real-time-paced, so RTF is pinned near 1.0×)
+/// while regressing first-partial/first-stable latency AND duplicating a full
+/// sentence in the final transcript. 2 s is the kept default; 3 s stays
+/// reachable via `--dart-define=SIM_ENGINE_CHUNK_SEC=3.0` for comparison.
+const double kLiveEngineChunkSec = 2.0;
 
 /// Optional override for the simulated-mic engine chunk, in seconds, injected
 /// via `--dart-define=SIM_ENGINE_CHUNK_SEC=2.0`. Lets automation exercise the
