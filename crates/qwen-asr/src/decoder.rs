@@ -726,18 +726,18 @@ pub fn decoder_prefill(
     // Guard against aligner configs, whose INT8 weight buffers are empty.
     // Desktop/BLAS builds never compile this branch — prefill stays on AMX f32
     // (see R12-F2).
-    #[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+    #[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
     let use_int8 = kernels::int8_prefill_enabled()
         && decoder.layers.first().map_or(false, |l| {
             !l.wq_int8.is_empty() && !l.gate_up_int8.is_empty() && !l.down_int8.is_empty()
         });
-    #[cfg(not(all(not(feature = "blas"), target_arch = "aarch64")))]
+    #[cfg(not(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64")))]
     let use_int8 = false;
 
     // Per-position INT8 activation scratch, reused across all layers (largest
     // in_dim is `intermediate` for the down projection). Only allocated for the
     // INT8 prefill path.
-    #[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+    #[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
     let (mut xq_buf, mut xq_scales) = if use_int8 {
         let m = intermediate.max(q_dim).max(dim);
         (vec![0i8; seq_len * m], vec![0.0f32; seq_len])
@@ -761,7 +761,7 @@ pub fn decoder_prefill(
         let v = &mut bufs.pref_v[..seq_len * kv_dim];
 
         if use_int8 {
-            #[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+            #[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
             unsafe {
                 kernels::quantize_rows_into(
                     &mut xq_buf[..seq_len * dim], &mut xq_scales[..seq_len],
@@ -842,7 +842,7 @@ pub fn decoder_prefill(
 
         let proj_out = &mut bufs.pref_proj_out[..seq_len * dim];
         if use_int8 {
-            #[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+            #[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
             unsafe {
                 kernels::quantize_rows_into(
                     &mut xq_buf[..seq_len * q_dim], &mut xq_scales[..seq_len],
@@ -882,7 +882,7 @@ pub fn decoder_prefill(
         if use_int8 {
             // Fused INT8 gate_up + SwiGLU into `gate` directly (matches the
             // single-token `int8_swiglu_range` path — no separate up buffer).
-            #[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+            #[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
             unsafe {
                 kernels::quantize_rows_into(
                     &mut xq_buf[..seq_len * dim], &mut xq_scales[..seq_len],
@@ -914,7 +914,7 @@ pub fn decoder_prefill(
 
         let ffn_out = &mut bufs.pref_ffn_out[..seq_len * dim];
         if use_int8 {
-            #[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+            #[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
             unsafe {
                 kernels::quantize_rows_into(
                     &mut xq_buf[..seq_len * intermediate], &mut xq_scales[..seq_len],

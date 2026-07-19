@@ -1055,7 +1055,7 @@ pub unsafe fn argmax_int8_batched(
 /// `y` valid for `seq_len*out_dim`; `x_int8` for `seq_len*in_dim`; `x_scales`
 /// for `seq_len`; `w_int8` for `out_dim*in_dim`; `w_scales` for `out_dim`.
 /// `[start, end)` within `[0, out_dim)`.
-#[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+#[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn matvec_int8_prefill_rows(
     y: *mut f32, x_int8: *const i8, x_scales: *const f32,
@@ -1084,7 +1084,7 @@ pub unsafe fn matvec_int8_prefill_rows(
 /// `ffn` valid for `seq_len*n_rows`; `x_int8` for `seq_len*in_dim`; `x_scales`
 /// for `seq_len`; `w_int8` for `2*n_rows*in_dim`; `w_scales` for `2*n_rows`.
 /// `[start, end)` within `[0, n_rows)`.
-#[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+#[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn swiglu_int8_prefill_rows(
     ffn: *mut f32, x_int8: *const i8, x_scales: *const f32,

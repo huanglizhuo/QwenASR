@@ -1567,6 +1567,23 @@ fn stream_verify_enabled() -> bool {
         .unwrap_or(true)
 }
 
+/// Partial-tail re-encode throttle multiplier: the streaming push path only
+/// re-encodes the partial tail once `multiplier * chunk_samples` of new audio
+/// has accumulated (else it reuses the cached encoder output for LCP matching).
+/// Higher = fewer re-encodes = lower RTF cost, at some partial-latency expense.
+/// `QWEN_ASR_ENC_THROTTLE=N` (default 2); cached after first read. A value of 0
+/// is clamped to 1 (re-encode every chunk).
+fn enc_throttle_multiplier() -> usize {
+    static M: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *M.get_or_init(|| {
+        std::env::var("QWEN_ASR_ENC_THROTTLE")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .map(|n| n.max(1))
+            .unwrap_or(2)
+    })
+}
+
 /// Shared autoregressive decode-tail loop for both streaming paths
 /// (`transcribe_stream` and `stream_push_audio`).
 ///
@@ -2427,7 +2444,7 @@ pub fn stream_push_audio(
         // Only re-encode when enough new audio has accumulated (every 2 chunks),
         // on the first chunk, or when finalizing. On skip chunks, the reused
         // encoder output gives near-perfect LCP matching, cutting prefill cost.
-        let enc_update_threshold = chunk_samples * 2;
+        let enc_update_threshold = chunk_samples * enc_throttle_multiplier();
         let partial_age = state.audio_cursor.saturating_sub(state.last_partial_cursor);
         let need_encode =
             state.last_partial_cursor == 0 || partial_age >= enc_update_threshold || is_final;

@@ -27,3 +27,8 @@ vdsp = []
 ios = []
 android = []
 macos-ffi = []
+# R13-Android stage 1: INT8 decoder-prefill GEMM. Opt-in, NOT default. The path
+# only compiles under all(feature="int8-prefill", not(feature="blas"),
+# target_arch="aarch64"), so desktop/apple/CLI builds never include it. Wired
+# into the Flutter Android dependency only.
+int8-prefill = []

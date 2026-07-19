@@ -539,20 +539,19 @@ fn gemm_nn_fallback(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: 
 // builds never compile any of this — prefill stays on AMX f32 (R12-F2).
 // ------------------------------------------------------------------------
 
-/// Whether the INT8 decoder-prefill path is enabled. Default **OFF**: the
-/// R13-Android stage-1 100-file WER gate measured +8.3% relative WER (see
-/// docs/research/experiments.md), which exceeds the accept threshold, so the
-/// path ships behind an explicit opt-in and is NOT the mobile default. Enable
-/// with `QWEN_ASR_INT8_PREFILL=1`. Cached after first read, matching the
-/// `QWEN_ASR_VERIFY`/`QWEN_ASR_SIDECAR` knobs.
-#[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+/// Whether the INT8 decoder-prefill path is enabled at runtime. This function
+/// only exists when the `int8-prefill` cargo feature is compiled in (opt-in,
+/// wired into the Flutter Android build only), and in that case defaults **ON**;
+/// `QWEN_ASR_INT8_PREFILL=0` is a runtime kill switch. Cached after first read,
+/// matching the `QWEN_ASR_VERIFY`/`QWEN_ASR_SIDECAR` knobs.
+#[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
 pub fn int8_prefill_enabled() -> bool {
     use std::sync::OnceLock;
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
         std::env::var("QWEN_ASR_INT8_PREFILL")
-            .map(|v| v == "1")
-            .unwrap_or(false)
+            .map(|v| v != "0")
+            .unwrap_or(true)
     })
 }
 
@@ -560,7 +559,7 @@ pub fn int8_prefill_enabled() -> bool {
 /// own absmax scale, writing into caller-provided scratch. Bit-identical, row
 /// by row, to the single-token `quantize_into` (the same per-row absmax used by
 /// the decode path), so the prefill GEMM's quantized inputs match the reference.
-#[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+#[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
 pub(crate) fn quantize_rows_into(
     dst: &mut [i8], scales: &mut [f32], x: &[f32], seq_len: usize, dim: usize,
 ) {
@@ -583,7 +582,7 @@ pub(crate) fn quantize_rows_into(
 /// # Safety
 /// `y` sized `seq_len*out_dim`; `x_int8` sized `seq_len*in_dim`; `x_scales`
 /// sized `seq_len`; `w_int8`/`w_scales` cover `out_dim` rows / `in_dim` cols.
-#[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+#[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn int8_prefill_matvec(
     y: &mut [f32], x_int8: &[i8], x_scales: &[f32],
@@ -632,7 +631,7 @@ pub(crate) unsafe fn int8_prefill_matvec(
 /// # Safety
 /// `ffn` sized `seq_len*n_rows`; `x_int8` sized `seq_len*in_dim`; `x_scales`
 /// sized `seq_len`; `w_int8`/`w_scales` cover `2*n_rows` rows / `in_dim` cols.
-#[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+#[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn int8_prefill_swiglu(
     ffn: &mut [f32], x_int8: &[i8], x_scales: &[f32],
@@ -2544,7 +2543,7 @@ mod tests {
     // single-threaded and pool-parallel dispatch paths.
     // ====================================================================
 
-    #[cfg(not(feature = "blas"))]
+    #[cfg(all(feature = "int8-prefill", not(feature = "blas")))]
     fn prefill_matvec_check(seq_len: usize, in_dim: usize, out_dim: usize, seed: u64) {
         let mut rng = Rng::new(seed);
         let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
@@ -2577,7 +2576,7 @@ mod tests {
     /// the same `Y` as the full-range pass (so the dynamic 64-row split is exact).
     /// Runs on the caller thread only — the global pool is a singleton unsafe to
     /// dispatch concurrently from multiple test threads, so tests never invoke it.
-    #[cfg(not(feature = "blas"))]
+    #[cfg(all(feature = "int8-prefill", not(feature = "blas")))]
     fn prefill_matvec_split_check(seq_len: usize, in_dim: usize, out_dim: usize, seed: u64) {
         let mut rng = Rng::new(seed);
         let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
@@ -2606,7 +2605,7 @@ mod tests {
         assert_eq!(y_full, y_split, "prefill matvec split seq={seq_len} in={in_dim} out={out_dim}");
     }
 
-    #[cfg(not(feature = "blas"))]
+    #[cfg(all(feature = "int8-prefill", not(feature = "blas")))]
     #[test]
     fn int8_prefill_matvec_matches_single() {
         // Serial full-range exactness vs int8_matvec_range, across odd sizes.
@@ -2627,7 +2626,7 @@ mod tests {
         }
     }
 
-    #[cfg(not(feature = "blas"))]
+    #[cfg(all(feature = "int8-prefill", not(feature = "blas")))]
     fn prefill_swiglu_check(seq_len: usize, in_dim: usize, n_rows: usize, seed: u64) {
         let mut rng = Rng::new(seed);
         // gate_up: 2*n_rows interleaved gate/up weight rows.
@@ -2654,7 +2653,7 @@ mod tests {
     }
 
     /// Row-split equivalence for the fused swiglu prefill (256-row pool blocks).
-    #[cfg(not(feature = "blas"))]
+    #[cfg(all(feature = "int8-prefill", not(feature = "blas")))]
     fn prefill_swiglu_split_check(seq_len: usize, in_dim: usize, n_rows: usize, seed: u64) {
         let mut rng = Rng::new(seed);
         let (w, ws) = gen_w(&mut rng, 2 * n_rows, in_dim);
@@ -2683,7 +2682,7 @@ mod tests {
         assert_eq!(ff_full, ff_split, "prefill swiglu split seq={seq_len} in={in_dim} n_rows={n_rows}");
     }
 
-    #[cfg(not(feature = "blas"))]
+    #[cfg(all(feature = "int8-prefill", not(feature = "blas")))]
     #[test]
     fn int8_prefill_swiglu_matches_single() {
         let mut seed = 0x5019_D00D_u64;
