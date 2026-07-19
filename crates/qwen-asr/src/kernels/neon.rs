@@ -1024,3 +1024,85 @@ pub unsafe fn argmax_int8_batched(
         }
     }
 }
+
+// ========================================================================
+// INT8 decoder-prefill GEMM kernels (R13-Android, stage 1)
+//
+// Multi-row analogue of the single-token `int8_matvec_range` / `int8_swiglu_range`
+// path, for the no-BLAS (Android) build only. `Y[seq × out] = A[seq × in] @ Wᵀ`
+// with per-position (per-row) activation quantization: each sequence position
+// `p` carries its own quantized input `x_int8[p]` and scale `x_scales[p]`, and
+// the resident per-row-scaled INT8 weights are shared across all positions.
+//
+// Loop order is WEIGHT-ROW OUTER, POSITION INNER, so the static weight matrix
+// crosses DRAM exactly once per prefill (1 B/weight) while activations stay
+// L2-resident. Each `Y[p][o]` reuses [`int8_row_dot_f32`] — the exact per-row
+// math of [`matvec_int8`] — so it is BIT-IDENTICAL to the single-token
+// `int8_matvec_range` for position `p`, and the fused SwiGLU is bit-identical to
+// `int8_swiglu_range`. Proven by the exactness unit tests in `kernels::tests`.
+// Compiled only for `not(feature = "blas")` (prefill stays on AMX f32 under
+// BLAS by construction — see R12-F2).
+// ========================================================================
+
+/// INT8 prefill matvec: output rows `[start, end)` of `Y[seq × out] = A @ Wᵀ`.
+/// `y` is row-major `[seq_len × out_dim]` (position outer, out-column inner);
+/// each worker writes a disjoint output-column range `[start, end)` of every
+/// position's row. `x_int8`/`x_scales` are the per-position quantized inputs
+/// (`seq_len × in_dim` and `seq_len`). Bit-identical to `matvec_int8`'s row-`o`
+/// output for every position, by shared use of [`int8_row_dot_f32`].
+///
+/// # Safety
+/// `y` valid for `seq_len*out_dim`; `x_int8` for `seq_len*in_dim`; `x_scales`
+/// for `seq_len`; `w_int8` for `out_dim*in_dim`; `w_scales` for `out_dim`.
+/// `[start, end)` within `[0, out_dim)`.
+#[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn matvec_int8_prefill_rows(
+    y: *mut f32, x_int8: *const i8, x_scales: *const f32,
+    w_int8: *const i8, w_scales: *const f32,
+    in_dim: usize, out_dim: usize, seq_len: usize,
+    start: usize, end: usize,
+) {
+    for o in start..end {
+        let w_row = w_int8.add(o * in_dim);
+        let ws = *w_scales.add(o);
+        for p in 0..seq_len {
+            let xp = x_int8.add(p * in_dim);
+            let val = int8_row_dot_f32(w_row, xp, *x_scales.add(p), ws, in_dim);
+            *y.add(p * out_dim + o) = val;
+        }
+    }
+}
+
+/// INT8 prefill fused gate_up + SwiGLU: intermediate rows `[start, end)` of
+/// `FFN[seq × n_rows]`, `FFN[p][j] = silu(gate)·up` for each position `p`.
+/// `w_int8`/`w_scales` are the resident interleaved gate_up weights (gate row
+/// `2j`, up row `2j+1`) with `2*n_rows` rows. `ffn` is row-major
+/// `[seq_len × n_rows]`. Bit-identical to `int8_swiglu_range` for every position.
+///
+/// # Safety
+/// `ffn` valid for `seq_len*n_rows`; `x_int8` for `seq_len*in_dim`; `x_scales`
+/// for `seq_len`; `w_int8` for `2*n_rows*in_dim`; `w_scales` for `2*n_rows`.
+/// `[start, end)` within `[0, n_rows)`.
+#[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn swiglu_int8_prefill_rows(
+    ffn: *mut f32, x_int8: *const i8, x_scales: *const f32,
+    w_int8: *const i8, w_scales: *const f32,
+    in_dim: usize, n_rows: usize, seq_len: usize,
+    start: usize, end: usize,
+) {
+    for j in start..end {
+        let wg = w_int8.add(2 * j * in_dim);
+        let wu = w_int8.add((2 * j + 1) * in_dim);
+        let sg = *w_scales.add(2 * j);
+        let su = *w_scales.add(2 * j + 1);
+        for p in 0..seq_len {
+            let xp = x_int8.add(p * in_dim);
+            let xs = *x_scales.add(p);
+            let g = int8_row_dot_f32(wg, xp, xs, sg, in_dim);
+            let u = int8_row_dot_f32(wu, xp, xs, su, in_dim);
+            *ffn.add(p * n_rows + j) = g / (1.0 + (-g).exp()) * u;
+        }
+    }
+}

@@ -7546,6 +7546,115 @@ Decision: **KEPT.**
 
 ---
 
+### R13-Android-INT8-prefill (stage 1): INT8 decoder-prefill GEMM (no-BLAS) — code landed, default OFF (WER gate failed reduced threshold)
+
+Stage 1 of the mobile INT8 track: route the decoder **prefill** projections
+(wq/wk/wv/wo, gate/up, down) through the resident INT8 weights on the no-BLAS
+(Android) build, instead of the bf16→f32 + NEON-f32 fallback GEMM landed in
+"R13-Android: NEON pool-parallel no-BLAS GEMM fallback". The INT8 weights are
+already resident (built at load for single-token decode), so this halves the
+prefill weight byte-stream (1 B/weight vs bf16 2 B/weight) and drops the full
+f32 scratch matrix — directly attacking R12-F1's prefill-bandwidth term on the
+device.
+
+This resurrects the kernel from **R12-F2** (which built the same idea and
+rejected it *on Apple only* because AMX f32 beat NEON SDOT and broke free
+AMX/NEON decode overlap). Neither reason applies to Android/no-BLAS: there is no
+AMX, and the fallback GEMM already runs f32 on the same NEON pool, so INT8 SDOT
+is a strict byte-stream reduction over the same execution units.
+
+**Two-layer switch (desktop/BLAS untouched by construction).**
+- *Compile-time*: the entire INT8-prefill path is behind
+  `#[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]`. Desktop (BLAS)
+  builds never compile a line of it — their prefill stays on Accelerate/AMX f32
+  and their output is bit-identical to before by construction. The same cfg is
+  exercised on Apple Silicon via `--no-default-features` (dotprod present), which
+  is how the WER gate was run host-side.
+- *Runtime*: env `QWEN_ASR_INT8_PREFILL` (cached once, like `QWEN_ASR_VERIFY` /
+  `QWEN_ASR_SIDECAR`). **Default OFF** after the gate result below; `=1` opts in.
+  Aligner configs (INT8 buffers are `WeightBuf::empty()`) fall back to f32.
+
+**Kernel design.** New `neon::matvec_int8_prefill_rows` and
+`neon::swiglu_int8_prefill_rows`: weight-row-outer / position-inner, each weight
+row streamed once across all sequence positions; per-position (per-row)
+activation quantization (`quantize_rows_into`, per-row absmax = the single-token
+`quantize_into` applied per row). Each `Y[pos][row]` reuses the exact per-row
+math helper `int8_row_dot_f32` that `matvec_int8` / the R12-E2 batched kernels
+use, and the fused SwiGLU deinterleaves the resident `gate_up_int8` (gate row
+`2j`, up row `2j+1`) into separate strided prefill outputs. mod.rs entry points
+`int8_prefill_matvec` / `int8_prefill_swiglu` pool the output rows with
+`parallel_for_dynamic` (64- / 256-row dynamic blocks, R10 ≥4M-MAC / ≥128-col
+dispatch threshold), consistent with `gemm_nt_fallback`. `decoder_prefill`
+replaces its 7 `linear_nobias_bf16_scratch` calls with quantize+INT8-GEMM under
+`if use_int8`; the bf16 path is retained verbatim in the `else`.
+
+**Kernel exactness (bit-identical, required gate — PASS).** Two new unit tests
+in `kernels::tests` (gated `not(feature="blas")`), each asserting exact f32
+equality (`assert_eq!`, not tolerance):
+- `int8_prefill_matvec_matches_single`: `Y[pos][o]` == single-token
+  `int8_matvec_range` for that position, over odd in/out dims + tails
+  (in ∈ {16,32,48,17,33,1024}, out ∈ {1,2,7,16,31,128}, seq ∈ {1,2,5,8,33}),
+  plus a 64-row-split equivalence check modelling the dynamic pool partition.
+- `int8_prefill_swiglu_matches_single`: fused prefill == single-token
+  `int8_swiglu_range` per position, plus 256-row-split equivalence.
+INT8×INT8→i32 dots are order-exact and the float combine expression is byte-for-
+byte identical, so exact equality holds. Both pass. (Tests deliberately avoid
+dispatching the global pool concurrently — it is a singleton unsafe to drive
+from multiple test threads — and validate the split via direct disjoint-range
+calls instead.)
+
+**Builds / tests.** Zero warnings on default (`cargo build --release`),
+`--no-default-features`, and the Android cross-compile
+(`cargo ndk -t arm64-v8a build --release --no-default-features` with
+`+dotprod`; the lone `default_threads_formula` dead-code warning is pre-existing
+on that target, verified by rebuilding the stash-clean tree). Full suites green:
+default `cargo test -p qwen-asr --release` and `--no-default-features` (model-
+gated lockstep / session_split / regression run on this machine), including the
+two new exactness tests.
+
+**WER gate — REDUCED per user decision, FAILED the +5% threshold.**
+The R12-B3 full-set bootstrap gate (2703-utt dev-clean, 10k paired resamples)
+was **SKIPPED by explicit user decision** mid-run; the reduced gate is the
+historical **100-file continuity subset** (`bench/wer_subset_devclean2_100.txt`)
+only, both configs on the `--no-default-features` host build. Decision rule
+(user): relative ΔWER > +5% = FAIL. Per R12-B3 a 100-file set has a bootstrap CI
+half-width of ~±12% relative, so **this result is continuity-only and does not
+exclude subtle regressions — the INT8-prefill WER status is provisional.**
+
+| build (100-file dev-clean-2 subset) | corpus WER | word edits / 1371 |
+|---|--:|--:|
+| baseline `QWEN_ASR_INT8_PREFILL=0` (f32 prefill) | 0.0350 | 48 |
+| INT8 prefill `=1` | 0.0379 | 52 |
+
+Paired bootstrap (10k resamples, seed 0): dWER (INT8 − f32) point **+0.00292
+(+8.33% relative)**, 95% CI **[+0.00000, +0.00680]**, P(worse)=0.953, CI does
+not exclude 0. The entire delta is **4 additional word errors (48→52) out of
+1371 ref words** — small in absolute terms and inside the ±12% subset noise band,
+but the **point estimate +8.33% relative exceeds the +5% accept threshold, so
+the reduced gate FAILS.** (For reference, the full-set f32 baseline sweep that
+did complete before the switch: 2703 utts, corpus WER 0.0269; the INT8 full-set
+run was aborted per the user decision.)
+
+**Decision: code KEPT behind an explicit opt-in, default flipped OFF.** Per the
+fail rule, `QWEN_ASR_INT8_PREFILL` now defaults to **OFF** (f32 prefill stays the
+mobile default); the INT8 path ships but only activates with `=1`. Desktop/BLAS
+is untouched by construction (never compiled). Future rounds must treat the
+INT8-prefill WER as **provisional/regressing** until a full-set bootstrap gate is
+run; if pursued, stage 2 (INT8 encoder prefill) should not build on this being
+default-on.
+
+**On-device (Xiaomi, adb `3de8f372`) — BLOCKED / not measured.** The phone was
+not attached for the duration of this task (`adb devices` empty across repeated
+checks), so no device before/after was captured. It is moot for the default
+anyway: env vars don't pass to the Android app, so with the default now OFF the
+APK runs the f32 prefill path regardless. Host-side the toggle was verified —
+both `=0` and `=1` transcribe `bench/samples/audio.wav` word-correct. Recorded
+pre-existing device baseline (2 s live profile, from R13-Android-UX) for
+continuity: audio 22.1 s, wall 42.2 s, RTF 0.52×, encode 11013 ms, decode
+29611 ms; the expected prefill-dominated decode drop was not measured on-device.
+
+---
+
 ## Autoresearch Program Baseline Experiments
 
 These experiments come from the initial `codex-auto-research` autoresearch program baseline (`programs.md`). They are structural buffer-reuse optimizations that predate the numbered round structure above.

@@ -719,6 +719,32 @@ pub fn decoder_prefill(
     let max_weight = (intermediate * dim).max(q_dim * dim).max(kv_dim * dim);
     bufs.ensure_scratch(max_weight);
 
+    // R13-Android stage 1: route the prefill projections through the resident
+    // INT8 weights on the no-BLAS aarch64 (Android) build. Default OFF (opt in
+    // with `QWEN_ASR_INT8_PREFILL=1`) — the stage-1 WER gate regressed (see
+    // docs/research/experiments.md), so the bf16→f32 GEMM stays the default path.
+    // Guard against aligner configs, whose INT8 weight buffers are empty.
+    // Desktop/BLAS builds never compile this branch — prefill stays on AMX f32
+    // (see R12-F2).
+    #[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+    let use_int8 = kernels::int8_prefill_enabled()
+        && decoder.layers.first().map_or(false, |l| {
+            !l.wq_int8.is_empty() && !l.gate_up_int8.is_empty() && !l.down_int8.is_empty()
+        });
+    #[cfg(not(all(not(feature = "blas"), target_arch = "aarch64")))]
+    let use_int8 = false;
+
+    // Per-position INT8 activation scratch, reused across all layers (largest
+    // in_dim is `intermediate` for the down projection). Only allocated for the
+    // INT8 prefill path.
+    #[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+    let (mut xq_buf, mut xq_scales) = if use_int8 {
+        let m = intermediate.max(q_dim).max(dim);
+        (vec![0i8; seq_len * m], vec![0.0f32; seq_len])
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
     for (layer_idx, layer) in decoder.layers.iter().enumerate() {
         let x_norm = &mut bufs.pref_x_norm[..seq_len * dim];
         kernels::rms_norm(
@@ -734,19 +760,43 @@ pub fn decoder_prefill(
         let k = &mut bufs.pref_k[..seq_len * kv_dim];
         let v = &mut bufs.pref_v[..seq_len * kv_dim];
 
-        unsafe {
-            kernels::linear_nobias_bf16_scratch(
-                q, x_norm, layer.wq_weight_bf16, seq_len, dim, q_dim,
-                &mut bufs.bf16_scratch,
-            );
-            kernels::linear_nobias_bf16_scratch(
-                k, x_norm, layer.wk_weight_bf16, seq_len, dim, kv_dim,
-                &mut bufs.bf16_scratch,
-            );
-            kernels::linear_nobias_bf16_scratch(
-                v, x_norm, layer.wv_weight_bf16, seq_len, dim, kv_dim,
-                &mut bufs.bf16_scratch,
-            );
+        if use_int8 {
+            #[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+            unsafe {
+                kernels::quantize_rows_into(
+                    &mut xq_buf[..seq_len * dim], &mut xq_scales[..seq_len],
+                    x_norm, seq_len, dim,
+                );
+                let xq = &xq_buf[..seq_len * dim];
+                let xs = &xq_scales[..seq_len];
+                kernels::int8_prefill_matvec(
+                    q, xq, xs, layer.wq_int8.as_ptr(), layer.wq_int8_scales.as_ptr(),
+                    dim, q_dim, seq_len,
+                );
+                kernels::int8_prefill_matvec(
+                    k, xq, xs, layer.wk_int8.as_ptr(), layer.wk_int8_scales.as_ptr(),
+                    dim, kv_dim, seq_len,
+                );
+                kernels::int8_prefill_matvec(
+                    v, xq, xs, layer.wv_int8.as_ptr(), layer.wv_int8_scales.as_ptr(),
+                    dim, kv_dim, seq_len,
+                );
+            }
+        } else {
+            unsafe {
+                kernels::linear_nobias_bf16_scratch(
+                    q, x_norm, layer.wq_weight_bf16, seq_len, dim, q_dim,
+                    &mut bufs.bf16_scratch,
+                );
+                kernels::linear_nobias_bf16_scratch(
+                    k, x_norm, layer.wk_weight_bf16, seq_len, dim, kv_dim,
+                    &mut bufs.bf16_scratch,
+                );
+                kernels::linear_nobias_bf16_scratch(
+                    v, x_norm, layer.wv_weight_bf16, seq_len, dim, kv_dim,
+                    &mut bufs.bf16_scratch,
+                );
+            }
         }
 
         kernels::rms_norm_per_head(q, &layer.q_norm_weight, seq_len, n_heads, head_dim, eps);
@@ -791,11 +841,26 @@ pub fn decoder_prefill(
         );
 
         let proj_out = &mut bufs.pref_proj_out[..seq_len * dim];
-        unsafe {
-            kernels::linear_nobias_bf16_scratch(
-                proj_out, attn_out, layer.wo_weight_bf16, seq_len, q_dim, dim,
-                &mut bufs.bf16_scratch,
-            );
+        if use_int8 {
+            #[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+            unsafe {
+                kernels::quantize_rows_into(
+                    &mut xq_buf[..seq_len * q_dim], &mut xq_scales[..seq_len],
+                    attn_out, seq_len, q_dim,
+                );
+                kernels::int8_prefill_matvec(
+                    proj_out, &xq_buf[..seq_len * q_dim], &xq_scales[..seq_len],
+                    layer.wo_int8.as_ptr(), layer.wo_int8_scales.as_ptr(),
+                    q_dim, dim, seq_len,
+                );
+            }
+        } else {
+            unsafe {
+                kernels::linear_nobias_bf16_scratch(
+                    proj_out, attn_out, layer.wo_weight_bf16, seq_len, q_dim, dim,
+                    &mut bufs.bf16_scratch,
+                );
+            }
         }
         kernels::add_inplace(&mut bufs.pref_x[..seq_len * dim], proj_out, seq_len * dim);
 
@@ -814,29 +879,60 @@ pub fn decoder_prefill(
         // the prior interleaved-fusion path that needed an extra ~700 MB owned
         // bf16 matrix across the decoder.
         let gate = &mut bufs.pref_gate[..seq_len * intermediate];
-        unsafe {
-            kernels::linear_nobias_bf16_scratch(
-                gate, x_norm2, layer.gate_weight_bf16, seq_len, dim, intermediate,
-                &mut bufs.bf16_scratch,
-            );
+        if use_int8 {
+            // Fused INT8 gate_up + SwiGLU into `gate` directly (matches the
+            // single-token `int8_swiglu_range` path — no separate up buffer).
+            #[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+            unsafe {
+                kernels::quantize_rows_into(
+                    &mut xq_buf[..seq_len * dim], &mut xq_scales[..seq_len],
+                    x_norm2, seq_len, dim,
+                );
+                kernels::int8_prefill_swiglu(
+                    gate, &xq_buf[..seq_len * dim], &xq_scales[..seq_len],
+                    layer.gate_up_int8.as_ptr(), layer.gate_up_int8_scales.as_ptr(),
+                    dim, intermediate, seq_len,
+                );
+            }
+        } else {
+            unsafe {
+                kernels::linear_nobias_bf16_scratch(
+                    gate, x_norm2, layer.gate_weight_bf16, seq_len, dim, intermediate,
+                    &mut bufs.bf16_scratch,
+                );
+            }
+            let up = &mut bufs.pref_up[..seq_len * intermediate];
+            unsafe {
+                kernels::linear_nobias_bf16_scratch(
+                    up, x_norm2, layer.up_weight_bf16, seq_len, dim, intermediate,
+                    &mut bufs.bf16_scratch,
+                );
+            }
+            // gate <- silu(gate) * up
+            kernels::swiglu_separate_inplace(gate, up, seq_len, intermediate);
         }
-        let up = &mut bufs.pref_up[..seq_len * intermediate];
-        unsafe {
-            kernels::linear_nobias_bf16_scratch(
-                up, x_norm2, layer.up_weight_bf16, seq_len, dim, intermediate,
-                &mut bufs.bf16_scratch,
-            );
-        }
-
-        // gate <- silu(gate) * up
-        kernels::swiglu_separate_inplace(gate, up, seq_len, intermediate);
 
         let ffn_out = &mut bufs.pref_ffn_out[..seq_len * dim];
-        unsafe {
-            kernels::linear_nobias_bf16_scratch(
-                ffn_out, gate, layer.down_weight_bf16, seq_len, intermediate, dim,
-                &mut bufs.bf16_scratch,
-            );
+        if use_int8 {
+            #[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+            unsafe {
+                kernels::quantize_rows_into(
+                    &mut xq_buf[..seq_len * intermediate], &mut xq_scales[..seq_len],
+                    gate, seq_len, intermediate,
+                );
+                kernels::int8_prefill_matvec(
+                    ffn_out, &xq_buf[..seq_len * intermediate], &xq_scales[..seq_len],
+                    layer.down_int8.as_ptr(), layer.down_int8_scales.as_ptr(),
+                    intermediate, dim, seq_len,
+                );
+            }
+        } else {
+            unsafe {
+                kernels::linear_nobias_bf16_scratch(
+                    ffn_out, gate, layer.down_weight_bf16, seq_len, intermediate, dim,
+                    &mut bufs.bf16_scratch,
+                );
+            }
         }
         kernels::add_inplace(&mut bufs.pref_x[..seq_len * dim], ffn_out, seq_len * dim);
     }

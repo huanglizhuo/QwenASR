@@ -529,6 +529,149 @@ fn gemm_nn_fallback(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: 
     });
 }
 
+// ------------------------------------------------------------------------
+// INT8 decoder-prefill GEMM entry points (R13-Android, stage 1)
+//
+// No-BLAS (Android) build only. Route the decoder-prefill projections through
+// the resident INT8 weights (half the BF16 byte stream, no f32 scratch matrix)
+// instead of the bf16→f32 + NEON f32 fallback GEMM. Enabled by default when
+// compiled; `QWEN_ASR_INT8_PREFILL=0` falls back to the f32 path. Desktop/BLAS
+// builds never compile any of this — prefill stays on AMX f32 (R12-F2).
+// ------------------------------------------------------------------------
+
+/// Whether the INT8 decoder-prefill path is enabled. Default **OFF**: the
+/// R13-Android stage-1 100-file WER gate measured +8.3% relative WER (see
+/// docs/research/experiments.md), which exceeds the accept threshold, so the
+/// path ships behind an explicit opt-in and is NOT the mobile default. Enable
+/// with `QWEN_ASR_INT8_PREFILL=1`. Cached after first read, matching the
+/// `QWEN_ASR_VERIFY`/`QWEN_ASR_SIDECAR` knobs.
+#[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+pub fn int8_prefill_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("QWEN_ASR_INT8_PREFILL")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    })
+}
+
+/// Quantize each of `seq_len` activation rows (length `dim`) to INT8 with its
+/// own absmax scale, writing into caller-provided scratch. Bit-identical, row
+/// by row, to the single-token `quantize_into` (the same per-row absmax used by
+/// the decode path), so the prefill GEMM's quantized inputs match the reference.
+#[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+pub(crate) fn quantize_rows_into(
+    dst: &mut [i8], scales: &mut [f32], x: &[f32], seq_len: usize, dim: usize,
+) {
+    debug_assert_eq!(dst.len(), seq_len * dim);
+    debug_assert_eq!(scales.len(), seq_len);
+    debug_assert_eq!(x.len(), seq_len * dim);
+    for p in 0..seq_len {
+        let base = p * dim;
+        scales[p] = quantize_into(&mut dst[base..base + dim], &x[base..base + dim]);
+    }
+}
+
+/// Pool-parallel INT8 prefill matvec `y[seq × out] = x @ Wᵀ`. Partitions the
+/// `out_dim` weight rows across the persistent pool in fixed 64-row blocks
+/// grabbed dynamically (P-cores take more than E-cores); each block streams its
+/// weight rows once across all `seq_len` positions. Small GEMMs stay
+/// single-threaded (R10 dispatch threshold). `x_int8`/`x_scales` are the
+/// per-position quantized inputs.
+///
+/// # Safety
+/// `y` sized `seq_len*out_dim`; `x_int8` sized `seq_len*in_dim`; `x_scales`
+/// sized `seq_len`; `w_int8`/`w_scales` cover `out_dim` rows / `in_dim` cols.
+#[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn int8_prefill_matvec(
+    y: &mut [f32], x_int8: &[i8], x_scales: &[f32],
+    w_int8: *const i8, w_scales: *const f32,
+    in_dim: usize, out_dim: usize, seq_len: usize,
+) {
+    const MIN_COLS: usize = 128;
+    let nt = get_num_threads();
+    let parallel = nt > 1
+        && out_dim >= MIN_COLS
+        && seq_len.saturating_mul(in_dim).saturating_mul(out_dim) >= FALLBACK_MIN_MACS;
+    if !parallel {
+        neon::matvec_int8_prefill_rows(
+            y.as_mut_ptr(), x_int8.as_ptr(), x_scales.as_ptr(), w_int8, w_scales,
+            in_dim, out_dim, seq_len, 0, out_dim,
+        );
+        return;
+    }
+    let y_send = y.as_mut_ptr() as usize;
+    let x_send = x_int8.as_ptr() as usize;
+    let xs_send = x_scales.as_ptr() as usize;
+    let w_send = w_int8 as usize;
+    let ws_send = w_scales as usize;
+    const ROWS: usize = 64;
+    let n_items = out_dim.div_ceil(ROWS);
+    parallel_for_dynamic(n_items, |item| {
+        let start = item * ROWS;
+        let end = (start + ROWS).min(out_dim);
+        if start >= end { return; }
+        // SAFETY: items write disjoint output-column ranges [start,end).
+        unsafe {
+            neon::matvec_int8_prefill_rows(
+                y_send as *mut f32, x_send as *const i8, xs_send as *const f32,
+                w_send as *const i8, ws_send as *const f32,
+                in_dim, out_dim, seq_len, start, end,
+            );
+        }
+    });
+}
+
+/// Pool-parallel INT8 prefill fused gate_up + SwiGLU `ffn[seq × n_rows]`.
+/// Partitions the `n_rows` intermediate rows across the pool (256-row blocks);
+/// each block streams its gate/up weight-row pairs once across all positions.
+/// `w_int8`/`w_scales` are the resident interleaved gate_up weights.
+///
+/// # Safety
+/// `ffn` sized `seq_len*n_rows`; `x_int8` sized `seq_len*in_dim`; `x_scales`
+/// sized `seq_len`; `w_int8`/`w_scales` cover `2*n_rows` rows / `in_dim` cols.
+#[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn int8_prefill_swiglu(
+    ffn: &mut [f32], x_int8: &[i8], x_scales: &[f32],
+    w_int8: *const i8, w_scales: *const f32,
+    in_dim: usize, n_rows: usize, seq_len: usize,
+) {
+    let nt = get_num_threads();
+    let parallel = nt > 1
+        && n_rows >= 64
+        && seq_len.saturating_mul(in_dim).saturating_mul(2 * n_rows) >= FALLBACK_MIN_MACS;
+    if !parallel {
+        neon::swiglu_int8_prefill_rows(
+            ffn.as_mut_ptr(), x_int8.as_ptr(), x_scales.as_ptr(), w_int8, w_scales,
+            in_dim, n_rows, seq_len, 0, n_rows,
+        );
+        return;
+    }
+    let ffn_send = ffn.as_mut_ptr() as usize;
+    let x_send = x_int8.as_ptr() as usize;
+    let xs_send = x_scales.as_ptr() as usize;
+    let w_send = w_int8 as usize;
+    let ws_send = w_scales as usize;
+    const ROWS: usize = 256;
+    let n_items = n_rows.div_ceil(ROWS);
+    parallel_for_dynamic(n_items, |item| {
+        let start = item * ROWS;
+        let end = (start + ROWS).min(n_rows);
+        if start >= end { return; }
+        // SAFETY: items write disjoint intermediate-row ranges [start,end).
+        unsafe {
+            neon::swiglu_int8_prefill_rows(
+                ffn_send as *mut f32, x_send as *const i8, xs_send as *const f32,
+                w_send as *const i8, ws_send as *const f32,
+                in_dim, n_rows, seq_len, start, end,
+            );
+        }
+    });
+}
+
 /// C = A @ B (no transpose): `A[M,K]`, `B[K,N]`, `C[M,N]`
 pub fn matmul_nn(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: usize) {
     #[cfg(feature = "blas")]
@@ -2387,5 +2530,175 @@ mod tests {
             }
         }
         set_threads(saved);
+    }
+
+    // ====================================================================
+    // R13-Android INT8 decoder-prefill exactness (no-BLAS build only).
+    //
+    // Each Y[position][out_row] of the multi-row prefill GEMM must be BIT-
+    // IDENTICAL (exact f32 equality) to the trusted single-token
+    // `int8_matvec_range` / `int8_swiglu_range` applied to that position's
+    // quantized activation. Integer SDOT sums are order-exact and the float
+    // combine is byte-for-byte the same, so exact equality is achievable and
+    // required. Exercised across odd in/out dims + tails, and across both the
+    // single-threaded and pool-parallel dispatch paths.
+    // ====================================================================
+
+    #[cfg(not(feature = "blas"))]
+    fn prefill_matvec_check(seq_len: usize, in_dim: usize, out_dim: usize, seed: u64) {
+        let mut rng = Rng::new(seed);
+        let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
+        let (xi, xs) = gen_inputs(&mut rng, seq_len, in_dim);
+        // Flatten per-position quantized inputs into a contiguous [seq*in] buffer.
+        let mut xq = vec![0i8; seq_len * in_dim];
+        for p in 0..seq_len {
+            xq[p * in_dim..(p + 1) * in_dim].copy_from_slice(&xi[p]);
+        }
+        // Reference: single-token int8_matvec_range for each position.
+        let mut y_ref = vec![0.0f32; seq_len * out_dim];
+        for p in 0..seq_len {
+            unsafe {
+                int8_matvec_range(
+                    y_ref[p * out_dim..].as_mut_ptr(), xi[p].as_ptr(), xs[p],
+                    w.as_ptr(), ws.as_ptr(), None, in_dim, 0, out_dim,
+                );
+            }
+        }
+        // Prefill GEMM.
+        let mut y = vec![0.0f32; seq_len * out_dim];
+        unsafe {
+            int8_prefill_matvec(&mut y, &xq, &xs, w.as_ptr(), ws.as_ptr(), in_dim, out_dim, seq_len);
+        }
+        assert_eq!(y, y_ref, "prefill matvec mismatch seq={seq_len} in={in_dim} out={out_dim}");
+    }
+
+    /// The pool-parallel dispatch just calls `matvec_int8_prefill_rows` over a
+    /// partition of the `out_dim` rows; assert that any disjoint row split writes
+    /// the same `Y` as the full-range pass (so the dynamic 64-row split is exact).
+    /// Runs on the caller thread only — the global pool is a singleton unsafe to
+    /// dispatch concurrently from multiple test threads, so tests never invoke it.
+    #[cfg(not(feature = "blas"))]
+    fn prefill_matvec_split_check(seq_len: usize, in_dim: usize, out_dim: usize, seed: u64) {
+        let mut rng = Rng::new(seed);
+        let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
+        let (xi, xs) = gen_inputs(&mut rng, seq_len, in_dim);
+        let mut xq = vec![0i8; seq_len * in_dim];
+        for p in 0..seq_len {
+            xq[p * in_dim..(p + 1) * in_dim].copy_from_slice(&xi[p]);
+        }
+        let mut y_full = vec![0.0f32; seq_len * out_dim];
+        let mut y_split = vec![0.0f32; seq_len * out_dim];
+        unsafe {
+            neon::matvec_int8_prefill_rows(
+                y_full.as_mut_ptr(), xq.as_ptr(), xs.as_ptr(), w.as_ptr(), ws.as_ptr(),
+                in_dim, out_dim, seq_len, 0, out_dim,
+            );
+            let mut start = 0;
+            while start < out_dim {
+                let end = (start + 64).min(out_dim);
+                neon::matvec_int8_prefill_rows(
+                    y_split.as_mut_ptr(), xq.as_ptr(), xs.as_ptr(), w.as_ptr(), ws.as_ptr(),
+                    in_dim, out_dim, seq_len, start, end,
+                );
+                start = end;
+            }
+        }
+        assert_eq!(y_full, y_split, "prefill matvec split seq={seq_len} in={in_dim} out={out_dim}");
+    }
+
+    #[cfg(not(feature = "blas"))]
+    #[test]
+    fn int8_prefill_matvec_matches_single() {
+        // Serial full-range exactness vs int8_matvec_range, across odd sizes.
+        let mut seed = 0x0DEF_ACED_u64;
+        for &in_dim in &[16usize, 32, 48, 17, 33, 1024] {
+            for &out_dim in &[1usize, 2, 7, 16, 31, 128] {
+                for &seq_len in &[1usize, 2, 5, 8, 33] {
+                    seed = seed.wrapping_add(0x9E37_79B9);
+                    prefill_matvec_check(seq_len, in_dim, out_dim, seed);
+                }
+            }
+        }
+        // Row-split equivalence (models the dynamic 64-row pool partition).
+        for &(seq_len, in_dim, out_dim) in
+            &[(64usize, 1024usize, 2048usize), (48, 1024, 1024), (96, 3072, 1024), (5, 64, 200)]
+        {
+            prefill_matvec_split_check(seq_len, in_dim, out_dim, 0xD00D_5EED ^ (seq_len as u64));
+        }
+    }
+
+    #[cfg(not(feature = "blas"))]
+    fn prefill_swiglu_check(seq_len: usize, in_dim: usize, n_rows: usize, seed: u64) {
+        let mut rng = Rng::new(seed);
+        // gate_up: 2*n_rows interleaved gate/up weight rows.
+        let (w, ws) = gen_w(&mut rng, 2 * n_rows, in_dim);
+        let (xi, xs) = gen_inputs(&mut rng, seq_len, in_dim);
+        let mut xq = vec![0i8; seq_len * in_dim];
+        for p in 0..seq_len {
+            xq[p * in_dim..(p + 1) * in_dim].copy_from_slice(&xi[p]);
+        }
+        let mut ff_ref = vec![0.0f32; seq_len * n_rows];
+        for p in 0..seq_len {
+            unsafe {
+                int8_swiglu_range(
+                    ff_ref[p * n_rows..].as_mut_ptr(), xi[p].as_ptr(), xs[p],
+                    w.as_ptr(), ws.as_ptr(), in_dim, 0, n_rows,
+                );
+            }
+        }
+        let mut ff = vec![0.0f32; seq_len * n_rows];
+        unsafe {
+            int8_prefill_swiglu(&mut ff, &xq, &xs, w.as_ptr(), ws.as_ptr(), in_dim, n_rows, seq_len);
+        }
+        assert_eq!(ff, ff_ref, "prefill swiglu mismatch seq={seq_len} in={in_dim} n_rows={n_rows}");
+    }
+
+    /// Row-split equivalence for the fused swiglu prefill (256-row pool blocks).
+    #[cfg(not(feature = "blas"))]
+    fn prefill_swiglu_split_check(seq_len: usize, in_dim: usize, n_rows: usize, seed: u64) {
+        let mut rng = Rng::new(seed);
+        let (w, ws) = gen_w(&mut rng, 2 * n_rows, in_dim);
+        let (xi, xs) = gen_inputs(&mut rng, seq_len, in_dim);
+        let mut xq = vec![0i8; seq_len * in_dim];
+        for p in 0..seq_len {
+            xq[p * in_dim..(p + 1) * in_dim].copy_from_slice(&xi[p]);
+        }
+        let mut ff_full = vec![0.0f32; seq_len * n_rows];
+        let mut ff_split = vec![0.0f32; seq_len * n_rows];
+        unsafe {
+            neon::swiglu_int8_prefill_rows(
+                ff_full.as_mut_ptr(), xq.as_ptr(), xs.as_ptr(), w.as_ptr(), ws.as_ptr(),
+                in_dim, n_rows, seq_len, 0, n_rows,
+            );
+            let mut start = 0;
+            while start < n_rows {
+                let end = (start + 256).min(n_rows);
+                neon::swiglu_int8_prefill_rows(
+                    ff_split.as_mut_ptr(), xq.as_ptr(), xs.as_ptr(), w.as_ptr(), ws.as_ptr(),
+                    in_dim, n_rows, seq_len, start, end,
+                );
+                start = end;
+            }
+        }
+        assert_eq!(ff_full, ff_split, "prefill swiglu split seq={seq_len} in={in_dim} n_rows={n_rows}");
+    }
+
+    #[cfg(not(feature = "blas"))]
+    #[test]
+    fn int8_prefill_swiglu_matches_single() {
+        let mut seed = 0x5019_D00D_u64;
+        for &in_dim in &[16usize, 32, 48, 17, 1024] {
+            for &n_rows in &[1usize, 3, 8, 15, 64] {
+                for &seq_len in &[1usize, 2, 5, 8, 33] {
+                    seed = seed.wrapping_add(0x9E37_79B9);
+                    prefill_swiglu_check(seq_len, in_dim, n_rows, seed);
+                }
+            }
+        }
+        for &(seq_len, in_dim, n_rows) in
+            &[(64usize, 1024usize, 3072usize), (48, 1024, 512), (5, 64, 300)]
+        {
+            prefill_swiglu_split_check(seq_len, in_dim, n_rows, 0xBEEF_F00D ^ (seq_len as u64));
+        }
     }
 }
