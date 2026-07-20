@@ -7693,6 +7693,134 @@ ceiling would require a non-paced feed or cutting encoder cost (stage 2).
 
 ---
 
+### R13-Android-INT8-encoder (stage 2): INT8 encoder weight GEMMs (no-BLAS) — landed, Android-default-ON; encode modestly faster (not halved), cumulative WER PROVISIONAL (full-set sweep aborted)
+
+Stage 2 gives the encoder the same INT8 treatment stage 1 gave the decoder
+prefill. Encoder GEMMs are ~half of mobile compute (stage-1 device split: encode
+≈ 7.0 s of the ~14 s processing for the 28.2 s clip), so the encoder weight
+projections were the remaining lever.
+
+**Design.** New cargo feature `int8-encoder`, NOT default, INDEPENDENT of
+`int8-prefill` (either rolls back by dropping it from the Flutter Android
+dependency's feature list). Same triple gate `all(feature="int8-encoder",
+not(feature="blas"), target_arch="aarch64")` on every field, kernel, and call
+site, so desktop/apple/CLI never compile a line — the f32
+`linear`/`linear_accumulate` path is byte-for-byte untouched off-Android by
+construction. Runtime kill switch `QWEN_ASR_INT8_ENCODER=0` (default ON when
+compiled). A `QASR_METRIC int8 prefill=<0|1> encoder=<0|1>` line is logged at
+model load and appended to `perf_stats()` (`encoder=1` iff the weights were
+actually INT8-quantized — the forward's `use_int8` condition), so an inactive
+feature can never be silently mistaken for active. (Rust `eprintln!` stderr is
+NOT redirected to Android logcat — the earlier stage-1 device `load_ms` came from
+the Dart-side `QASR_METRIC` line — so the status is surfaced via `perf_stats()`,
+which Dart already prints in the `sim_perf` line.)
+
+**Scope — GEMMs converted (9):** conv-stem projection `conv_out` (7680→896, no
+bias), attention `q/k/v/o` (896→896, ×4), FFN `fc1` (896→3584) and `fc2`
+(3584→896), and the decoder-space projections `proj1` (896→896) and `proj2`
+(896→1024). `wo`/`fc2` use the accumulate variant (fused residual add). **Stayed
+f32 (out of scope):** activation×activation attention GEMMs (QKᵀ, scores·V — no
+weights to quantize, higher quality risk), mel/DFT, all LayerNorms, GELU,
+sinusoidal PE, and the three small f32-native `conv2d1/2/3` kernels (loaded as
+f32 not bf16; 3×3 spatial — poor per-row-quant candidates).
+
+Weights are quantized per-row (absmax, `scale=max/127`) at load, only when the
+feature is compiled AND the switch is on, via `quantize_f32_weights_to_int8`
+(same absmax math as `quantize_bf16_weights_to_int8`, reading the encoder's
+already-prepacked f32 weights, which are the exact bf16→f32 widening — so the
+INT8 is identical to quantizing the bf16 directly). The f32 weights stay resident
+for the kill-switch fallback. No R12-H1 sidecar in this stage (load-time quant;
+encoder is small). Activations are per-position dynamically quantized, reusing
+stage 1's `quantize_rows_into`.
+
+**Exactness (gate 1 — PASS).** `neon::matvec_int8_encoder_rows` shares
+`int8_row_dot_f32` with the trusted single-vector `matvec_int8`, then adds
+`bias[o]` and (for the accumulate variant) the f32 residual — bit-identical per
+row/position. `int8_encoder_matvec_matches_single` asserts every
+`Y[position][out]` of the batched GEMM is f32-bit-equal to `matvec_int8` applied
+position-by-position, across odd in/out dims + tails, bias on/off, accumulate
+on/off, and the pool-64-row split. Full suites green on default AND
+`--no-default-features --features int8-prefill,int8-encoder`; zero new warnings on
+default / `--no-default-features` / `int8-encoder` alone / the combo / the
+cargo-ndk arm64 both-features build (the lone `default_threads_formula`
+dead-code warning is pre-existing on the stage-1 base, verified by stash).
+
+**Full-set WER (gate 3 — encoder increment PROVISIONAL, sweep aborted).** The
+full dev-clean (2703 utts) sweep was **aborted by user decision** partway; the
++prefill+encoder config was **never run on the full set**.
+
+| build (`--no-default-features`, no-BLAS host, offline) | full-set corpus WER | vs f32 baseline |
+|---|--:|--:|
+| f32 baseline (`PREFILL=0 ENCODER=0`) | **0.0269** (2703/2703, re-confirmed) | — |
+| +INT8 prefill (`PREFILL=1 ENCODER=0`) | 0.0278 (stage 1) | +0.00088 / **+3.28% rel** |
+| +INT8 prefill+encoder (`PREFILL=1 ENCODER=1`) | **NOT MEASURED (aborted)** | **PROVISIONAL** |
+
+The f32 baseline **re-confirmed 0.0269 exactly** (2703/2703, line-count verified)
+on the stage-2 combo binary — the encoder-INT8 code compiled but switched off is
+byte-for-byte the f32 path, as designed. Non-authoritative evidence for the
+encoder increment: (a) the 28.2 s `bench/samples/audio.wav` transcribes
+**word-identical** across all three configs (f32 / +prefill / +prefill+encoder)
+on both host and device; (b) an aborted-sweep +prefill partial (412 utts) read
+0.0268, consistent with baseline. **No encoder-path partial exists** (that config
+never started). The cumulative-vs-+15%-budget verdict (target ≤ ~0.0309)
+therefore **cannot be certified from measured full-set data** and is marked
+PROVISIONAL; a full +prefill+encoder sweep is required to close gate 3. The +15%
+budget is mobile-only and does not govern desktop (feature never compiled there).
+
+**Load-time cost.** Encoder INT8 quantization at load adds ~**+13-16 ms** on the
+no-BLAS host (f32/prefill load ~62-65 ms → +encoder ~78 ms; folded into the
+parallel per-layer encoder prepack). On device the Dart-side `load_ms` is
+I/O-dominated and noisy (cool runs 2156-2986 ms; stage-1 was 2760) — the encoder
+quantization delta is not separable there.
+
+**Device before/after (gate 4).** Xiaomi (adb `3de8f372`, model 24129PN74C),
+release APK, both INT8 features (Android default-ON), 28.2 s sim at 2 s chunk
+(`SIM_ENGINE_CHUNK_SEC=2.0`), auto threads. `QASR_METRIC` confirmed
+`int8[prefill=1 encoder=1]` on device (encoder INT8 verified ACTIVE, not just
+compiled — also proven statically: the APK `.so` contains the
+`QWEN_ASR_INT8_ENCODER` string). Word-match gate vs `bench/samples/audio.txt` =
+✅ on every run. Thermal protocol: the device thermally couples across runs; a
+first back-to-back run was hot (encode 7350 / decode 19298) and discarded; the
+canonical figure is the post-5-min-idle cool run.
+
+| run (28.2 s sim) | encode ms | decode ms | total ms | RTF | firstPartial | firstStable | word-match |
+|---|--:|--:|--:|--:|--:|--:|:--|
+| stage-1 winner (cool, encoder f32) | 7004 | 6938 | ~13942 | 0.94× | 2825 | 6780 | ✅ |
+| **stage-2 +encoder INT8 (cool, canonical)** | **6669** | 9517 | 16195 | 0.94× | 4454 | 6854 | ✅ |
+| stage-2 +encoder INT8 (2nd cool sample) | 5857 | 9214 | 15080 | 0.94× | 4300 | 6660 | ✅ |
+| stage-2 +encoder INT8 (hot, discarded) | 7350 | 19298 | 26657 | 0.93× | 8394 | 10847 | ✅ |
+
+**Findings (honest).** Encoder INT8 is **confirmed active and correct** (word-match
+preserved). Encode dropped modestly — **7004 → 6669 ms cool (−4.8%)**, second cool
+sample 5857 ms; both below the f32 7004 — but **NOT the hoped ~halving** to
+3.5-4.5 s. Why the small gain: the encoder weight GEMMs are far smaller than the
+decoder's (896-dim vs decoder's large matrices) and largely cache-resident, so
+they are compute-bound (SDOT ≈ FMA throughput) rather than the memory-bandwidth-
+bound regime where INT8's half-byte weight stream wins big (the decoder case);
+and much of "encode_ms" is f32 work INT8 never touches — mel/DFT, `conv2d1/2/3`,
+the f32 attention-score GEMMs, plus the streaming re-encode overhead. **Decode
+(9.2-9.5 s cool) is unchanged code** (int8-prefill only, identical to stage 1) —
+its higher reading vs stage-1's 6938 is measurement-session/thermal variance, not
+attributable to this change; total is not a fair before/after because of it. RTF
+stays 0.94× (structurally pinned by the real-time-paced sim feed). **TOTAL PSS ≈
+2090 MB** (vs stage-1 2004 MB, **+~86 MB**) — the expected cost of retaining both
+f32 (fallback) and INT8 encoder weights resident.
+
+**Decision: KEPT, Android-default-ON, with caveats.** The `int8-encoder` feature
+is wired into the Flutter Android build alongside `int8-prefill`, default-on with
+the `QWEN_ASR_INT8_ENCODER=0` kill switch; it is correct (bit-exact kernel,
+word-match preserved) and gives a small-but-real cool encode reduction at ~+86 MB
+PSS. Two items are explicitly UNCLOSED and should gate any promotion beyond
+"kept-on-Android": (1) the full-set cumulative WER is PROVISIONAL — the
++prefill+encoder 2703-utt sweep must be run to certify ≤ +15%; (2) the encode
+speedup is modest (not the projected halving). Per the project lesson (MSE ≠ WER,
+R12-B) no blind kernel variants were tried. Desktop/BLAS untouched by construction
+(feature never compiled). Commits: `b11b1a7b` (kernels+feature+wiring),
+`e4d952df` (QASR_METRIC diagnostic + CLI no-BLAS feature forwarding), plus this
+doc entry.
+
+---
+
 ## Autoresearch Program Baseline Experiments
 
 These experiments come from the initial `codex-auto-research` autoresearch program baseline (`programs.md`). They are structural buffer-reuse optimizations that predate the numbered round structure above.

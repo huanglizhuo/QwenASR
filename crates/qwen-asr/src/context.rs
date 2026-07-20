@@ -117,22 +117,31 @@ impl QwenModel {
         // silently mistaken for active on device. `prefill` reflects the
         // decoder-prefill runtime switch; `encoder` reflects whether the encoder
         // weights were actually INT8-quantized at load (the forward's use_int8).
-        {
-            #[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
-            let prefill = kernels::int8_prefill_enabled() as u8;
-            #[cfg(not(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64")))]
-            let prefill = 0u8;
-            let encoder = encoder.int8_encoder_active() as u8;
-            eprintln!("QASR_METRIC int8 prefill={} encoder={}", prefill, encoder);
-        }
-
-        Some(Arc::new(QwenModel {
+        let model = Arc::new(QwenModel {
             config: cfg,
             encoder,
             decoder,
             _safetensors: ms,
             model_dir: model_dir.to_string(),
-        }))
+        });
+        // Also to native stderr (host/CLI); on Android stderr is not redirected to
+        // logcat, so the same status is additionally surfaced via `perf_stats()`.
+        eprintln!("QASR_METRIC int8 {}", model.int8_status());
+        Some(model)
+    }
+
+    /// R13-Android diagnostic: `"prefill=<0|1> encoder=<0|1>"` — which INT8 paths
+    /// are compiled AND active for this loaded model. `encoder` reflects actual
+    /// weight-population (the encoder forward's `use_int8`), not merely the env
+    /// switch. Both `0` on desktop/BLAS/non-aarch64 by construction. Surfaced on
+    /// device through `perf_stats()` since Rust stderr is not logged there.
+    pub fn int8_status(&self) -> String {
+        #[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
+        let prefill = kernels::int8_prefill_enabled() as u8;
+        #[cfg(not(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64")))]
+        let prefill = 0u8;
+        let encoder = self.encoder.int8_encoder_active() as u8;
+        format!("prefill={} encoder={}", prefill, encoder)
     }
 
     /// Create a fresh, independent decode session that shares this model's

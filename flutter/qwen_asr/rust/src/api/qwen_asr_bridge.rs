@@ -92,12 +92,13 @@ impl QwenAsrEngine {
     pub fn perf_stats(&self) -> String {
         let g = self.inner.lock().unwrap();
         format!(
-            "audio={:.1}ms encode={:.1}ms decode={:.1}ms total={:.1}ms tokens={}",
+            "audio={:.1}ms encode={:.1}ms decode={:.1}ms total={:.1}ms tokens={} int8[{}]",
             g.ctx.perf_audio_ms,
             g.ctx.perf_encode_ms,
             g.ctx.perf_decode_ms,
             g.ctx.perf_total_ms,
-            g.ctx.perf_text_tokens
+            g.ctx.perf_text_tokens,
+            g.ctx.model().int8_status(),
         )
     }
 
