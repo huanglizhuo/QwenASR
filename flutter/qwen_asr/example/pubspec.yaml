@@ -31,6 +31,7 @@ dependencies:
   record: ^7.1.1
   path_provider: ^2.1.6
   http: ^1.6.0
+  file_picker: ^11.0.2
 
 dev_dependencies:
   integration_test:
