@@ -5,12 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:qwen_asr/qwen_asr.dart';
 import 'package:record/record.dart';
 
-/// Sample rate the engine expects (16 kHz mono).
-const int _kSampleRate = 16000;
-
-/// Minimum captured audio (seconds) before a hold is worth transcribing. Shorter
-/// holds are treated as accidental taps and skipped with a friendly message.
-const double _kMinHoldSec = 0.3;
+import 'one_shot_transcribe.dart';
 
 /// Push-to-talk ("PTT") recording screen.
 ///
@@ -30,6 +25,11 @@ class _RecordScreenState extends State<RecordScreen> {
   final AudioRecorder _recorder = AudioRecorder();
   StreamSubscription<Uint8List>? _micSub;
   Timer? _ticker;
+
+  late final OneShotTranscriber _oneShot = OneShotTranscriber(
+    widget.engine,
+    metricTag: 'ptt',
+  );
 
   final List<double> _samples = [];
   bool _recording = false;
@@ -77,7 +77,7 @@ class _RecordScreenState extends State<RecordScreen> {
       final stream = await _recorder.startStream(
         const RecordConfig(
           encoder: AudioEncoder.pcm16bits,
-          sampleRate: _kSampleRate,
+          sampleRate: kSampleRate,
           numChannels: 1,
         ),
       );
@@ -113,8 +113,8 @@ class _RecordScreenState extends State<RecordScreen> {
 
     final captured = Float32List.fromList(_samples);
     _samples.clear();
-    final capturedSec = captured.length / _kSampleRate;
-    if (capturedSec < _kMinHoldSec) {
+    final capturedSec = captured.length / kSampleRate;
+    if (capturedSec < kMinUtteranceSec) {
       if (!mounted) return;
       setState(() {
         _status =
@@ -138,19 +138,23 @@ class _RecordScreenState extends State<RecordScreen> {
       _status = 'Transcribing...';
     });
     try {
-      final result = await widget.engine.transcribePcm(samples);
+      // Shared one-shot decode: too-short guard + transcribePcm + QASR_ logs.
+      final outcome = await _oneShot.transcribe(samples);
       if (!mounted) return;
-      final perf = widget.engine.perfStats();
+      if (outcome.tooShort) {
+        setState(() {
+          _transcribing = false;
+          _status =
+              'Too short (${(outcome.durationSec * 1000).round()} ms) — hold longer and speak';
+        });
+        return;
+      }
       setState(() {
-        _transcript = result;
-        _perf = perf;
+        _transcript = outcome.transcript;
+        _perf = outcome.perf;
         _transcribing = false;
-        _status =
-            'Done (${(samples.length / _kSampleRate).toStringAsFixed(1)}s)';
+        _status = 'Done (${outcome.durationSec.toStringAsFixed(1)}s)';
       });
-      // Test/automation hook: emit final result to logcat (grep QASR_).
-      debugPrint('QASR_METRIC ptt_perf | $perf');
-      debugPrint('QASR_TRANSCRIPT ptt | $result');
     } catch (e) {
       if (!mounted) return;
       setState(() {

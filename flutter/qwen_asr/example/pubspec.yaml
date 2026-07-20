@@ -32,6 +32,19 @@ dependencies:
   path_provider: ^2.1.6
   http: ^1.6.0
   file_picker: ^11.0.2
+  # Client-side voice-activity detection (Silero VAD via ONNX, FFI on native)
+  # for VAD-Live mode's utterance segmentation. Model bundled as a local asset
+  # (see assets/vad/) so detection runs fully offline.
+  vad: ^0.0.8
+
+# `vad` constrains `record: ^6.1.2`, but record_android 1.5.2 (the 6.x native
+# impl) fails to compile against current AGP/compileSdk. We keep record ^7.1.1
+# (which builds) and override vad's constraint: the app supplies vad its audio
+# via `audioStream` for BOTH the live mic and the simulated feed, so vad never
+# uses its own (v6-era) internal recorder — only the record 7 types it shares,
+# which are source-compatible.
+dependency_overrides:
+  record: ^7.1.1
 
 dev_dependencies:
   integration_test:
@@ -60,6 +73,9 @@ flutter:
   assets:
     - test_fixtures/audio.wav
     - test_fixtures/audio.txt
+    # Silero VAD model, bundled locally so VAD-Live detection runs fully offline
+    # (the vad package loads via rootBundle when baseAssetPath is a local path).
+    - assets/vad/silero_vad_legacy.onnx
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

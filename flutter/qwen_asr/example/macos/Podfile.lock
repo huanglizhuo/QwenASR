@@ -1,28 +1,41 @@
 PODS:
   - FlutterMacOS (1.0.0)
-  - qasr (0.0.1):
+  - onnxruntime-c (1.22.0)
+  - onnxruntime-objc (1.22.0):
+    - onnxruntime-objc/Core (= 1.22.0)
+  - onnxruntime-objc/Core (1.22.0):
+    - onnxruntime-c (= 1.22.0)
+  - qwen_asr (0.1.0):
     - FlutterMacOS
-  - rust_lib_qasr (0.0.1):
+  - vad (0.0.6):
     - FlutterMacOS
+    - onnxruntime-objc (= 1.22.0)
 
 DEPENDENCIES:
   - FlutterMacOS (from `Flutter/ephemeral`)
-  - qasr (from `Flutter/ephemeral/.symlinks/plugins/qasr/macos`)
-  - rust_lib_qasr (from `Flutter/ephemeral/.symlinks/plugins/rust_lib_qasr/macos`)
+  - qwen_asr (from `Flutter/ephemeral/.symlinks/plugins/qwen_asr/macos`)
+  - vad (from `Flutter/ephemeral/.symlinks/plugins/vad/macos`)
+
+SPEC REPOS:
+  trunk:
+    - onnxruntime-c
+    - onnxruntime-objc
 
 EXTERNAL SOURCES:
   FlutterMacOS:
     :path: Flutter/ephemeral
-  qasr:
-    :path: Flutter/ephemeral/.symlinks/plugins/qasr/macos
-  rust_lib_qasr:
-    :path: Flutter/ephemeral/.symlinks/plugins/rust_lib_qasr/macos
+  qwen_asr:
+    :path: Flutter/ephemeral/.symlinks/plugins/qwen_asr/macos
+  vad:
+    :path: Flutter/ephemeral/.symlinks/plugins/vad/macos
 
 SPEC CHECKSUMS:
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
-  qasr: 2f845c2e98851640489aba63b1e9c20f84b7f294
-  rust_lib_qasr: 797b4e45761fc81538a79353a15451eee6a115f9
+  onnxruntime-c: 7f778680e96145956c0a31945f260321eed2611a
+  onnxruntime-objc: 83d28b87525bd971259a66e153ea32b5d023de19
+  qwen_asr: 2d5b19025ecc71ca8d2ddde8d0e0e23400bd1ffc
+  vad: c269f26ac93002d9ca13ed1dc9c5fa5438092ddb
 
-PODFILE CHECKSUM: 54d867c82ac51cbd61b565781b9fada492027009
+PODFILE CHECKSUM: c4dda72bffbbf606876d102a78d4d3a0e4c9b017
 
 COCOAPODS: 1.16.2

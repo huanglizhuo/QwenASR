@@ -51,31 +51,40 @@ class LiveModeOption {
   /// One-line explanation shown under the selector.
   final String description;
 
-  /// Whether this mode enables the per-utterance `vad_segment_reset` engine flag.
-  final bool vadSegmentReset;
+  /// Whether this mode drives the streaming engine's `stream_push_audio`
+  /// pipeline (Full Streaming). `false` for VAD Live, which is client-side:
+  /// it segments the mic stream into utterances in Dart and decodes each one
+  /// with an independent one-shot offline `transcribePcm` call — the streaming
+  /// engine (and its `vad_segment_reset` flag) is not involved at all.
+  final bool usesStreamingEngine;
 
   const LiveModeOption(
     this.id,
     this.label,
     this.description,
-    this.vadSegmentReset,
+    this.usesStreamingEngine,
   );
+
+  /// True for the client-side VAD-Live mode.
+  bool get isVadLive => !usesStreamingEngine;
 }
 
-/// Live-mode choices. `full` (continuous rolling) is the default; `vad` enables
-/// discrete per-utterance segmentation via the engine's `vad_segment_reset`.
+/// Live-mode choices. `full` (continuous rolling stream) is the default; `vad`
+/// (VAD Live) is client-side: Dart VAD splits the mic stream at silence gaps and
+/// each utterance is decoded independently offline.
 const List<LiveModeOption> kLiveModeOptions = [
   LiveModeOption(
     'full',
     'Full Streaming',
-    'Continuous, best accuracy over long speech.',
-    false,
+    'Continuous rolling stream — live per-word partials, best over long speech.',
+    true,
   ),
   LiveModeOption(
     'vad',
     'VAD Live',
-    'Resets per utterance — lower drift for short commands/sentences with pauses.',
-    true,
+    'Detects pauses and transcribes each utterance independently offline — no '
+        'live partial text, but immune to streaming drift.',
+    false,
   ),
 ];
 
@@ -158,11 +167,14 @@ class StreamingSettings {
   }
 
   /// Apply the live-mode selection to the engine (session-level; call before
-  /// `streamReset`). Enables/disables discrete per-utterance segmentation.
-  /// Composes with [applyLanguage]. Returns a short label for logging.
+  /// `streamReset`). The app no longer uses the in-streaming `vad_segment_reset`
+  /// flag for either mode — Full Streaming is a plain continuous stream and VAD
+  /// Live is client-side one-shot — so this always ensures the engine flag is
+  /// OFF (the library capability stays intact for other integrators). Called on
+  /// the Full-Streaming path; the VAD-Live path does not touch the engine.
+  /// Returns a short label for logging.
   String applyLiveMode(QAsrEngine engine) {
-    final opt = liveMode;
-    engine.setVadSegmentReset(opt.vadSegmentReset);
-    return opt.id;
+    engine.setVadSegmentReset(false);
+    return liveMode.id;
   }
 }

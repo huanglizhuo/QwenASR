@@ -6,12 +6,18 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:qwen_asr/qwen_asr.dart';
 import 'package:record/record.dart';
+import 'package:vad/vad.dart';
 
+import 'one_shot_transcribe.dart';
 import 'streaming_settings.dart';
+import 'vad_live_pipeline.dart';
 import 'wav_utils.dart';
 
-/// Sample rate the engine expects (16 kHz mono).
-const int kSampleRate = 16000;
+/// Local Flutter-asset base path for the Silero VAD model. The `vad` package
+/// concatenates this with the model filename and, because it is NOT an http(s)
+/// URL, loads it via `rootBundle` — so VAD detection runs fully offline (no
+/// CDN download). See pubspec `assets:` and `assets/vad/`.
+const String kVadAssetBasePath = 'assets/vad/';
 
 /// Dart-side mic push chunk in seconds. Audio is buffered to this size before
 /// each `streamPush`. Tunable: smaller = more frequent pushes / lower latency,
@@ -54,9 +60,10 @@ const String kSimEngineChunkOverride = String.fromEnvironment(
 const String kSimLanguageOverride = String.fromEnvironment('SIM_LANGUAGE');
 
 /// Optional override for the live mode on the simulated-mic path, injected via
-/// `--dart-define=SIM_LIVE_MODE=full|vad`. Lets automation drive the VAD-Live
-/// (`vad_segment_reset`) segmentation mode through the sim path without tapping
-/// the settings UI. Empty string = use the persisted settings selection.
+/// `--dart-define=SIM_LIVE_MODE=full|vad`. Lets automation drive the client-side
+/// VAD-Live pipeline (Dart segmentation + one-shot offline decode) through the
+/// sim path without tapping the settings UI. Empty string = use the persisted
+/// settings selection.
 const String kSimLiveModeOverride = String.fromEnvironment('SIM_LIVE_MODE');
 
 /// Leading chunks kept "unfixed" before committing tokens to the stable
@@ -88,6 +95,39 @@ class _StreamingScreenState extends State<StreamingScreen> {
   String _perf = '';
   bool _running = false;
   bool _simulating = false;
+
+  // ---- VAD Live (client-side, Silero-VAD-driven) state ---------------------
+  // Shared one-shot decode helper (too-short guard + transcribePcm + QASR_ logs).
+  late final OneShotTranscriber _oneShot = OneShotTranscriber(
+    widget.engine,
+    metricTag: 'vad',
+  );
+
+  /// A VAD-Live mic session is active (distinct from Full-Streaming `_running`).
+  bool _vadActive = false;
+
+  /// Mic is currently capturing (false once Stop is pressed but while the queue
+  /// still drains).
+  bool _capturing = false;
+
+  /// The Silero VAD detector for the active session (owns/consumes audio).
+  VadHandler? _vadHandler;
+
+  /// Subscriptions to the detector's event streams (cancelled at session end).
+  final List<StreamSubscription<dynamic>> _vadSubs = [];
+
+  /// The queue + sequential one-shot consumer + safety cap.
+  VadLivePipeline? _pipeline;
+
+  /// Wall-clock start of the VAD-Live session (for perf reporting).
+  int? _vadStartMs;
+
+  /// Total utterance audio (samples) decoded through VAD-Live this session.
+  int _vadAudioSamples = 0;
+
+  /// Appended-utterance count captured at the last VAD-Live finalize (for tests
+  /// and the perf line, since the pipeline is torn down at session end).
+  int _lastVadAppended = 0;
 
   /// Editable streaming settings (language mode + engine chunk). Loaded from
   /// disk on launch; changes apply at the next Start. Null until loaded.
@@ -127,6 +167,10 @@ class _StreamingScreenState extends State<StreamingScreen> {
   @override
   void dispose() {
     _micSub?.cancel();
+    for (final s in _vadSubs) {
+      s.cancel();
+    }
+    _vadHandler?.dispose();
     _recorder.dispose();
     super.dispose();
   }
@@ -285,11 +329,222 @@ class _StreamingScreenState extends State<StreamingScreen> {
   }
 
   // ---------------------------------------------------------------------------
+  // VAD Live (Silero VAD detector + one-shot offline decode)
+  // ---------------------------------------------------------------------------
+  //
+  // The streaming engine is NOT involved here. The `vad` package (Silero VAD via
+  // ONNX, running on the bundled offline model) detects utterance boundaries in
+  // the mic/sim audio; each completed utterance is transcribed with an
+  // independent one-shot offline decode (`transcribePcm`), the project's most
+  // WER-validated decode path. This is immune to rolling-window streaming drift
+  // by construction; the only cost is no live per-word partial within an
+  // utterance (a status indicator is shown instead).
+
+  /// Build the pipeline (queue + sequential one-shot consumer + safety cap)
+  /// and the VadHandler, wiring the detector's events into the pipeline. Shared
+  /// by the real-mic and simulated-mic paths.
+  void _beginVadSession() {
+    _vadAudioSamples = 0;
+    _vadStartMs = DateTime.now().millisecondsSinceEpoch;
+    _pipeline = VadLivePipeline(
+      decode: (samples) async {
+        final outcome = await _oneShot.transcribe(samples);
+        _vadAudioSamples += samples.length;
+        return outcome.tooShort ? '' : outcome.transcript;
+      },
+      onAppend: (text) {
+        if (!mounted) return;
+        setState(() {
+          _transcript = _transcript.isEmpty ? text : '$_transcript $text';
+        });
+      },
+      onStatus: (s) {
+        if (!mounted) return;
+        setState(() => _status = _capturing ? s : _status);
+      },
+    );
+    final handler = VadHandler.create(isDebug: false);
+    _vadSubs
+      ..add(handler.onSpeechStart.listen((_) => _pipeline?.onSpeechStart()))
+      ..add(handler.onSpeechEnd.listen((_) => _pipeline?.onSpeechEnd()))
+      ..add(handler.onVADMisfire.listen((_) => _pipeline?.onMisfire()))
+      ..add(handler.onFrameProcessed.listen((f) => _pipeline?.onFrame(f.frame)))
+      ..add(
+        handler.onError.listen((e) {
+          if (mounted) setState(() => _status = 'VAD error: $e');
+        }),
+      );
+    _vadHandler = handler;
+    setState(() {
+      _vadActive = true;
+      _capturing = true;
+      _resetSession();
+      _status = 'Listening...';
+    });
+  }
+
+  Future<void> _startVadLiveMic() async {
+    if (_running || _simulating || _vadActive) return;
+    if (!await _recorder.hasPermission()) {
+      setState(() => _status = 'Microphone permission denied');
+      return;
+    }
+    // Language applies once per session (sticky ctx field across the many
+    // independent transcribePcm calls). VAD Live does NOT touch the streaming
+    // engine or the vad_segment_reset flag.
+    final settings = _settings ?? StreamingSettings();
+    final langLabel = settings.applyLanguage(widget.engine);
+    debugPrint(
+      'QASR_METRIC session_start mode=mic liveMode=vad language=$langLabel',
+    );
+    _beginVadSession();
+    // The APP owns the mic (record 7) and feeds the detector via `audioStream`
+    // so the `vad` package never uses its own (v6-era) internal recorder. The
+    // bundled offline model loads from the asset bundle via the local path.
+    final micStream = await _recorder.startStream(
+      const RecordConfig(
+        encoder: AudioEncoder.pcm16bits,
+        sampleRate: kSampleRate,
+        numChannels: 1,
+      ),
+    );
+    await _vadHandler?.startListening(
+      baseAssetPath: kVadAssetBasePath,
+      audioStream: micStream,
+    );
+  }
+
+  Future<void> _stopMicRecorder() async {
+    try {
+      await _recorder.stop();
+    } catch (_) {
+      // Best-effort.
+    }
+  }
+
+  Future<void> _stopVadLiveMic() async {
+    if (!_vadActive) return;
+    // Stop capturing new audio immediately.
+    _capturing = false;
+    if (mounted) setState(() => _status = 'Finalizing...');
+    await _stopMicRecorder();
+    await _vadHandler?.stopListening();
+    // Stop semantics: let the in-flight decode finish; drop unstarted queue and
+    // the in-progress buffer.
+    await _pipeline?.stop();
+    await _finishVadSession(modeTag: 'mic');
+  }
+
+  /// Tear down the detector + report perf. Assumes the pipeline has already been
+  /// finalized (drained or stopped) by the caller.
+  Future<void> _finishVadSession({required String modeTag}) async {
+    for (final s in _vadSubs) {
+      await s.cancel();
+    }
+    _vadSubs.clear();
+    await _vadHandler?.dispose();
+    _vadHandler = null;
+    final appended = _pipeline?.appendedCount ?? 0;
+    _lastVadAppended = appended;
+    _pipeline = null;
+    final perf = _computeVadPerf(appended);
+    if (!mounted) return;
+    setState(() {
+      _vadActive = false;
+      _simulating = false;
+      _status = modeTag == 'sim' ? 'Done (simulated)' : 'Done';
+      _perf = perf;
+    });
+    debugPrint('QASR_METRIC ${modeTag}_vad_perf | $perf');
+    debugPrint('QASR_TRANSCRIPT ${modeTag}_vad | $_transcript');
+  }
+
+  String _computeVadPerf(int utterances) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final audioSec = _vadAudioSamples / kSampleRate;
+    final wallSec = _vadStartMs == null ? 0.0 : (now - _vadStartMs!) / 1000.0;
+    final rtf = wallSec > 0 ? audioSec / wallSec : 0.0;
+    return 'utterances=$utterances '
+        'audio=${audioSec.toStringAsFixed(1)}s '
+        'wall=${wallSec.toStringAsFixed(1)}s '
+        'rtf=${rtf.toStringAsFixed(2)}x\n'
+        '${widget.engine.perfStats()}';
+  }
+
+  /// Simulated-mic VAD-Live: feed a WAV through the SAME detector entrypoint the
+  /// real mic uses, by handing the VadHandler a synthetic `audioStream` of
+  /// PCM16 bytes (at real-time pacing by default), so the whole VAD-Live
+  /// pipeline is exercised without a physical mic.
+  ///
+  /// [realtime] paces the feed at wall-clock speed (as a live mic would). Tests
+  /// pass `false` to feed as fast as possible — Silero VAD keys off sample
+  /// counts, not wall time, so the utterance boundaries are unchanged.
+  Future<void> _runSimulatedVad(
+    Float32List samples,
+    String langLabel, {
+    bool realtime = true,
+  }) async {
+    _beginVadSession();
+    setState(() {
+      _simulating = true;
+      _status = 'Simulating VAD Live from WAV (language=$langLabel)...';
+    });
+    // Drive the detector from a synthetic PCM16 stream. Pace at ~0.5 s chunks.
+    final controller = StreamController<Uint8List>();
+    final feed = () async {
+      final chunk = _chunkSamples;
+      for (var i = 0; i < samples.length && mounted && _vadActive; i += chunk) {
+        final end = (i + chunk).clamp(0, samples.length);
+        controller.add(_floatToPcm16(samples.sublist(i, end)));
+        if (realtime) {
+          await Future<void>.delayed(
+            const Duration(milliseconds: (kMicChunkSec * 1000) ~/ 1),
+          );
+        }
+      }
+      await controller.close();
+    }();
+    await _vadHandler?.startListening(
+      baseAssetPath: kVadAssetBasePath,
+      audioStream: controller.stream,
+    );
+    await feed;
+    // Give the detector a beat to emit any final boundary, then finalize: flush
+    // the in-progress utterance and drain the whole queue (keep all results).
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    _capturing = false;
+    await _vadHandler?.stopListening();
+    await _pipeline?.drainAll();
+    if (mounted) setState(() => _status = 'Finalizing...');
+    await _finishVadSession(modeTag: 'sim');
+  }
+
+  /// Test hook: run the full VAD-Live pipeline (segmentation + queue + one-shot
+  /// decode + UI append) on an in-memory sample buffer, applying the current
+  /// language setting exactly as a session start would. Feeds without real-time
+  /// pacing so integration tests stay fast.
+  @visibleForTesting
+  Future<void> runVadLiveOnSamplesForTest(Float32List samples) async {
+    final settings = _settings ?? StreamingSettings();
+    final langLabel = settings.applyLanguage(widget.engine);
+    await _runSimulatedVad(samples, langLabel, realtime: false);
+  }
+
+  /// Test accessor: the running transcript (utterances appended in order).
+  @visibleForTesting
+  String get transcriptForTest => _transcript;
+
+  /// Test accessor: number of utterances decoded and appended this session
+  /// (captured at finalize; the live pipeline's counter after teardown).
+  @visibleForTesting
+  int get utterancesDoneForTest => _lastVadAppended;
+
+  // ---------------------------------------------------------------------------
   // Simulated microphone (WAV file through the SAME push pipeline)
   // ---------------------------------------------------------------------------
 
   Future<void> _startSimulated(String wavPath) async {
-    if (_running || _simulating) return;
+    if (_running || _simulating || _vadActive) return;
     // Automation hook: an http(s) AUTO_SIM_WAV is fetched into app documents
     // first — release builds have no adb access to the app sandbox, so
     // on-device test tooling provisions the clip over the network instead.
@@ -338,6 +593,17 @@ class _StreamingScreenState extends State<StreamingScreen> {
       settings.liveModeId = kSimLiveModeOverride;
     }
     final langLabel = settings.applyLanguage(widget.engine);
+
+    // VAD Live: feed the WAV through the client-side segmenter (NOT the
+    // streaming engine), exactly as a real mic would be ingested.
+    if (settings.liveMode.isVadLive) {
+      debugPrint(
+        'QASR_METRIC session_start mode=sim liveMode=vad language=$langLabel',
+      );
+      await _runSimulatedVad(samples, langLabel);
+      return;
+    }
+
     final modeLabel = settings.applyLiveMode(widget.engine);
     widget.engine.setStreamChunkSec(simEngineChunk);
     await widget.engine.streamReset();
@@ -390,6 +656,20 @@ class _StreamingScreenState extends State<StreamingScreen> {
     return out;
   }
 
+  /// Encode float samples (-1..1) to little-endian PCM16 bytes — the format the
+  /// VadHandler's `audioStream` expects (mirrors what the mic recorder emits).
+  Uint8List _floatToPcm16(List<double> samples) {
+    final out = Uint8List(samples.length * 2);
+    final view = ByteData.view(out.buffer);
+    for (var i = 0; i < samples.length; i++) {
+      var v = (samples[i] * 32768.0).round();
+      if (v > 32767) v = 32767;
+      if (v < -32768) v = -32768;
+      view.setInt16(i * 2, v, Endian.little);
+    }
+    return out;
+  }
+
   /// Parse a 16-bit PCM WAV to 16 kHz mono float samples (-1..1), downmixing
   /// channels and linearly resampling to the engine's expected rate. Mirrors
   /// what the Rust `audio::parse_wav_buffer` does so the simulated-mic path
@@ -400,9 +680,29 @@ class _StreamingScreenState extends State<StreamingScreen> {
   // UI
   // ---------------------------------------------------------------------------
 
+  /// Start dispatcher: branch on the selected live mode.
+  Future<void> _startLive() async {
+    final settings = _settings ?? StreamingSettings();
+    if (settings.liveMode.isVadLive) {
+      await _startVadLiveMic();
+    } else {
+      await _startMic();
+    }
+  }
+
+  /// Stop dispatcher: match the mode that is actually running.
+  Future<void> _stopLive() async {
+    if (_vadActive) {
+      await _stopVadLiveMic();
+    } else {
+      await _stopMic();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final busy = _running || _simulating;
+    final micActive = _running || _vadActive;
+    final busy = micActive || _simulating;
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -415,9 +715,9 @@ class _StreamingScreenState extends State<StreamingScreen> {
                   key: const Key('mic_button'),
                   onPressed: _simulating
                       ? null
-                      : (_running ? _stopMic : _startMic),
-                  icon: Icon(_running ? Icons.stop : Icons.mic),
-                  label: Text(_running ? 'Stop' : 'Start Mic'),
+                      : (micActive ? _stopLive : _startLive),
+                  icon: Icon(micActive ? Icons.stop : Icons.mic),
+                  label: Text(micActive ? 'Stop' : 'Start Mic'),
                 ),
               ),
               const SizedBox(width: 12),
@@ -439,6 +739,7 @@ class _StreamingScreenState extends State<StreamingScreen> {
           const SizedBox(height: 12),
           _buildSettingsCard(context, busy),
           const SizedBox(height: 12),
+          if (_vadActive) _buildVadIndicator(context),
           Text('Status: $_status'),
           if (_perf.isNotEmpty)
             Padding(
@@ -556,6 +857,40 @@ class _StreamingScreenState extends State<StreamingScreen> {
             ],
           ],
         ),
+      ),
+    );
+  }
+
+  /// VAD-Live status indicator: a red "listening" dot while capturing, a
+  /// spinner while an utterance is being decoded. There is no partial text in
+  /// this mode by design, so this stands in for per-word feedback.
+  Widget _buildVadIndicator(BuildContext context) {
+    final decoding = _pipeline?.isBusy ?? false;
+    return Padding(
+      key: const Key('vad_indicator'),
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          if (decoding)
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else
+            Icon(
+              Icons.fiber_manual_record,
+              size: 14,
+              color: _capturing ? Colors.red : Theme.of(context).disabledColor,
+            ),
+          const SizedBox(width: 8),
+          Text(
+            decoding
+                ? 'Transcribing utterance...'
+                : (_capturing ? 'Listening for speech...' : 'Finishing...'),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
       ),
     );
   }

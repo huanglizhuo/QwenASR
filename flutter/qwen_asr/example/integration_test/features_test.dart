@@ -8,6 +8,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:qwen_asr/qwen_asr.dart';
 import 'package:qwen_asr_example/main.dart';
 import 'package:qwen_asr_example/record_screen.dart';
+import 'package:qwen_asr_example/streaming_screen.dart';
 import 'package:qwen_asr_example/wav_utils.dart';
 
 /// Widget integration tests for the R14 example-app features:
@@ -24,6 +25,24 @@ void main() {
   const projectRoot = '/Users/lizhuo/owork/q-asr';
   const modelDir = '$projectRoot/qwen3-asr-0.6b';
   const wavPath = '$projectRoot/bench/samples/audio.wav';
+  const mixedWavPath = '$projectRoot/bench/samples/mixed_zh_en.wav';
+
+  bool hasCjk(String s) => s.runes.any((r) => r >= 0x4E00 && r <= 0x9FFF);
+  bool hasAsciiWord(String s) => RegExp(r'[A-Za-z]{2,}').hasMatch(s);
+  // The degeneration artifact = the same short phrase repeated many times.
+  bool hasRepeatLoop(String s) {
+    final words = s.toLowerCase().split(RegExp(r'\s+'));
+    var maxRun = 0, run = 0;
+    for (var i = 1; i < words.length; i++) {
+      if (words[i] == words[i - 1] && words[i].isNotEmpty) {
+        run++;
+        if (run > maxRun) maxRun = run;
+      } else {
+        run = 0;
+      }
+    }
+    return maxRun >= 4;
+  }
 
   late QAsrEngine engine;
 
@@ -128,4 +147,76 @@ void main() {
       expect(transcript.toLowerCase(), contains('shenyang'));
     },
   );
+
+  testWidgets(
+    'VAD Live: single English clip segments, decodes, appends (no degeneration)',
+    (tester) async {
+      await pumpHome(tester);
+      // Live is the default tab; drive the mode-aware sim path (Task B) that the
+      // real mic also feeds, exercising segmentation → queue → one-shot → append.
+      final samples = parseWavTo16kMono(File(wavPath).readAsBytesSync());
+      expect(samples, isNotEmpty);
+
+      final dynamic state = tester.state(find.byType(StreamingScreen));
+      final future = state.runVadLiveOnSamplesForTest(samples) as Future<void>;
+      await tester.pump();
+      await future;
+      await tester.pumpAndSettle();
+
+      final transcript = state.transcriptForTest as String;
+      final done = state.utterancesDoneForTest as int;
+      print('VAD-Live (audio.wav) utterances=$done transcript: $transcript');
+      expect(done, greaterThanOrEqualTo(1));
+      // Assert on unambiguous mid/late English content. (We deliberately do NOT
+      // assert on the very first word "Shenyang": in auto-multilingual mode the
+      // short leading fragment can be language-mis-detected on its own — an
+      // inherent property of per-utterance auto-detection on a tiny fragment,
+      // not a pipeline defect; forcing language='en' avoids it.)
+      final lower = transcript.toLowerCase();
+      expect(lower, contains('secrets'));
+      expect(lower, contains('decision'));
+      // The whole point of the redesign: no rolling-window repeat-loop artifact.
+      expect(
+        hasRepeatLoop(transcript),
+        isFalse,
+        reason: 'VAD-Live one-shot decode must not degenerate',
+      );
+    },
+  );
+
+  testWidgets('VAD Live: mixed zh/en clip switches language per utterance', (
+    tester,
+  ) async {
+    if (!File(mixedWavPath).existsSync()) {
+      print('mixed_zh_en.wav absent — skipping multilingual VAD-Live test');
+      return;
+    }
+    await pumpHome(tester);
+    final samples = parseWavTo16kMono(File(mixedWavPath).readAsBytesSync());
+    expect(samples, isNotEmpty);
+
+    final dynamic state = tester.state(find.byType(StreamingScreen));
+    final future = state.runVadLiveOnSamplesForTest(samples) as Future<void>;
+    await tester.pump();
+    await future;
+    await tester.pumpAndSettle();
+
+    final transcript = state.transcriptForTest as String;
+    final done = state.utterancesDoneForTest as int;
+    print('VAD-Live (mixed) utterances=$done transcript: $transcript');
+    // The clip has ~10 speech segments; expect several independent utterances.
+    expect(done, greaterThanOrEqualTo(3));
+    // Per-utterance auto-detect (multilingual, no forced preamble) must yield
+    // BOTH Chinese characters and English words — proving per-utterance
+    // language switching without vad_segment_reset.
+    expect(
+      hasCjk(transcript),
+      isTrue,
+      reason: 'Chinese utterances should render as Chinese, not translated',
+    );
+    expect(hasAsciiWord(transcript), isTrue);
+    // And no repeat-loop degeneration (which the single-pass offline decode of
+    // this same clip DOES exhibit).
+    expect(hasRepeatLoop(transcript), isFalse);
+  });
 }
