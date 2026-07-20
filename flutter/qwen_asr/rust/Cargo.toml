@@ -25,5 +25,47 @@ qwen_asr = { package = "qwen-asr", path = "../../../crates/qwen-asr", default-fe
 [target.'cfg(all(target_os = "linux", not(target_os = "android")))'.dependencies]
 qwen_asr = { package = "qwen-asr", path = "../../../crates/qwen-asr", default-features = true }
 
+# ---------------------------------------------------------------------------
+# Fast-by-default Rust dev profile (this crate is an INDEPENDENT workspace root)
+# ---------------------------------------------------------------------------
+# `flutter run` (Flutter debug mode) drives cargokit to build this bridge crate
+# WITHOUT `--release` (see cargokit builder.dart: `if (!isDebug) '--release'`),
+# so it would otherwise compile under Cargo's stock `[profile.dev]`
+# (opt-level=0, debug-assertions/overflow-checks on, no LTO). For CPU ASR
+# inference that is catastrophic — measured ~76 s/token vs ~10s-of-ms/token
+# optimized. We refuse to ship a debug build that slow, so we raise the dev
+# profile to release-grade optimization here.
+#
+# This override is scoped to THIS crate only: the root repo Cargo.toml
+# (`/Users/lizhuo/owork/q-asr/Cargo.toml`) sets `exclude = ["flutter/qwen_asr/rust"]`
+# and does NOT list this crate as a member, so `rust_lib_qwen_asr` is its own
+# independent workspace root with its own Cargo.lock. The host-side
+# `crates/qwen-asr` / `crates/qwen-asr-cli` workspace keeps its normal (slow,
+# fully-debuggable) dev profile — this block does not reach it.
+#
+# `debug` is left at the profile default (true) so line-number info / usable
+# backtraces are retained — this is still a "debug" build, just an optimized one.
+#
+# ESCAPE HATCH — genuinely slow-but-debuggable build, no code change needed:
+# Cargo's standard env-var profile overrides take precedence over these keys,
+# e.g.:
+#   CARGO_PROFILE_DEV_OPT_LEVEL=0 \
+#   CARGO_PROFILE_DEV_DEBUG_ASSERTIONS=true \
+#   CARGO_PROFILE_DEV_OVERFLOW_CHECKS=true \
+#   CARGO_PROFILE_DEV_LTO=false \
+#   flutter run
+# restores a stock unoptimized dev build for anyone who needs one.
+#
+# TRADEOFF: opt-level=3 + thin LTO + codegen-units=1 maximize RUNTIME speed at
+# the cost of longer Rust COMPILE time on iterative `flutter run` cycles. That
+# is the accepted, deliberate tradeoff ("always fast at runtime, real debug
+# build only via an opt-in flag").
+[profile.dev]
+opt-level = 3            # release-grade codegen; the whole point of the fix
+debug-assertions = false # kill debug_assert! hot-path overhead
+overflow-checks = false  # kill per-arithmetic overflow checks in inner loops
+lto = "thin"             # cross-crate inlining into qwen-asr; big win, modest compile cost
+codegen-units = 1        # best optimization; accepted extra compile time
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
