@@ -14,8 +14,13 @@ readme = "README.md"
 name = "qwen-asr"
 path = "src/main.rs"
 
+[features]
+default = ["qwen-asr/blas", "qwen-asr/vdsp"]
+int8-prefill = ["qwen-asr/int8-prefill"]
+int8-encoder = ["qwen-asr/int8-encoder"]
+
 [dependencies]
-qwen-asr = { version = "0.9.0", path = "../qwen-asr" }
+qwen-asr = { version = "0.9.0", path = "../qwen-asr", default-features = false }
 ureq = "2"
 ctrlc = "3"
 

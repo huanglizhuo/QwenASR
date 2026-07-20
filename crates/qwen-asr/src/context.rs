@@ -112,6 +112,20 @@ impl QwenModel {
             );
         }
 
+        // R13-Android diagnostic (always logged): report which INT8 paths are
+        // compiled AND active at runtime, so an inactive feature can never be
+        // silently mistaken for active on device. `prefill` reflects the
+        // decoder-prefill runtime switch; `encoder` reflects whether the encoder
+        // weights were actually INT8-quantized at load (the forward's use_int8).
+        {
+            #[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
+            let prefill = kernels::int8_prefill_enabled() as u8;
+            #[cfg(not(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64")))]
+            let prefill = 0u8;
+            let encoder = encoder.int8_encoder_active() as u8;
+            eprintln!("QASR_METRIC int8 prefill={} encoder={}", prefill, encoder);
+        }
+
         Some(Arc::new(QwenModel {
             config: cfg,
             encoder,

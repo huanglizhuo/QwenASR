@@ -296,6 +296,21 @@ unsafe fn enc_int8_linear(
 }
 
 impl Encoder {
+    /// R13-Android stage 2 diagnostic: whether the INT8 encoder weight GEMMs are
+    /// actually live for this loaded model — i.e. the `int8-encoder` feature is
+    /// compiled AND the runtime switch was on at load so the weights got
+    /// quantized. This is exactly the `use_int8` condition the forward checks, so
+    /// it is the ground-truth "encoder INT8 active" signal (not merely the env
+    /// switch). Always `false` on desktop/BLAS/non-aarch64 builds by construction.
+    pub fn int8_encoder_active(&self) -> bool {
+        #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+        {
+            return !self.conv_out_int8.0.is_empty();
+        }
+        #[allow(unreachable_code)]
+        false
+    }
+
     pub fn load(ms: &MultiSafetensors, cfg: &QwenConfig) -> Option<Self> {
         let p = ENC_PREFIX;
 
