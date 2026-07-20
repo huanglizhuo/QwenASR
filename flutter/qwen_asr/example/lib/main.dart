@@ -4,6 +4,7 @@ import 'package:qwen_asr/qwen_asr.dart';
 import 'download_screen.dart';
 import 'file_screen.dart';
 import 'model_manager.dart';
+import 'record_screen.dart';
 import 'streaming_screen.dart';
 
 // --- Test / automation hooks (via --dart-define) ---
@@ -162,13 +163,14 @@ class HomeTabs extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Qwen ASR Demo'),
           bottom: const TabBar(
             tabs: [
               Tab(icon: Icon(Icons.mic), text: 'Live'),
+              Tab(icon: Icon(Icons.radio_button_checked), text: 'Record'),
               Tab(icon: Icon(Icons.audiotrack), text: 'File'),
             ],
           ),
@@ -179,6 +181,7 @@ class HomeTabs extends StatelessWidget {
               engine: engine,
               autoSimWavPath: _kAutoSimWav.isNotEmpty ? _kAutoSimWav : null,
             ),
+            RecordScreen(engine: engine),
             FileScreen(engine: engine),
           ],
         ),
