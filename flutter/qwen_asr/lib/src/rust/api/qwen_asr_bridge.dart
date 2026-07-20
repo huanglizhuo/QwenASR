@@ -69,6 +69,18 @@ abstract class QwenAsrEngine implements RustOpaqueInterface {
   /// small value (e.g. 2) for correct progressive incremental streaming.
   void setStreamUnfixedChunks({required int chunks});
 
+  /// Enable/disable opt-in discrete per-utterance segmentation ("VAD Live")
+  /// for live streaming.
+  ///
+  /// When enabled, the frame-level silence-boundary VAD scan runs and each
+  /// detected utterance boundary performs a hard segment reset: the committed
+  /// text carry and the encoder window/cache are dropped so the next utterance
+  /// decodes from a clean KV/encoder state (discrete segmentation) rather than
+  /// a rolling continuation. Independent of [`QwenAsrEngine::set_multilingual`]
+  /// — either can drive the scan and their reset actions compose. Session-level:
+  /// apply before [`QwenAsrEngine::stream_reset`]; no model reload required.
+  void setVadSegmentReset({required bool enabled});
+
   /// Push a new chunk of PCM audio into the live streaming session and return
   /// the current **stable** transcript plus the newest **provisional** tail.
   ///

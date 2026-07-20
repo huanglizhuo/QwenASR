@@ -53,6 +53,12 @@ const String kSimEngineChunkOverride = String.fromEnvironment(
 /// string = use the persisted settings selection.
 const String kSimLanguageOverride = String.fromEnvironment('SIM_LANGUAGE');
 
+/// Optional override for the live mode on the simulated-mic path, injected via
+/// `--dart-define=SIM_LIVE_MODE=full|vad`. Lets automation drive the VAD-Live
+/// (`vad_segment_reset`) segmentation mode through the sim path without tapping
+/// the settings UI. Empty string = use the persisted settings selection.
+const String kSimLiveModeOverride = String.fromEnvironment('SIM_LIVE_MODE');
+
 /// Leading chunks kept "unfixed" before committing tokens to the stable
 /// transcript. Small value = progressive live partials. The engine default
 /// (99) holds everything until finalize, which truncates a fast live stream.
@@ -232,12 +238,13 @@ class _StreamingScreenState extends State<StreamingScreen> {
     final settings = _settings ?? StreamingSettings();
     final chunkSec = settings.engineChunkSec;
     final langLabel = settings.applyLanguage(widget.engine);
+    final modeLabel = settings.applyLiveMode(widget.engine);
     widget.engine.setStreamChunkSec(chunkSec);
     await widget.engine.streamReset();
     // Test/automation hook: confirm the settings UI drives the engine.
     debugPrint(
       'QASR_METRIC session_start mode=mic language=$langLabel '
-      'engineChunk=${chunkSec.toStringAsFixed(1)}s',
+      'liveMode=$modeLabel engineChunk=${chunkSec.toStringAsFixed(1)}s',
     );
     setState(() {
       _running = true;
@@ -326,13 +333,18 @@ class _StreamingScreenState extends State<StreamingScreen> {
     if (kSimLanguageOverride.isNotEmpty) {
       settings.languageId = kSimLanguageOverride;
     }
+    // Live mode: SIM_LIVE_MODE override (automation) else the persisted setting.
+    if (kSimLiveModeOverride.isNotEmpty) {
+      settings.liveModeId = kSimLiveModeOverride;
+    }
     final langLabel = settings.applyLanguage(widget.engine);
+    final modeLabel = settings.applyLiveMode(widget.engine);
     widget.engine.setStreamChunkSec(simEngineChunk);
     await widget.engine.streamReset();
     // Test/automation hook: confirm the settings UI drives the engine.
     debugPrint(
       'QASR_METRIC session_start mode=sim language=$langLabel '
-      'engineChunk=${simEngineChunk.toStringAsFixed(1)}s',
+      'liveMode=$modeLabel engineChunk=${simEngineChunk.toStringAsFixed(1)}s',
     );
     setState(() {
       _simulating = true;
@@ -515,25 +527,31 @@ class _StreamingScreenState extends State<StreamingScreen> {
                       },
               ),
               const SizedBox(height: 10),
-              DropdownButtonFormField<double>(
-                key: const Key('chunk_dropdown'),
-                initialValue: settings.engineChunkSec,
+              DropdownButtonFormField<String>(
+                key: const Key('live_mode_dropdown'),
+                initialValue: settings.liveModeId,
                 decoration: const InputDecoration(
-                  labelText: '引擎分块 / Engine chunk',
+                  labelText: '实时模式 / Live mode',
                   isDense: true,
                   border: OutlineInputBorder(),
                 ),
                 items: [
-                  for (final o in kChunkOptions)
-                    DropdownMenuItem(value: o.sec, child: Text(o.label)),
+                  for (final o in kLiveModeOptions)
+                    DropdownMenuItem(value: o.id, child: Text(o.label)),
                 ],
                 onChanged: busy
                     ? null
                     : (v) {
                         if (v == null) return;
-                        setState(() => settings.engineChunkSec = v);
+                        setState(() => settings.liveModeId = v);
                         settings.save();
                       },
+              ),
+              const SizedBox(height: 4),
+              Text(
+                settings.liveMode.description,
+                key: const Key('live_mode_description'),
+                style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
           ],

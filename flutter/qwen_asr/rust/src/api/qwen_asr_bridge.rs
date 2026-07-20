@@ -103,6 +103,22 @@ impl QwenAsrEngine {
         g.ctx.set_multilingual(enabled);
     }
 
+    /// Enable/disable opt-in discrete per-utterance segmentation ("VAD Live")
+    /// for live streaming.
+    ///
+    /// When enabled, the frame-level silence-boundary VAD scan runs and each
+    /// detected utterance boundary performs a hard segment reset: the committed
+    /// text carry and the encoder window/cache are dropped so the next utterance
+    /// decodes from a clean KV/encoder state (discrete segmentation) rather than
+    /// a rolling continuation. Independent of [`QwenAsrEngine::set_multilingual`]
+    /// — either can drive the scan and their reset actions compose. Session-level:
+    /// apply before [`QwenAsrEngine::stream_reset`]; no model reload required.
+    #[frb(sync)]
+    pub fn set_vad_segment_reset(&self, enabled: bool) {
+        let mut g = self.inner.lock().unwrap();
+        g.ctx.set_vad_segment_reset(enabled);
+    }
+
     /// Get last transcription performance stats as a formatted string.
     #[frb(sync)]
     pub fn perf_stats(&self) -> String {

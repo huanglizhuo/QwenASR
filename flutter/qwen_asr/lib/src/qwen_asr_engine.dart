@@ -110,6 +110,22 @@ class QAsrEngine {
     _engine.setMultilingual(enabled: enabled);
   }
 
+  /// Enable/disable opt-in discrete per-utterance segmentation ("VAD Live") for
+  /// live streaming.
+  ///
+  /// When enabled, the frame-level silence-boundary VAD scan runs and each
+  /// detected utterance boundary hard-resets the decode segment: the committed
+  /// text carry and the encoder window/cache are dropped so each utterance
+  /// starts from a clean KV/encoder state (discrete segmentation) instead of a
+  /// rolling continuation. This lowers drift for short commands/sentences with
+  /// pauses. Independent of [setMultilingual] — either can drive the scan and
+  /// their reset actions compose. Session-level: apply before [streamReset]; no
+  /// model reload required. Leave disabled for the default continuous
+  /// (full-streaming) decode path.
+  void setVadSegmentReset(bool enabled) {
+    _engine.setVadSegmentReset(enabled: enabled);
+  }
+
   /// Get performance stats from last transcription.
   String perfStats() {
     return _engine.perfStats();

@@ -158,6 +158,18 @@ pub unsafe extern "C" fn qwen_asr_set_multilingual(engine: *mut QwenAsrEngine, e
     }
 }
 
+/// Enable/disable opt-in discrete per-utterance segmentation for the streaming
+/// path (`nonzero` = enabled). When enabled, the frame-level silence-boundary
+/// VAD scan runs and each detected utterance boundary hard-resets the decode
+/// segment (text carry + encoder window dropped). Independent of multilingual
+/// mode. Session-level; apply before `qwen_asr_stream_reset`.
+#[no_mangle]
+pub unsafe extern "C" fn qwen_asr_set_vad_segment_reset(engine: *mut QwenAsrEngine, enabled: i32) {
+    if !engine.is_null() {
+        (*engine).ctx.set_vad_segment_reset(enabled != 0);
+    }
+}
+
 /// Free a string returned by qwen_asr_transcribe_*.
 #[no_mangle]
 pub unsafe extern "C" fn qwen_asr_free_string(s: *mut c_char) {

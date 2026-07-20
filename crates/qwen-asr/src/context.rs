@@ -227,6 +227,16 @@ pub struct QwenCtx {
     /// a previous utterance's language cannot drag the next into translation.
     /// Set via [`QwenCtx::set_multilingual`]; implies `want_language_detection`.
     pub multilingual: bool,
+    /// Opt-in discrete per-utterance segmentation for [`crate::transcribe::stream_push_audio`].
+    /// Default `false` keeps the byte-identical default decode path. When `true`,
+    /// the frame-level silence-boundary VAD scan runs and, at every detected
+    /// utterance boundary, performs a hard segment reset (drops the text carry
+    /// AND the encoder window/cache) so each utterance starts from a clean
+    /// KV/encoder state instead of a rolling continuation. Independent of
+    /// [`multilingual`]: either flag can drive the scan, and their reset actions
+    /// compose (language re-detection vs. segment reset). Set via
+    /// [`QwenCtx::set_vad_segment_reset`]; session-level, no model reload.
+    pub vad_segment_reset: bool,
     pub prompt_tokens: Option<Vec<i32>>,
     pub force_prompt_tokens: Option<Vec<i32>>,
     pub prompt_tokens_ready: bool,
@@ -293,6 +303,7 @@ impl QwenCtx {
             detected_language: None,
             want_language_detection: false,
             multilingual: false,
+            vad_segment_reset: false,
             prompt_tokens: None,
             force_prompt_tokens: None,
             prompt_tokens_ready: false,
@@ -359,6 +370,21 @@ impl QwenCtx {
             self.want_language_detection = false;
         }
         self.prompt_tokens_ready = false;
+    }
+
+    /// Enable or disable opt-in discrete per-utterance segmentation for the
+    /// incremental streaming path ([`crate::transcribe::stream_push_audio`]).
+    ///
+    /// When enabled, the frame-level silence-boundary VAD scan runs (the same
+    /// facility multilingual mode uses) and at every detected utterance boundary
+    /// the decoder performs a hard segment reset: the committed text carry and
+    /// the encoder window/cache are both dropped so the next utterance decodes
+    /// from a clean KV/encoder state. This is independent of `multilingual`:
+    /// with `multilingual` off, no language re-detection logic engages, only the
+    /// segment reset. When disabled, the engine returns to the byte-identical
+    /// default decode path. Session-level; apply it before `stream_reset`.
+    pub fn set_vad_segment_reset(&mut self, enabled: bool) {
+        self.vad_segment_reset = enabled;
     }
 
     pub fn prepare_prompt_tokens(&mut self, tokenizer: &QwenTokenizer) -> bool {

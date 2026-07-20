@@ -4,12 +4,13 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:qwen_asr/qwen_asr.dart';
 
-/// Whether the 1.0 s low-latency engine-chunk option is offered in the UI.
+/// Fixed engine streaming chunk, in seconds.
 ///
-/// Gated on the R13-Android device chunk test (Task 5.1): the 1 s option ships
-/// only if it passes the cool-protocol RTF / word-match / no-duplication gate.
-/// Flip to `true` once the device gate passes; keep `false` to omit it.
-const bool kAllow1sChunk = false;
+/// 2.0 s is the ONLY validated on-device value: 1 s and 3 s both produce
+/// duplicated phrases on-device (R13-Android), so no chunk *selector* is
+/// offered — the live-mic path always uses this constant. (The simulated-mic /
+/// automation path keeps its own separate override; see `streaming_screen.dart`.)
+const double kEngineChunkSec = 2.0;
 
 /// A selectable language option for the streaming settings UI.
 class LanguageOption {
@@ -39,37 +40,68 @@ const List<LanguageOption> kLanguageOptions = [
   LanguageOption('yue', '粤语 (Cantonese)', 'Cantonese'),
 ];
 
-/// Engine-chunk choices (seconds). 1.0 s is low-latency (gated); 2.0 s default.
-/// Values >= 3 s are deliberately NOT offered (on-device sentence-duplication).
-class ChunkOption {
-  final double sec;
+/// A selectable live-streaming mode for the settings UI.
+class LiveModeOption {
+  /// Stable persisted key.
+  final String id;
+
+  /// Human-readable title.
   final String label;
-  const ChunkOption(this.sec, this.label);
+
+  /// One-line explanation shown under the selector.
+  final String description;
+
+  /// Whether this mode enables the per-utterance `vad_segment_reset` engine flag.
+  final bool vadSegmentReset;
+
+  const LiveModeOption(
+    this.id,
+    this.label,
+    this.description,
+    this.vadSegmentReset,
+  );
 }
 
-const List<ChunkOption> _allChunkOptions = [
-  ChunkOption(1.0, '1.0 s (低延迟 / low-latency)'),
-  ChunkOption(2.0, '2.0 s (默认 / default)'),
+/// Live-mode choices. `full` (continuous rolling) is the default; `vad` enables
+/// discrete per-utterance segmentation via the engine's `vad_segment_reset`.
+const List<LiveModeOption> kLiveModeOptions = [
+  LiveModeOption(
+    'full',
+    'Full Streaming',
+    'Continuous, best accuracy over long speech.',
+    false,
+  ),
+  LiveModeOption(
+    'vad',
+    'VAD Live',
+    'Resets per utterance — lower drift for short commands/sentences with pauses.',
+    true,
+  ),
 ];
 
-List<ChunkOption> get kChunkOptions => _allChunkOptions
-    .where((o) => o.sec != 1.0 || kAllow1sChunk)
-    .toList(growable: false);
-
-/// Persisted streaming settings: chosen language mode + engine chunk size.
+/// Persisted streaming settings: chosen language mode + live mode.
 ///
 /// Editable any time except while a session runs; changes apply at the next
 /// Start (session-level engine setters, no model reload). Persisted as a small
 /// JSON file in the app documents directory (no extra plugin dependency).
 class StreamingSettings {
   String languageId;
-  double engineChunkSec;
+  String liveModeId;
 
-  StreamingSettings({this.languageId = 'auto', this.engineChunkSec = 2.0});
+  StreamingSettings({this.languageId = 'auto', this.liveModeId = 'full'});
+
+  /// Fixed engine chunk (2.0 s) — no longer user-selectable. Kept as a property
+  /// so the streaming session wiring (`setStreamChunkSec`) stays unchanged.
+  double get engineChunkSec => kEngineChunkSec;
 
   LanguageOption get language => kLanguageOptions.firstWhere(
     (o) => o.id == languageId,
     orElse: () => kLanguageOptions.first,
+  );
+
+  LiveModeOption get liveMode => kLiveModeOptions.firstWhere(
+    (o) => o.id == liveModeId,
+    orElse: () => kLiveModeOptions.first,
   );
 
   static Future<File> _file() async {
@@ -77,9 +109,7 @@ class StreamingSettings {
     return File('${docs.path}/streaming_settings.json');
   }
 
-  /// Load persisted settings, falling back to defaults on any error. Coerces an
-  /// out-of-range chunk (e.g. a persisted 1.0 s while the option is gated off)
-  /// back to the default so the UI always has a valid selection.
+  /// Load persisted settings, falling back to defaults on any error.
   static Future<StreamingSettings> load() async {
     final s = StreamingSettings();
     try {
@@ -90,9 +120,9 @@ class StreamingSettings {
         if (id is String && kLanguageOptions.any((o) => o.id == id)) {
           s.languageId = id;
         }
-        final sec = (m['engineChunkSec'] as num?)?.toDouble();
-        if (sec != null && kChunkOptions.any((o) => o.sec == sec)) {
-          s.engineChunkSec = sec;
+        final mode = m['liveModeId'];
+        if (mode is String && kLiveModeOptions.any((o) => o.id == mode)) {
+          s.liveModeId = mode;
         }
       }
     } catch (_) {
@@ -106,10 +136,7 @@ class StreamingSettings {
     try {
       final f = await _file();
       await f.writeAsString(
-        jsonEncode({
-          'languageId': languageId,
-          'engineChunkSec': engineChunkSec,
-        }),
+        jsonEncode({'languageId': languageId, 'liveModeId': liveModeId}),
       );
     } catch (_) {
       // Best-effort; non-fatal for the demo.
@@ -128,5 +155,14 @@ class StreamingSettings {
     engine.setMultilingual(false);
     engine.setLanguage(opt.engineName!);
     return opt.engineName!;
+  }
+
+  /// Apply the live-mode selection to the engine (session-level; call before
+  /// `streamReset`). Enables/disables discrete per-utterance segmentation.
+  /// Composes with [applyLanguage]. Returns a short label for logging.
+  String applyLiveMode(QAsrEngine engine) {
+    final opt = liveMode;
+    engine.setVadSegmentReset(opt.vadSegmentReset);
+    return opt.id;
   }
 }

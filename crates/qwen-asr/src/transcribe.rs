@@ -117,34 +117,30 @@ fn slice_rms(samples: &[f32]) -> f32 {
     (sum / samples.len() as f64).sqrt() as f32
 }
 
-/// Multilingual utterance-boundary reset: drop the finished utterance's
-/// generated `language X` header, committed text carry, and encoder-audio
-/// context so the NEXT utterance re-detects language from fresh audio and is not
-/// dragged into translation by past-text conditioning. Mirrors the degen-reset
-/// carry machinery but with ZERO carry, and always releases the encoder cache
-/// since a new utterance starts a fresh acoustic context.
-///
-/// Implemented as a macro (not a fn) so it expands to disjoint per-field access:
-/// inside `stream_push_audio` the tokenizer is held as a `&` borrow of `state`,
-/// which would conflict with a `&mut StreamState` helper call. Only used in
-/// opt-in `multilingual` mode; the default decode path never touches it.
-macro_rules! multilingual_boundary_reset {
-    ($ctx:expr, $state:expr) => {{
-        // Drop the finished utterance's generated text + language header AND
-        // release the encoder-audio window so the next utterance decodes from a
-        // clean slate — only post-boundary audio is re-encoded, and the model
-        // regenerates its own `language X` for it. Mirrors the degen-reset
-        // truncation (STREAM_RESET_CARRY_TOKENS) but with ZERO carry; the
-        // encoder release mirrors the reanchor path's cache clear. Keeping the
-        // old audio makes the model re-transcribe both languages every chunk
-        // (heavy duplication, alternating scripts); releasing it keeps the
-        // per-utterance transcript clean (see experiments.md R13-Android).
+/// Utterance-boundary reset sub-step: drop the finished utterance's generated
+/// `language X` header so the NEXT utterance re-detects language from fresh
+/// audio. Used only when multilingual auto-detection is active.
+macro_rules! reset_language_header {
+    ($ctx:expr) => {{
+        $ctx.detected_language = None;
+    }};
+}
+
+/// Utterance-boundary reset sub-step: drop the finished utterance's committed
+/// text carry AND release the encoder-audio window so the next utterance decodes
+/// from a clean KV/encoder state — only post-boundary audio is re-encoded.
+/// Mirrors the degen-reset truncation (STREAM_RESET_CARRY_TOKENS) but with ZERO
+/// carry; the encoder release mirrors the reanchor path's cache clear. Keeping
+/// the old audio makes the model re-transcribe every chunk (heavy duplication);
+/// releasing it keeps the per-utterance transcript clean (see experiments.md
+/// R13-Android). Used by both multilingual mode and `vad_segment_reset`.
+macro_rules! reset_utterance_segment {
+    ($state:expr) => {{
         $state.raw_tokens.clear();
         $state.stable_text_tokens.clear();
         $state.prev_prefill_keys.clear();
         $state.prev_tail_snapshot.clear();
         $state.stale_count = 0;
-        $ctx.detected_language = None;
         $state.enc_cache_base_windows += $state.enc_cache.len();
         $state.enc_cache.clear();
         $state.enc_cached_seq_total = 0;
@@ -152,6 +148,33 @@ macro_rules! multilingual_boundary_reset {
         $state.last_partial_enc.clear();
         $state.last_partial_keys.clear();
         $state.last_partial_seq = 0;
+    }};
+}
+
+/// Streaming utterance-boundary reset dispatcher: composes the two reset
+/// sub-steps based on which opt-in flag(s) are active, so `multilingual` and
+/// `vad_segment_reset` can independently (or jointly) trigger a reset without
+/// duplicating field-clearing logic.
+///
+/// - `multilingual` (with no forced language): re-detect language AND hard
+///   segment reset — identical to the previously shipped `multilingual`
+///   boundary reset (byte-for-byte the same fields, in the same order).
+/// - `vad_segment_reset`: hard segment reset only (no language re-detection).
+/// - both: language re-detection + segment reset.
+///
+/// Implemented as a macro (not a fn) so it expands to disjoint per-field access:
+/// inside `stream_push_audio` the tokenizer is held as a `&` borrow of `state`,
+/// which would conflict with a `&mut StreamState` helper call. The default
+/// decode path (both flags false) never reaches a call site.
+macro_rules! stream_boundary_reset {
+    ($ctx:expr, $state:expr) => {{
+        let ml_active = $ctx.multilingual && $ctx.force_language.is_none();
+        if ml_active {
+            reset_utterance_segment!($state);
+            reset_language_header!($ctx);
+        } else if $ctx.vad_segment_reset {
+            reset_utterance_segment!($state);
+        }
         $state.ml_speech_since_boundary = false;
     }};
 }
@@ -2424,6 +2447,20 @@ impl StreamState {
     pub fn audio_cursor(&self) -> usize {
         self.audio_cursor
     }
+
+    /// Number of encoder windows currently cached. Drops to a small value at an
+    /// utterance-segment reset (VAD boundary in `vad_segment_reset`/multilingual
+    /// mode, or a degen/reanchor reset). Exposed for streaming introspection and
+    /// tests that verify a boundary reset actually released the encoder cache.
+    pub fn enc_window_count(&self) -> usize {
+        self.enc_cache.len()
+    }
+
+    /// Number of committed stable tokens for the current segment. Reset to 0 at
+    /// an utterance-segment boundary. Exposed for tests/introspection.
+    pub fn stable_token_count(&self) -> usize {
+        self.stable_text_tokens.len()
+    }
 }
 
 /// Process all available new audio incrementally.
@@ -2810,15 +2847,19 @@ pub fn stream_push_audio(
         state.raw_tokens.truncate(n_prefix_tokens);
         state.raw_tokens.extend_from_slice(&chunk_tokens);
 
-        // ---- Multilingual utterance-boundary reset on true EOT (opt-in) ----
+        // ---- Utterance-boundary reset on true EOT (opt-in) ----
         // If the model emitted an immediate EOT (silence → EOT, the classic
-        // speech-end signal), and multilingual mode is on, treat it as an
-        // utterance boundary: drop the finished utterance's carry so the next
-        // utterance re-detects language. (The common case — a silence gap that
-        // does NOT surface as EOT under the accumulating encoder window — is
-        // handled by the frame-level VAD boundary at the end of the loop.)
-        if speech_ended && ctx.multilingual && ctx.force_language.is_none() {
-            multilingual_boundary_reset!(ctx, state);
+        // speech-end signal), and an opt-in boundary mode is on, treat it as an
+        // utterance boundary. In multilingual mode the carry is dropped so the
+        // next utterance re-detects language; in vad_segment_reset mode the
+        // segment is reset so the next utterance decodes from a clean state.
+        // (The common case — a silence gap that does NOT surface as EOT under
+        // the accumulating encoder window — is handled by the frame-level VAD
+        // boundary at the end of the loop.)
+        if speech_ended
+            && ((ctx.multilingual && ctx.force_language.is_none()) || ctx.vad_segment_reset)
+        {
+            stream_boundary_reset!(ctx, state);
         }
 
         // ---- Streaming degeneracy detection ----
@@ -2924,17 +2965,20 @@ pub fn stream_push_audio(
             }
         }
 
-        // ---- Multilingual utterance-boundary reset via frame-level VAD ----
+        // ---- Utterance-boundary reset via frame-level VAD (opt-in) ----
         // The accumulating encoder window means an inter-utterance silence gap
         // rarely surfaces as an immediate EOT, so `speech_ended` alone cannot
-        // segment a code-switch conversation. In multilingual mode we instead
+        // segment a conversation. When an opt-in boundary mode is on we instead
         // scan the audio directly for a speech→silence transition: when a
         // sufficiently long silence run follows committed speech, flush the
-        // finished utterance's rollback-held tail and drop the carry (language
-        // header + text + encoder audio) so the NEXT utterance re-detects
-        // language from fresh audio. Entirely gated on `multilingual`, so the
-        // default decode path is byte-identical.
-        if !speech_ended && ctx.multilingual && ctx.force_language.is_none() {
+        // finished utterance's rollback-held tail and reset the boundary. The
+        // reset action is dispatched by which flag is active — language
+        // re-detection (multilingual) and/or a hard segment reset
+        // (vad_segment_reset). Gated on `multilingual || vad_segment_reset`, so
+        // the default decode path (both false) is byte-identical.
+        if !speech_ended
+            && ((ctx.multilingual && ctx.force_language.is_none()) || ctx.vad_segment_reset)
+        {
             let min_sil = (ML_MIN_SILENCE_SEC * SAMPLE_RATE as f32) as usize;
             // Frame-level VAD scan over newly-arrived audio (inline: `state` is
             // borrowed immutably by `tokenizer`, so only disjoint-field access
@@ -2977,7 +3021,7 @@ pub fn stream_push_audio(
                     state.result_bytes.extend_from_slice(piece_bytes);
                     delta_bytes.extend_from_slice(piece_bytes);
                 }
-                multilingual_boundary_reset!(ctx, state);
+                stream_boundary_reset!(ctx, state);
             }
         }
 
