@@ -8124,6 +8124,89 @@ The biggest wins in this branch came from four themes:
 
 ---
 
+### R13-Android: opt-in multilingual auto-detection + streaming settings UI — landed
+
+**Problem.** In live streaming the app prefills a fixed `language English`
+preamble (`want_language_detection=false`, the shipping default). On a
+code-switch conversation this makes the output language sticky: Chinese speech
+is **translated to English** and the whole transcript collapses to one language.
+The premise that `speech_ended` (silence→EOT) already segments utterances does
+**not** hold under the default 8 s accumulating encoder window
+(`enc_n_window_infer=800`, `STREAM_MAX_ENC_WINDOWS=4` → up to 32 s cached): a
+1.8 s inter-utterance silence gap never surfaces as an immediate EOT, so
+`chunk_tokens.is_empty()` was false for every one of 25 chunks on the test clip.
+
+**Fix (opt-in, default byte-identical).** New `QwenCtx.multilingual` (default
+`false`) + `set_multilingual()`. When on and no language is forced,
+`stream_push_audio` runs a chunk-size-independent **frame-level VAD** (100 ms
+frames, RMS < 0.02 for ≥ 0.6 s after committed speech) to detect a speech→silence
+utterance boundary. At each boundary it flushes the finished utterance's
+rollback-held tail, then drops the text carry + generated `language X` header +
+encoder-audio window (mirrors the degen-reset truncation with ZERO carry; the
+encoder release mirrors the reanchor cache clear) so the next utterance
+re-detects its language from fresh audio. All gated on `multilingual`, so the
+default decode path and all 9 regression transcripts are unchanged. Exposed
+through c_api (`qwen_asr_set_multilingual`), the frb bridge, and Dart
+(`setMultilingual`). Design note: dropping only the text carry but KEEPING the
+audio window makes the model re-transcribe both languages every chunk (heavy
+duplication, alternating scripts, LCS spikes but transcript unusable); releasing
+the audio window keeps the per-utterance transcript clean — the kept design.
+
+**Task 4 — language-correctness (host, `tests/multilingual_stream.rs`).**
+Synthesized 37.2 s clip `bench/samples/mixed_zh_en.wav` (macOS `say -v Tingting`
+Chinese × 4 + 3 English segments of `bench/samples/audio.wav`, 1.8 s silence
+gaps, expected pattern `Zh En Zh En Zh En Zh`). Metric = LCS of the transcript's
+language-run sequence vs the expected alternating pattern (robust to streaming
+commit lag / duplication).
+
+| mode | run-sequence | LCS |
+|---|---|---|
+| OFF (app default, fixed English preamble) | `[En]` — all Chinese translated to English | **1/7** |
+| ON (multilingual) | `[Zh, En, Zh]` — code-switch preserved | **3/7** |
+
+The English utterance survives as English (`"Since you are going there, I expect
+you to keep your"`) instead of a Chinese translation; Chinese utterances stay
+Chinese. Residual streaming duplication (inherent to the 8 s-accumulation
+re-transcription) caps the LCS below 7/7.
+
+**Task 2 — anti-translation prompt experiment: DROPPED.** Tested injecting
+`"Transcribe the speech verbatim in the language spoken. Do not translate."` into
+the prompt channel for multilingual mode.
+- Language correctness: **no measurable improvement** — LCS 3/7 with and without
+  the prompt, near-identical transcripts (one space differs).
+- English guard (100-file dev-clean-2 offline WER, prompt ON vs OFF): **PASS** —
+  Corpus WER 0.0350 → 0.0336 (the prompt slightly *helps* English, well within
+  the +2% relative budget). Guard tooling: added a `--prompt` passthrough to
+  `librispeech-wer-bench/librispeech_wer.py`.
+- Decision rule requires BOTH improvement AND guard-pass; correctness did not
+  improve, so **the prompt is not injected** into multilingual mode.
+
+**Task 5 — device (Xiaomi, adb `3de8f372`, release APK, sim path, real-time
+paced, INT8 default-on).** Settings confirmed to drive the engine via
+`QASR_METRIC session_start …` logcat lines.
+
+1. **1 s engine chunk gate — FAIL (option omitted).** `SIM_ENGINE_CHUNK_SEC=1.0`
+   on the 28.2 s English clip: RTF **0.95×** (≥ 0.9× ✅), all reference words
+   present ✅, but the committed transcript **duplicated phrases** — "Shenyang, a
+   city." then "…with its own small secrets.", "Since you are going there." twice,
+   "Some things are worth bringing back." twice. Same failure class as the
+   rejected 3 s chunk. → `kAllow1sChunk=false`; the UI offers only 2.0 s.
+2. **Multilingual smoke — PASS.** Mixed clip through the sim path at
+   `SIM_ENGINE_CHUNK_SEC=1.5, SIM_LANGUAGE=auto`, RTF 0.95×. Final transcript
+   preserved per-utterance languages (Chinese utterances Chinese; English
+   utterance in English), matching the host test exactly.
+3. **Settings drive engine — CONFIRMED.** `session_start mode=sim
+   language=auto-multilingual engineChunk=1.0s` / `…engineChunk=1.5s` logged at
+   each session start.
+
+**Example app.** Streaming-settings card (language: 自动（多语言）/
+Auto-multilingual [default] / 中文 zh / English / 日本語 ja / 한국어 ko / 粤语 yue;
+engine chunk 2.0 s default, 1.0 s gated off, ≥ 3 s never offered). Disabled while
+a session runs; persisted to a small JSON file in app documents; applied at the
+next Start (session-level, no model reload).
+
+---
+
 ## Opportunity Backlog
 
 This backlog is distilled from the autoresearch programs (`programs.md`). Items are grouped by priority and are intended as starting points for future optimization rounds. Each entry keeps the same fields so it can be turned directly into a focused experiment.

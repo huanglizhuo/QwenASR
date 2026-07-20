@@ -161,6 +161,8 @@ def transcribe(args: argparse.Namespace, wav: Path) -> tuple[str, float]:
         cmd.extend(["-S", str(args.segment_sec)])
     elif args.mode == "streaming":
         cmd.append("--stream")
+    if getattr(args, "prompt", None):
+        cmd.extend(["--prompt", args.prompt])
 
     start = time.perf_counter()
     proc = run_cmd(cmd)
@@ -204,6 +206,7 @@ def main() -> int:
     parser.add_argument("--threads", type=int, default=0, help="Pass -t N to qwen-asr")
     parser.add_argument("--mode", choices=("offline", "segmented", "streaming"), default="offline")
     parser.add_argument("--segment-sec", type=int, default=30, help="Segment length for --mode segmented")
+    parser.add_argument("--prompt", default="", help="Pass --prompt TEXT to qwen-asr (e.g. to A/B a system prompt)")
     parser.add_argument("--ffmpeg", default="ffmpeg", help="ffmpeg executable")
     parser.add_argument("--download-dataset", action="store_true", help="Download and extract LibriSpeech dev-clean if --dataset is missing")
     parser.add_argument("--dataset-url", default=DEFAULT_DATASET_URL, help="Dataset .tar.gz URL used with --download-dataset")
