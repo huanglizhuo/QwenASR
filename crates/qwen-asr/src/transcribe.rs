@@ -28,6 +28,14 @@ const STREAM_RESET_INTERVAL_CHUNKS: i32 = 45;
 const STREAM_RESET_CARRY_TOKENS: usize = 24;
 const STREAM_MAX_ENC_WINDOWS: usize = 4;
 
+// Multilingual utterance-boundary VAD (opt-in `multilingual` mode only).
+// A speech→silence transition longer than `ML_MIN_SILENCE_SEC` with the frame
+// RMS below `ML_SILENCE_RMS` marks an utterance boundary at which the language
+// carry is dropped so the next utterance re-detects its language.
+const ML_SILENCE_RMS: f32 = 0.02;
+const ML_MIN_SILENCE_SEC: f32 = 0.6;
+const ML_VAD_FRAME: usize = 1600; // 100 ms at 16 kHz
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct PrefillRowKey {
     a: u64,
@@ -98,6 +106,54 @@ fn stream_text_start(ctx: &QwenCtx, raw_tokens: &[i32]) -> usize {
     } else {
         0
     }
+}
+
+/// Root-mean-square amplitude of a sample slice (audio normalized to -1.0..1.0).
+fn slice_rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let sum: f64 = samples.iter().map(|&s| (s as f64) * (s as f64)).sum();
+    (sum / samples.len() as f64).sqrt() as f32
+}
+
+/// Multilingual utterance-boundary reset: drop the finished utterance's
+/// generated `language X` header, committed text carry, and encoder-audio
+/// context so the NEXT utterance re-detects language from fresh audio and is not
+/// dragged into translation by past-text conditioning. Mirrors the degen-reset
+/// carry machinery but with ZERO carry, and always releases the encoder cache
+/// since a new utterance starts a fresh acoustic context.
+///
+/// Implemented as a macro (not a fn) so it expands to disjoint per-field access:
+/// inside `stream_push_audio` the tokenizer is held as a `&` borrow of `state`,
+/// which would conflict with a `&mut StreamState` helper call. Only used in
+/// opt-in `multilingual` mode; the default decode path never touches it.
+macro_rules! multilingual_boundary_reset {
+    ($ctx:expr, $state:expr) => {{
+        // Drop the finished utterance's generated text + language header AND
+        // release the encoder-audio window so the next utterance decodes from a
+        // clean slate — only post-boundary audio is re-encoded, and the model
+        // regenerates its own `language X` for it. Mirrors the degen-reset
+        // truncation (STREAM_RESET_CARRY_TOKENS) but with ZERO carry; the
+        // encoder release mirrors the reanchor path's cache clear. Keeping the
+        // old audio makes the model re-transcribe both languages every chunk
+        // (heavy duplication, alternating scripts); releasing it keeps the
+        // per-utterance transcript clean (see experiments.md R13-Android).
+        $state.raw_tokens.clear();
+        $state.stable_text_tokens.clear();
+        $state.prev_prefill_keys.clear();
+        $state.prev_tail_snapshot.clear();
+        $state.stale_count = 0;
+        $ctx.detected_language = None;
+        $state.enc_cache_base_windows += $state.enc_cache.len();
+        $state.enc_cache.clear();
+        $state.enc_cached_seq_total = 0;
+        $state.last_partial_cursor = 0;
+        $state.last_partial_enc.clear();
+        $state.last_partial_keys.clear();
+        $state.last_partial_seq = 0;
+        $state.ml_speech_since_boundary = false;
+    }};
 }
 
 fn prefill_lcp_len(prev: &[PrefillRowKey], current: &[PrefillRowKey], prefill_len: usize) -> usize {
@@ -2278,6 +2334,15 @@ pub struct StreamState {
     audio_cursor: usize,
     chunk_idx: i32,
 
+    // Multilingual utterance-boundary VAD state (opt-in `multilingual` mode).
+    // `ml_scan_cursor` is the per-100 ms scan position over the audio buffer;
+    // `ml_silence_run` is the current trailing-silence length in samples;
+    // `ml_speech_since_boundary` gates a reset to fire only after committed
+    // speech and only once per silence gap. Unused in the default path.
+    ml_scan_cursor: usize,
+    ml_silence_run: usize,
+    ml_speech_since_boundary: bool,
+
     // Tokenizer (loaded once)
     tokenizer: Option<QwenTokenizer>,
     prompt_prepared: bool,
@@ -2309,6 +2374,9 @@ impl StreamState {
             last_partial_seq: 0,
             audio_cursor: 0,
             chunk_idx: 0,
+            ml_scan_cursor: 0,
+            ml_silence_run: 0,
+            ml_speech_since_boundary: false,
             tokenizer: None,
             prompt_prepared: false,
         }
@@ -2332,6 +2400,9 @@ impl StreamState {
         self.last_partial_seq = 0;
         self.audio_cursor = 0;
         self.chunk_idx = 0;
+        self.ml_scan_cursor = 0;
+        self.ml_silence_run = 0;
+        self.ml_speech_since_boundary = false;
         // Keep tokenizer and prompt_prepared
     }
 
@@ -2739,6 +2810,17 @@ pub fn stream_push_audio(
         state.raw_tokens.truncate(n_prefix_tokens);
         state.raw_tokens.extend_from_slice(&chunk_tokens);
 
+        // ---- Multilingual utterance-boundary reset on true EOT (opt-in) ----
+        // If the model emitted an immediate EOT (silence → EOT, the classic
+        // speech-end signal), and multilingual mode is on, treat it as an
+        // utterance boundary: drop the finished utterance's carry so the next
+        // utterance re-detects language. (The common case — a silence gap that
+        // does NOT surface as EOT under the accumulating encoder window — is
+        // handled by the frame-level VAD boundary at the end of the loop.)
+        if speech_ended && ctx.multilingual && ctx.force_language.is_none() {
+            multilingual_boundary_reset!(ctx, state);
+        }
+
         // ---- Streaming degeneracy detection ----
         if !speech_ended {
             if state.raw_tokens == state.prev_tail_snapshot {
@@ -2839,6 +2921,63 @@ pub fn stream_push_audio(
                     state.result_bytes.extend_from_slice(piece_bytes);
                     delta_bytes.extend_from_slice(piece_bytes);
                 }
+            }
+        }
+
+        // ---- Multilingual utterance-boundary reset via frame-level VAD ----
+        // The accumulating encoder window means an inter-utterance silence gap
+        // rarely surfaces as an immediate EOT, so `speech_ended` alone cannot
+        // segment a code-switch conversation. In multilingual mode we instead
+        // scan the audio directly for a speech→silence transition: when a
+        // sufficiently long silence run follows committed speech, flush the
+        // finished utterance's rollback-held tail and drop the carry (language
+        // header + text + encoder audio) so the NEXT utterance re-detects
+        // language from fresh audio. Entirely gated on `multilingual`, so the
+        // default decode path is byte-identical.
+        if !speech_ended && ctx.multilingual && ctx.force_language.is_none() {
+            let min_sil = (ML_MIN_SILENCE_SEC * SAMPLE_RATE as f32) as usize;
+            // Frame-level VAD scan over newly-arrived audio (inline: `state` is
+            // borrowed immutably by `tokenizer`, so only disjoint-field access
+            // is allowed here — no whole-`state` helper call).
+            let mut boundary = false;
+            while state.ml_scan_cursor + ML_VAD_FRAME <= state.audio_cursor
+                && state.ml_scan_cursor + ML_VAD_FRAME <= samples.len()
+            {
+                let s = state.ml_scan_cursor;
+                let e = s + ML_VAD_FRAME;
+                if slice_rms(&samples[s..e]) >= ML_SILENCE_RMS {
+                    state.ml_speech_since_boundary = true;
+                    state.ml_silence_run = 0;
+                } else {
+                    state.ml_silence_run += ML_VAD_FRAME;
+                    if !boundary
+                        && state.ml_silence_run >= min_sil
+                        && state.ml_speech_since_boundary
+                        && !state.stable_text_tokens.is_empty()
+                    {
+                        boundary = true;
+                        state.ml_speech_since_boundary = false;
+                    }
+                }
+                state.ml_scan_cursor = e;
+            }
+            if boundary {
+                // Flush any rollback-held tail of the finished utterance before
+                // the reset drops it (mirrors the speech-end commit block).
+                let text_start = stream_text_start(ctx, &state.raw_tokens);
+                let candidate = &state.raw_tokens[text_start..];
+                for i in state.stable_text_tokens.len()..candidate.len() {
+                    let tok = candidate[i];
+                    state.stable_text_tokens.push(tok);
+                    let piece_bytes = tokenizer.decode_bytes(tok);
+                    if let Some(ref cb) = ctx.token_cb {
+                        cb(&String::from_utf8_lossy(piece_bytes));
+                    }
+                    ctx.perf_text_tokens += 1;
+                    state.result_bytes.extend_from_slice(piece_bytes);
+                    delta_bytes.extend_from_slice(piece_bytes);
+                }
+                multilingual_boundary_reset!(ctx, state);
             }
         }
 

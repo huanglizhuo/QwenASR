@@ -167,6 +167,7 @@ impl QwenModel {
 /// | `token_cb` | None | Streaming callback invoked for each decoded token |
 /// | `prompt` | None | Optional text prompt (set via [`QwenCtx::set_prompt`]) |
 /// | `force_language` | None | Force a language (set via [`QwenCtx::set_force_language`]) |
+/// | `multilingual` | false | Opt-in per-utterance language re-detection for streaming (set via [`QwenCtx::set_multilingual`]) |
 pub struct QwenCtx {
     /// Shared immutable model (weights, mmap, canonical config). Cloned cheaply
     /// (`Arc`) to spawn sibling sessions; see [`QwenModel::new_session`].
@@ -219,6 +220,13 @@ pub struct QwenCtx {
     /// the model generates its own `language X` header for auto-detection. The
     /// default (`false`) keeps the byte-identical plain-text decode path.
     pub want_language_detection: bool,
+    /// Opt-in multilingual auto-detection mode for [`crate::transcribe::stream_push_audio`].
+    /// Default `false` keeps the byte-identical default decode path. When `true`
+    /// and no language is forced, the model re-detects language at every
+    /// utterance boundary (silence → EOT) and the past-text carry is dropped so
+    /// a previous utterance's language cannot drag the next into translation.
+    /// Set via [`QwenCtx::set_multilingual`]; implies `want_language_detection`.
+    pub multilingual: bool,
     pub prompt_tokens: Option<Vec<i32>>,
     pub force_prompt_tokens: Option<Vec<i32>>,
     pub prompt_tokens_ready: bool,
@@ -284,6 +292,7 @@ impl QwenCtx {
             force_language: None,
             detected_language: None,
             want_language_detection: false,
+            multilingual: false,
             prompt_tokens: None,
             force_prompt_tokens: None,
             prompt_tokens_ready: false,
@@ -320,11 +329,36 @@ impl QwenCtx {
         match normalize_language(language) {
             Some(normalized) => {
                 self.force_language = Some(normalized);
+                // A forced language overrides multilingual auto-detection: turn
+                // the opt-in mode (and its preamble skip) off so the fixed
+                // `language X` header is prefilled deterministically.
+                self.multilingual = false;
+                self.want_language_detection = false;
                 self.prompt_tokens_ready = false;
                 Ok(())
             }
             None => Err(()),
         }
+    }
+
+    /// Enable or disable opt-in multilingual auto-detection for the incremental
+    /// streaming path ([`crate::transcribe::stream_push_audio`]).
+    ///
+    /// When enabled, any forced language is cleared, `want_language_detection`
+    /// is turned on (so the model emits its own `language X` header instead of
+    /// the fixed English preamble), and at every utterance boundary the decoder
+    /// re-detects language from fresh audio with the past-text carry dropped.
+    /// When disabled, the engine returns to the byte-identical default decode
+    /// path. This is a session-level setting; apply it before `stream_reset`.
+    pub fn set_multilingual(&mut self, enabled: bool) {
+        self.multilingual = enabled;
+        if enabled {
+            self.force_language = None;
+            self.want_language_detection = true;
+        } else {
+            self.want_language_detection = false;
+        }
+        self.prompt_tokens_ready = false;
     }
 
     pub fn prepare_prompt_tokens(&mut self, tokenizer: &QwenTokenizer) -> bool {

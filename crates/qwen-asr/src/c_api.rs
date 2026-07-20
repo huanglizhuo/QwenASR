@@ -147,6 +147,17 @@ pub unsafe extern "C" fn qwen_asr_set_language(
     }
 }
 
+/// Enable/disable opt-in multilingual auto-detection for the streaming path
+/// (`nonzero` = enabled). When enabled, any forced language is cleared and the
+/// decoder re-detects language at every utterance boundary. Session-level;
+/// apply before `qwen_asr_stream_reset`.
+#[no_mangle]
+pub unsafe extern "C" fn qwen_asr_set_multilingual(engine: *mut QwenAsrEngine, enabled: i32) {
+    if !engine.is_null() {
+        (*engine).ctx.set_multilingual(enabled != 0);
+    }
+}
+
 /// Free a string returned by qwen_asr_transcribe_*.
 #[no_mangle]
 pub unsafe extern "C" fn qwen_asr_free_string(s: *mut c_char) {

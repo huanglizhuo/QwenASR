@@ -81,10 +81,26 @@ impl QwenAsrEngine {
     }
 
     /// Set the forced language. Returns false if the language is invalid.
+    ///
+    /// A non-empty language turns multilingual auto-detection off. Pass an empty
+    /// string to clear the forced language (returns to the default decode path).
     #[frb(sync)]
     pub fn set_language(&self, language: String) -> bool {
         let mut g = self.inner.lock().unwrap();
         g.ctx.set_force_language(&language).is_ok()
+    }
+
+    /// Enable/disable opt-in multilingual auto-detection for live streaming.
+    ///
+    /// When enabled, any forced language is cleared and the decoder re-detects
+    /// language from fresh audio at every utterance boundary (silence → EOT),
+    /// dropping the past-text carry so a previous utterance's language cannot
+    /// drag the next into translation. Session-level: apply before
+    /// [`QwenAsrEngine::stream_reset`]; no model reload required.
+    #[frb(sync)]
+    pub fn set_multilingual(&self, enabled: bool) {
+        let mut g = self.inner.lock().unwrap();
+        g.ctx.set_multilingual(enabled);
     }
 
     /// Get last transcription performance stats as a formatted string.

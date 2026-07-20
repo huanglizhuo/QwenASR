@@ -98,6 +98,18 @@ class QAsrEngine {
     return _engine.setLanguage(language: language);
   }
 
+  /// Enable/disable opt-in multilingual auto-detection for live streaming.
+  ///
+  /// When enabled, any forced language is cleared and the streaming decoder
+  /// re-detects language from fresh audio at every utterance boundary
+  /// (silence gap), so a Chinese utterance followed by an English one is not
+  /// rendered as a Chinese translation. Session-level: apply before
+  /// [streamReset]; no model reload required. Leave disabled for the default
+  /// (single fixed-preamble) decode path.
+  void setMultilingual(bool enabled) {
+    _engine.setMultilingual(enabled: enabled);
+  }
+
   /// Get performance stats from last transcription.
   String perfStats() {
     return _engine.perfStats();

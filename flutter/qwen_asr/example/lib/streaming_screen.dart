@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:qwen_asr/qwen_asr.dart';
 import 'package:record/record.dart';
 
+import 'streaming_settings.dart';
 import 'wav_utils.dart';
 
 /// Sample rate the engine expects (16 kHz mono).
@@ -27,13 +28,15 @@ const double kMicChunkSec = 0.5;
 /// speech shorter than 8 s would show nothing until Stop/finalize.
 const double kSimEngineChunkSec = 8.0;
 
-/// Live-mic engine chunk: partials appear every ~2 s of speech. A 3 s chunk was
-/// trialled on-device (R13-Android stage 1 RTF sweep) but REJECTED: it gave no
-/// wall-RTF gain (the sim feed is real-time-paced, so RTF is pinned near 1.0×)
-/// while regressing first-partial/first-stable latency AND duplicating a full
-/// sentence in the final transcript. 2 s is the kept default; 3 s stays
-/// reachable via `--dart-define=SIM_ENGINE_CHUNK_SEC=3.0` for comparison.
-const double kLiveEngineChunkSec = 2.0;
+/// Live-mic engine chunk default: partials appear every ~2 s of speech. The
+/// live-mic value now comes from the user-editable streaming settings (see
+/// `streaming_settings.dart`), whose default is 2.0 s. A 3 s chunk was trialled
+/// on-device (R13-Android stage 1 RTF sweep) but REJECTED: no wall-RTF gain
+/// (the sim feed is real-time-paced, so RTF is pinned near 1.0×) while
+/// regressing first-partial/first-stable latency AND duplicating a full
+/// sentence in the final transcript — so >= 3 s is never offered in the UI.
+/// 3 s stays reachable via `--dart-define=SIM_ENGINE_CHUNK_SEC=3.0` for
+/// comparison only.
 
 /// Optional override for the simulated-mic engine chunk, in seconds, injected
 /// via `--dart-define=SIM_ENGINE_CHUNK_SEC=2.0`. Lets automation exercise the
@@ -42,6 +45,13 @@ const double kLiveEngineChunkSec = 2.0;
 const String kSimEngineChunkOverride = String.fromEnvironment(
   'SIM_ENGINE_CHUNK_SEC',
 );
+
+/// Optional override for the language mode on the simulated-mic path, injected
+/// via `--dart-define=SIM_LANGUAGE=auto|zh|en|ja|ko|yue`. Lets automation
+/// (R13-Android Task 5.2 multilingual smoke) drive the multilingual/forced-
+/// language mode through the sim path without tapping the settings UI. Empty
+/// string = use the persisted settings selection.
+const String kSimLanguageOverride = String.fromEnvironment('SIM_LANGUAGE');
 
 /// Leading chunks kept "unfixed" before committing tokens to the stable
 /// transcript. Small value = progressive live partials. The engine default
@@ -73,6 +83,10 @@ class _StreamingScreenState extends State<StreamingScreen> {
   bool _running = false;
   bool _simulating = false;
 
+  /// Editable streaming settings (language mode + engine chunk). Loaded from
+  /// disk on launch; changes apply at the next Start. Null until loaded.
+  StreamingSettings? _settings;
+
   // Push pipeline state.
   final List<double> _pending = [];
   bool _draining = false;
@@ -92,11 +106,16 @@ class _StreamingScreenState extends State<StreamingScreen> {
     // per-session (live vs simulated) in _startMic/_startSimulated.
     widget.engine.setStreamUnfixedChunks(kUnfixedChunks);
     widget.engine.setPastTextConditioning(true);
-    if (widget.autoSimWavPath != null) {
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => _startSimulated(widget.autoSimWavPath!),
-      );
-    }
+    // Load persisted settings, then (for automation) optionally auto-run the sim.
+    StreamingSettings.load().then((s) {
+      if (!mounted) return;
+      setState(() => _settings = s);
+      if (widget.autoSimWavPath != null) {
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _startSimulated(widget.autoSimWavPath!),
+        );
+      }
+    });
   }
 
   @override
@@ -209,8 +228,17 @@ class _StreamingScreenState extends State<StreamingScreen> {
       setState(() => _status = 'Microphone permission denied');
       return;
     }
-    widget.engine.setStreamChunkSec(kLiveEngineChunkSec);
+    // Apply the current settings to the engine (session-level; before reset).
+    final settings = _settings ?? StreamingSettings();
+    final chunkSec = settings.engineChunkSec;
+    final langLabel = settings.applyLanguage(widget.engine);
+    widget.engine.setStreamChunkSec(chunkSec);
     await widget.engine.streamReset();
+    // Test/automation hook: confirm the settings UI drives the engine.
+    debugPrint(
+      'QASR_METRIC session_start mode=mic language=$langLabel '
+      'engineChunk=${chunkSec.toStringAsFixed(1)}s',
+    );
     setState(() {
       _running = true;
       _status = 'Listening...';
@@ -293,13 +321,24 @@ class _StreamingScreenState extends State<StreamingScreen> {
     // can be measured without a real microphone.
     final simEngineChunk =
         double.tryParse(kSimEngineChunkOverride) ?? kSimEngineChunkSec;
+    // Language: SIM_LANGUAGE override (automation) else the persisted setting.
+    final settings = _settings ?? StreamingSettings();
+    if (kSimLanguageOverride.isNotEmpty) {
+      settings.languageId = kSimLanguageOverride;
+    }
+    final langLabel = settings.applyLanguage(widget.engine);
     widget.engine.setStreamChunkSec(simEngineChunk);
     await widget.engine.streamReset();
+    // Test/automation hook: confirm the settings UI drives the engine.
+    debugPrint(
+      'QASR_METRIC session_start mode=sim language=$langLabel '
+      'engineChunk=${simEngineChunk.toStringAsFixed(1)}s',
+    );
     setState(() {
       _simulating = true;
       _status =
           'Simulating mic from WAV (engineChunk='
-          '${simEngineChunk.toStringAsFixed(1)}s)...';
+          '${simEngineChunk.toStringAsFixed(1)}s, language=$langLabel)...';
       _resetSession();
     });
 
@@ -386,6 +425,8 @@ class _StreamingScreenState extends State<StreamingScreen> {
             ],
           ),
           const SizedBox(height: 12),
+          _buildSettingsCard(context, busy),
+          const SizedBox(height: 12),
           Text('Status: $_status'),
           if (_perf.isNotEmpty)
             Padding(
@@ -413,6 +454,90 @@ class _StreamingScreenState extends State<StreamingScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Settings section: language mode + engine chunk. Editable any time except
+  /// while a session is running (disabled when `busy`); selections persist and
+  /// apply at the next Start (no model reload).
+  Widget _buildSettingsCard(BuildContext context, bool busy) {
+    final settings = _settings;
+    return Card(
+      key: const Key('settings_card'),
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.tune, size: 18),
+                const SizedBox(width: 6),
+                Text(
+                  'Streaming settings',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const Spacer(),
+                if (busy)
+                  Text(
+                    'locked while running',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            if (settings == null)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text('Loading settings...'),
+              )
+            else ...[
+              DropdownButtonFormField<String>(
+                key: const Key('language_dropdown'),
+                initialValue: settings.languageId,
+                decoration: const InputDecoration(
+                  labelText: '语言 / Language',
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  for (final o in kLanguageOptions)
+                    DropdownMenuItem(value: o.id, child: Text(o.label)),
+                ],
+                onChanged: busy
+                    ? null
+                    : (v) {
+                        if (v == null) return;
+                        setState(() => settings.languageId = v);
+                        settings.save();
+                      },
+              ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<double>(
+                key: const Key('chunk_dropdown'),
+                initialValue: settings.engineChunkSec,
+                decoration: const InputDecoration(
+                  labelText: '引擎分块 / Engine chunk',
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  for (final o in kChunkOptions)
+                    DropdownMenuItem(value: o.sec, child: Text(o.label)),
+                ],
+                onChanged: busy
+                    ? null
+                    : (v) {
+                        if (v == null) return;
+                        setState(() => settings.engineChunkSec = v);
+                        settings.save();
+                      },
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

@@ -25,7 +25,19 @@ abstract class QwenAsrEngine implements RustOpaqueInterface {
   String perfStats();
 
   /// Set the forced language. Returns false if the language is invalid.
+  ///
+  /// A non-empty language turns multilingual auto-detection off. Pass an empty
+  /// string to clear the forced language (returns to the default decode path).
   bool setLanguage({required String language});
+
+  /// Enable/disable opt-in multilingual auto-detection for live streaming.
+  ///
+  /// When enabled, any forced language is cleared and the decoder re-detects
+  /// language from fresh audio at every utterance boundary (silence → EOT),
+  /// dropping the past-text carry so a previous utterance's language cannot
+  /// drag the next into translation. Session-level: apply before
+  /// [`QwenAsrEngine::stream_reset`]; no model reload required.
+  void setMultilingual({required bool enabled});
 
   /// Enable reusing previously decoded text as decoder context across chunks
   /// (prefix rollback). Recommended `true` for live streaming quality; matches
