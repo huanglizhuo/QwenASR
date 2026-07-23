@@ -269,6 +269,31 @@ fn build_mel_filters() -> Vec<f32> {
 // Mel Spectrogram
 // ========================================================================
 
+/// Per-thread scratch buffers for `mel_spectrogram`, reused across calls to
+/// avoid re-allocating multi-MB buffers for every audio segment. Each worker
+/// thread gets its own instance, giving the same isolation as today's fresh
+/// allocations. All buffers are fully overwritten before being read on every
+/// call, so stale contents never leak into the result.
+struct MelScratch {
+    padded: Vec<f32>,
+    windowed_all: Vec<f32>,
+    re: Vec<f32>,
+    im: Vec<f32>,
+    power: Vec<f32>,
+}
+
+thread_local! {
+    static MEL_SCRATCH: std::cell::RefCell<MelScratch> = const {
+        std::cell::RefCell::new(MelScratch {
+            padded: Vec::new(),
+            windowed_all: Vec::new(),
+            re: Vec::new(),
+            im: Vec::new(),
+            power: Vec::new(),
+        })
+    };
+}
+
 /// Compute a 128-bin log-mel spectrogram from 16 kHz audio samples.
 ///
 /// Returns `(mel_flat, n_frames)` where `mel_flat` has shape `[128, n_frames]`
@@ -282,100 +307,109 @@ pub fn mel_spectrogram(samples: &[f32]) -> Option<(Vec<f32>, usize)> {
 
     // Reflect-pad the signal
     let padded_len = n_samples + 2 * pad_len;
-    let mut padded = vec![0.0f32; padded_len];
 
-    for (i, padded_val) in padded.iter_mut().enumerate().take(pad_len) {
-        let src = pad_len - i;
-        *padded_val = if src < n_samples { samples[src] } else { 0.0 };
-    }
-    padded[pad_len..pad_len + n_samples].copy_from_slice(samples);
-    for i in 0..pad_len {
-        let src = n_samples as i32 - 2 - i as i32;
-        padded[pad_len + n_samples + i] = if src >= 0 { samples[src as usize] } else { 0.0 };
-    }
+    MEL_SCRATCH.with(|cell| {
+        let MelScratch {
+            padded,
+            windowed_all,
+            re,
+            im,
+            power,
+        } = &mut *cell.borrow_mut();
 
-    let n_frames_total = (padded_len - n_fft) / HOP_LENGTH + 1;
-    let n_frames = n_frames_total - 1; // drop last frame
-    if n_frames == 0 {
-        eprintln!("mel_spectrogram: audio too short ({} samples)", n_samples);
-        return None;
-    }
+        padded.resize(padded_len, 0.0);
 
-    static MEL_FILTERS: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
-    let mel_filters = MEL_FILTERS.get_or_init(build_mel_filters);
-
-    // Periodic Hann window (cached)
-    static HANN_WINDOW: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
-    let window = HANN_WINDOW.get_or_init(|| {
-        let mut w = vec![0.0f32; WINDOW_SIZE];
-        for (i, w_val) in w.iter_mut().enumerate().take(WINDOW_SIZE) {
-            *w_val =
-                0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / WINDOW_SIZE as f32).cos());
+        for (i, padded_val) in padded.iter_mut().enumerate().take(pad_len) {
+            let src = pad_len - i;
+            *padded_val = if src < n_samples { samples[src] } else { 0.0 };
         }
-        w
-    });
+        padded[pad_len..pad_len + n_samples].copy_from_slice(samples);
+        for i in 0..pad_len {
+            let src = n_samples as i32 - 2 - i as i32;
+            padded[pad_len + n_samples + i] = if src >= 0 { samples[src as usize] } else { 0.0 };
+        }
 
-    // Precompute DFT tables (cached)
-    static DFT_TABLES: std::sync::OnceLock<(Vec<f32>, Vec<f32>)> = std::sync::OnceLock::new();
-    let (dft_cos, dft_sin) = DFT_TABLES.get_or_init(|| {
-        let mut cos_tbl = vec![0.0f32; N_FREQ * N_FFT];
-        let mut sin_tbl = vec![0.0f32; N_FREQ * N_FFT];
-        for k in 0..N_FREQ {
+        let n_frames_total = (padded_len - n_fft) / HOP_LENGTH + 1;
+        let n_frames = n_frames_total - 1; // drop last frame
+        if n_frames == 0 {
+            eprintln!("mel_spectrogram: audio too short ({} samples)", n_samples);
+            return None;
+        }
+
+        static MEL_FILTERS: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
+        let mel_filters = MEL_FILTERS.get_or_init(build_mel_filters);
+
+        // Periodic Hann window (cached)
+        static HANN_WINDOW: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
+        let window = HANN_WINDOW.get_or_init(|| {
+            let mut w = vec![0.0f32; WINDOW_SIZE];
+            for (i, w_val) in w.iter_mut().enumerate().take(WINDOW_SIZE) {
+                *w_val =
+                    0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / WINDOW_SIZE as f32).cos());
+            }
+            w
+        });
+
+        // Precompute DFT tables (cached)
+        static DFT_TABLES: std::sync::OnceLock<(Vec<f32>, Vec<f32>)> = std::sync::OnceLock::new();
+        let (dft_cos, dft_sin) = DFT_TABLES.get_or_init(|| {
+            let mut cos_tbl = vec![0.0f32; N_FREQ * N_FFT];
+            let mut sin_tbl = vec![0.0f32; N_FREQ * N_FFT];
+            for k in 0..N_FREQ {
+                for n in 0..N_FFT {
+                    let angle = 2.0 * std::f32::consts::PI * k as f32 * n as f32 / N_FFT as f32;
+                    cos_tbl[k * N_FFT + n] = angle.cos();
+                    sin_tbl[k * N_FFT + n] = angle.sin();
+                }
+            }
+            (cos_tbl, sin_tbl)
+        });
+
+        // Batched computation via BLAS sgemm:
+        // 1. Pre-compute all windowed frames: windowed[N_FFT × n_frames] column-major
+        windowed_all.resize(N_FFT * n_frames, 0.0);
+        for t in 0..n_frames {
+            let start = t * HOP_LENGTH;
             for n in 0..N_FFT {
-                let angle = 2.0 * std::f32::consts::PI * k as f32 * n as f32 / N_FFT as f32;
-                cos_tbl[k * N_FFT + n] = angle.cos();
-                sin_tbl[k * N_FFT + n] = angle.sin();
+                windowed_all[n * n_frames + t] = padded[start + n] * window[n];
             }
         }
-        (cos_tbl, sin_tbl)
-    });
 
-    // Batched computation via BLAS sgemm:
-    // 1. Pre-compute all windowed frames: windowed[N_FFT × n_frames] column-major
-    let mut windowed_all = vec![0.0f32; N_FFT * n_frames];
-    for t in 0..n_frames {
-        let start = t * HOP_LENGTH;
-        for n in 0..N_FFT {
-            windowed_all[n * n_frames + t] = padded[start + n] * window[n];
+        // 2. DFT via BLAS: re = dft_cos @ windowed_all, im = dft_sin @ windowed_all
+        //    [N_FREQ × N_FFT] @ [N_FFT × n_frames] = [N_FREQ × n_frames]
+        re.resize(n_freqs * n_frames, 0.0);
+        im.resize(n_freqs * n_frames, 0.0);
+        kernels::matmul_nn(re, dft_cos, windowed_all, n_freqs, N_FFT, n_frames);
+        kernels::matmul_nn(im, dft_sin, windowed_all, n_freqs, N_FFT, n_frames);
+
+        // 3. Power spectrum: power[k * n_frames + t] = re² + im²
+        power.resize(n_freqs * n_frames, 0.0);
+        for i in 0..n_freqs * n_frames {
+            power[i] = re[i] * re[i] + im[i] * im[i];
         }
-    }
 
-    // 2. DFT via BLAS: re = dft_cos @ windowed_all, im = dft_sin @ windowed_all
-    //    [N_FREQ × N_FFT] @ [N_FFT × n_frames] = [N_FREQ × n_frames]
-    let mut re = vec![0.0f32; n_freqs * n_frames];
-    let mut im = vec![0.0f32; n_freqs * n_frames];
-    kernels::matmul_nn(&mut re, dft_cos, &windowed_all, n_freqs, N_FFT, n_frames);
-    kernels::matmul_nn(&mut im, dft_sin, &windowed_all, n_freqs, N_FFT, n_frames);
-    drop(windowed_all);
+        // 4. Mel filter bank via BLAS: mel_raw = mel_filters @ power
+        //    [MEL_BINS × N_FREQ] @ [N_FREQ × n_frames] = [MEL_BINS × n_frames]
+        //    `mel` is owned by the caller (held across the encoder call), so
+        //    it is freshly allocated rather than taken from scratch.
+        let mut mel = vec![0.0f32; MEL_BINS * n_frames];
+        kernels::matmul_nn(&mut mel, mel_filters, power, MEL_BINS, n_freqs, n_frames);
 
-    // 3. Power spectrum: power[k * n_frames + t] = re² + im²
-    let mut power = vec![0.0f32; n_freqs * n_frames];
-    for i in 0..n_freqs * n_frames {
-        power[i] = re[i] * re[i] + im[i] * im[i];
-    }
-    drop(re);
-    drop(im);
-
-    // 4. Mel filter bank via BLAS: mel_raw = mel_filters @ power
-    //    [MEL_BINS × N_FREQ] @ [N_FREQ × n_frames] = [MEL_BINS × n_frames]
-    let mut mel = vec![0.0f32; MEL_BINS * n_frames];
-    kernels::matmul_nn(&mut mel, mel_filters, &power, MEL_BINS, n_freqs, n_frames);
-    drop(power);
-
-    // 5. Log, clamp, normalize
-    let mut global_max = -1e30f32;
-    for val in mel.iter_mut() {
-        *val = (*val).max(1e-10).log10();
-        if *val > global_max {
-            global_max = *val;
+        // 5. Log, clamp, normalize
+        let mut global_max = -1e30f32;
+        for val in mel.iter_mut() {
+            *val = (*val).max(1e-10).log10();
+            if *val > global_max {
+                global_max = *val;
+            }
         }
-    }
-    let min_val = global_max - 8.0;
-    for val in mel.iter_mut() {
-        *val = ((*val).max(min_val) + 4.0) / 4.0;
-    }
+        let min_val = global_max - 8.0;
+        for val in mel.iter_mut() {
+            *val = ((*val).max(min_val) + 4.0) / 4.0;
+        }
 
-    Some((mel, n_frames))
+        Some((mel, n_frames))
+    })
 }
 
 /// Drop long silent spans. Adaptive RMS gating with spike rejection.
