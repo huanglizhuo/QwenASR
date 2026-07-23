@@ -768,6 +768,14 @@ fn build_split_points(
 /// `samples` at low-energy boundaries (`ctx.segment_sec`, 30 s fallback),
 /// transcribe each split, and invoke `on_text` with
 /// `(ctx, seg_start, seg_end, text)` for every non-empty segment transcript.
+///
+/// Uses the same scheduling decision as [`transcribe_audio`]
+/// ([`choose_seg_schedule`]): independent segments run on the parallel
+/// workers / lockstep scheduler and their outputs are replayed to `on_text`
+/// in segment order, so the callback sequence is identical to the serial
+/// loop — including the aligner interaction in [`transcribe_full`], which
+/// consumes each segment inside the callback (on the caller thread, during
+/// replay) and therefore does not require serial streaming.
 fn transcribe_splits(
     ctx: &mut QwenCtx,
     samples: &[f32],
@@ -782,11 +790,26 @@ fn transcribe_splits(
     let search_sec = ctx.search_sec.min(segment_sec / 2.0);
     let target_samples = (segment_sec * SAMPLE_RATE as f32) as usize;
     let margin_samples = (search_sec * SAMPLE_RATE as f32) as usize;
-    let min_samples = SAMPLE_RATE as usize / 2;
 
     let splits = build_split_points(samples, target_samples, margin_samples, search_sec);
     let n_splits = splits.len();
 
+    match choose_seg_schedule(ctx, n_splits) {
+        #[cfg(target_arch = "aarch64")]
+        SegSchedule::Lockstep(b) => {
+            let slots = collect_splits_lockstep(ctx, samples, &splits, tokenizer, b);
+            replay_splits_ordered(ctx, samples.len(), &splits, slots, on_text);
+            return;
+        }
+        SegSchedule::ParallelWorkers(k) => {
+            let slots = collect_splits_parallel(ctx, samples, &splits, tokenizer, k);
+            replay_splits_ordered(ctx, samples.len(), &splits, slots, on_text);
+            return;
+        }
+        SegSchedule::Serial => {}
+    }
+
+    let min_samples = SAMPLE_RATE as usize / 2;
     for s in 0..n_splits {
         let seg_start = splits[s];
         let seg_end = if s + 1 < n_splits {
@@ -941,6 +964,44 @@ fn samples_to_ms(samples: usize) -> u64 {
     (samples as u64 * 1000) / SAMPLE_RATE as u64
 }
 
+/// Segment-execution strategy shared by every segmented entry point
+/// (`transcribe_audio` and the timestamped `transcribe_splits` callers).
+enum SegSchedule {
+    /// One segment at a time on the caller's own session: past-text
+    /// conditioning, a single segment, or only one worker available.
+    Serial,
+    /// L3 independent single-threaded workers (round-robin assignment).
+    ParallelWorkers(usize),
+    /// aarch64 lockstep batched decode (R12-E3) with background prefill.
+    #[cfg(target_arch = "aarch64")]
+    Lockstep(usize),
+}
+
+/// Shared scheduling decision for all segmented entry points: parallel
+/// scheduling requires independent segments (`!past_text_conditioning`) and
+/// more than one segment; on aarch64 the lockstep batched scheduler is
+/// preferred when its batch size is >= 2 (env: `QWEN_ASR_SEG_LOCKSTEP`,
+/// `QWEN_ASR_SEG_BATCH`), then the L3 worker pool when its worker count is
+/// >= 2 (env: `QWEN_ASR_SEG_WORKERS`), else serial.
+fn choose_seg_schedule(ctx: &QwenCtx, n_splits: usize) -> SegSchedule {
+    if ctx.past_text_conditioning || n_splits <= 1 {
+        return SegSchedule::Serial;
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        let b = lockstep_batch_size(n_splits);
+        if b >= 2 {
+            return SegSchedule::Lockstep(b);
+        }
+    }
+    let k = segment_worker_count(n_splits);
+    if k >= 2 {
+        SegSchedule::ParallelWorkers(k)
+    } else {
+        SegSchedule::Serial
+    }
+}
+
 /// Transcribe audio samples (f32, 16 kHz, mono, range [-1, 1]).
 ///
 /// When `ctx.segment_sec > 0` and the audio exceeds that duration, it is
@@ -1015,19 +1076,19 @@ pub fn transcribe_audio(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
     // decode is bit-identical to the serial path in both schemes, so the
     // assembled transcript is byte-identical. Past-text conditioning creates
     // a serial dependency (segment N's prompt = segment N-1's text) and stays
-    // serial.
-    if !use_past_text && n_splits > 1 {
+    // serial. The decision itself is shared with the timestamped entry points
+    // via `choose_seg_schedule`.
+    match choose_seg_schedule(ctx, n_splits) {
         #[cfg(target_arch = "aarch64")]
-        {
-            let b = lockstep_batch_size(n_splits);
-            if b >= 2 {
-                return transcribe_splits_lockstep(ctx, &audio_samples, &splits, &tokenizer, b);
-            }
+        SegSchedule::Lockstep(b) => {
+            let slots = collect_splits_lockstep(ctx, &audio_samples, &splits, &tokenizer, b);
+            return Some(assemble_segment_outputs(ctx, slots));
         }
-        let k = segment_worker_count(n_splits);
-        if k >= 2 {
-            return transcribe_splits_parallel(ctx, &audio_samples, &splits, &tokenizer, k);
+        SegSchedule::ParallelWorkers(k) => {
+            let slots = collect_splits_parallel(ctx, &audio_samples, &splits, &tokenizer, k);
+            return Some(assemble_segment_outputs(ctx, slots));
         }
+        SegSchedule::Serial => {}
     }
 
     for s in 0..n_splits {
@@ -1204,20 +1265,70 @@ fn assemble_segment_outputs(ctx: &mut QwenCtx, slots: Vec<Option<SegOut>>) -> St
     result
 }
 
+/// Ordered replay of collected segment outputs into the timestamped
+/// per-segment callback used by `transcribe_splits`: byte-for-byte equivalent
+/// to the serial `transcribe_splits` loop. Streamed pieces go through
+/// `token_cb` in segment order (reproducing the serial stdout byte stream),
+/// each segment's [`SegCore`] is folded into `ctx` (language detection + perf
+/// counters) BEFORE its callback fires — so the `ctx.detected_language` the
+/// callback observes matches the serial path — and segments that failed
+/// (`None` slot) or produced empty text are skipped exactly like the serial
+/// loop's `continue`s. Per-segment perf reporting (`perf_audio_ms`) is
+/// assigned for every segment, as in the serial loop; the region wall time
+/// was already accounted by the collect functions.
+fn replay_splits_ordered(
+    ctx: &mut QwenCtx,
+    n_samples: usize,
+    splits: &[usize],
+    slots: Vec<Option<SegOut>>,
+    on_text: &mut dyn FnMut(&mut QwenCtx, usize, usize, String),
+) {
+    let n_splits = splits.len();
+    for (s, slot) in slots.into_iter().enumerate() {
+        let seg_start = splits[s];
+        let seg_end = if s + 1 < n_splits {
+            splits[s + 1]
+        } else {
+            n_samples
+        };
+
+        // Set perf_audio_ms to this segment's duration, same as the serial
+        // loop does before decoding each segment.
+        ctx.perf_audio_ms = 1000.0 * (seg_end - seg_start) as f64 / SAMPLE_RATE as f64;
+
+        let out = match slot {
+            Some(o) => o,
+            None => continue,
+        };
+        if !out.streamed.is_empty() {
+            if let Some(ref cb) = ctx.token_cb {
+                cb(&out.streamed);
+            }
+        }
+        apply_seg_core(ctx, &out.core);
+
+        if out.core.text.is_empty() {
+            continue;
+        }
+        on_text(ctx, seg_start, seg_end, out.core.text);
+    }
+}
+
 /// Decode independent segments concurrently. Each of `k` workers runs its
 /// kernels single-threaded (`set_thread_override(1)`) and owns its session
 /// buffers, so `k` segments occupy `k` cores with no shared thread-pool
 /// barriers — the in-process analogue of L2's independent processes, but
 /// sharing one immutable weight set. Segments are assigned round-robin for load
-/// balance; results are reassembled in segment order so the transcript (and the
-/// streamed `token_cb` byte order) is identical to the serial path.
-fn transcribe_splits_parallel(
+/// balance; results are returned as segment-indexed slots so the caller can
+/// reassemble them in segment order (see [`assemble_segment_outputs`] and
+/// [`replay_splits_ordered`]), making the outcome identical to the serial path.
+fn collect_splits_parallel(
     ctx: &mut QwenCtx,
     audio_samples: &[f32],
     splits: &[usize],
     tokenizer: &QwenTokenizer,
     k: usize,
-) -> Option<String> {
+) -> Vec<Option<SegOut>> {
     let n_splits = splits.len();
     let seg_inputs = build_seg_inputs(audio_samples, splits);
 
@@ -1295,13 +1406,11 @@ fn transcribe_splits_parallel(
         slots[idx] = Some(out);
     }
 
-    let result = assemble_segment_outputs(ctx, slots);
-
     // Report the parallel region's wall time as the inference time: the honest
     // latency of decoding all segments (per-segment `encode_ms`/`decode_ms`
     // remain component sums and now overlap in wall time).
     ctx.perf_total_ms += region_ms;
-    Some(result)
+    slots
 }
 
 /// Lockstep batch size (live-session cap) for the multi-segment decode path
@@ -1378,14 +1487,18 @@ struct LockstepSeg {
 /// prefill worker for the next unstarted segment, so prefill overlaps decode
 /// instead of stalling it at wave boundaries, and the live set stays near
 /// `b_max` for maximal weight-stream amortization.
+///
+/// Results are returned as segment-indexed slots so the caller can reassemble
+/// them in segment order (see [`assemble_segment_outputs`] and
+/// [`replay_splits_ordered`]).
 #[cfg(target_arch = "aarch64")]
-fn transcribe_splits_lockstep(
+fn collect_splits_lockstep(
     ctx: &mut QwenCtx,
     audio_samples: &[f32],
     splits: &[usize],
     tokenizer: &QwenTokenizer,
     b_max: usize,
-) -> Option<String> {
+) -> Vec<Option<SegOut>> {
     let n_splits = splits.len();
     let seg_inputs = build_seg_inputs(audio_samples, splits);
     let lookahead = lockstep_lookahead();
@@ -1595,12 +1708,10 @@ fn transcribe_splits_lockstep(
     // Shared lockstep decode wall time (all steps), accounted once.
     ctx.perf_decode_ms += decode_ms_total;
 
-    let result = assemble_segment_outputs(ctx, slots);
-
     // Report the whole region's wall time as the inference time (same
     // convention as the parallel path).
     ctx.perf_total_ms += region_ms;
-    Some(result)
+    slots
 }
 
 /// Convenience wrapper: load a WAV file and transcribe it.
