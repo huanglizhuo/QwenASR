@@ -900,8 +900,10 @@ pub fn linear(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>, seq_len: u
         );
         if let Some(b) = b {
             for s in 0..seq_len {
-                for o in 0..out_dim {
-                    y[s * out_dim + o] += b[o];
+                let row = &mut y[s * out_dim..(s + 1) * out_dim];
+                // Contiguous slice iterators: no bounds checks, LLVM auto-vectorizes.
+                for (v, &bv) in row.iter_mut().zip(b.iter()) {
+                    *v += bv;
                 }
             }
         }
@@ -1525,8 +1527,10 @@ fn conv2d_impl(out: &mut [f32], input: &[f32], weight: &[f32], bias: Option<&[f3
     if let Some(bias) = bias {
         for oc in 0..c_out {
             let b = bias[oc];
-            for s in 0..spatial_out {
-                out[oc * spatial_out + s] += b;
+            let row = &mut out[oc * spatial_out..(oc + 1) * spatial_out];
+            // Contiguous broadcast add over a slice: LLVM auto-vectorizes.
+            for v in row.iter_mut() {
+                *v += b;
             }
         }
     }

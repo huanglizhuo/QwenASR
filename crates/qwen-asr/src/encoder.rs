@@ -562,12 +562,37 @@ impl Encoder {
             // Loop order: ch → f → t for sequential reads from c3
             let conv_proj_dim = CONV_HIDDEN * h3;
             let reshaped = &mut bufs.reshaped[..w3 * conv_proj_dim];
-            for ch in 0..CONV_HIDDEN {
-                for f in 0..h3 {
-                    let src_off = ch * h3 * w3 + f * w3;
-                    let dst_col = ch * h3 + f;
-                    for t in 0..w3 {
-                        reshaped[t * conv_proj_dim + dst_col] = c3[src_off + t];
+            // Below this many elements the pool dispatch/wake/join cost outweighs
+            // the win; this only spares tiny trailing partial chunks (full chunks
+            // are w3=13 → ~100K elements and always take the pool path).
+            const RESHAPE_PAR_THRESHOLD: usize = 1 << 15;
+            if w3 * conv_proj_dim >= RESHAPE_PAR_THRESHOLD && kernels::get_num_threads() > 1 {
+                let c3_ptr = c3.as_ptr() as usize;
+                let dst_ptr = reshaped.as_mut_ptr() as usize;
+                // One work item per channel; each ch writes disjoint dst columns
+                // [ch*h3, ch*h3+h3) of every row, so every output element is
+                // written exactly once regardless of scheduling → bit-identical.
+                kernels::parallel_for_dynamic(CONV_HIDDEN, move |ch| {
+                    // SAFETY: items write disjoint dst columns and read only
+                    // their own [ch*h3*w3, (ch+1)*h3*w3) span of c3.
+                    let c3 = unsafe { std::slice::from_raw_parts(c3_ptr as *const f32, CONV_HIDDEN * h3 * w3) };
+                    let reshaped = unsafe { std::slice::from_raw_parts_mut(dst_ptr as *mut f32, w3 * conv_proj_dim) };
+                    for f in 0..h3 {
+                        let src_off = ch * h3 * w3 + f * w3;
+                        let dst_col = ch * h3 + f;
+                        for t in 0..w3 {
+                            reshaped[t * conv_proj_dim + dst_col] = c3[src_off + t];
+                        }
+                    }
+                });
+            } else {
+                for ch in 0..CONV_HIDDEN {
+                    for f in 0..h3 {
+                        let src_off = ch * h3 * w3 + f * w3;
+                        let dst_col = ch * h3 + f;
+                        for t in 0..w3 {
+                            reshaped[t * conv_proj_dim + dst_col] = c3[src_off + t];
+                        }
                     }
                 }
             }
