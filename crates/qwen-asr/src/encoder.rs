@@ -63,6 +63,11 @@ pub struct EncoderBuffers {
     pub conv_cols: Vec<f32>,
     pub window_starts: Vec<i32>,
     pub cap_tokens: usize,
+    /// Width (w3) of the sinusoidal PE table currently held in `pe`.
+    /// 0 = invalid/uncomputed. `pe` is only written by `sinusoidal_pe` and
+    /// only resized by `ensure_stem` to the current chunk's `w3 * d_model`,
+    /// so `pe_w3 == w3` guarantees `pe[..w3 * d_model]` holds valid data.
+    pub pe_w3: usize,
 }
 
 impl Default for EncoderBuffers {
@@ -90,6 +95,7 @@ impl EncoderBuffers {
             conv_cols: Vec::new(),
             window_starts: Vec::new(),
             cap_tokens: 0,
+            pe_w3: 0,
         }
     }
 
@@ -446,7 +452,7 @@ impl Encoder {
 
         // Pre-calculate total tokens
         let mut total_tokens = 0;
-        let mut chunk_sizes = Vec::new();
+        let mut chunk_sizes = Vec::with_capacity(n_chunks);
         for c in 0..n_chunks {
             let start = c * chunk_size;
             let end = (start + chunk_size).min(mel_frames);
@@ -588,9 +594,13 @@ impl Encoder {
                 );
             }
 
-            // Add per-chunk sinusoidal PE
+            // Add per-chunk sinusoidal PE (table is deterministic in (w3, d_model);
+            // recompute only when the cached width doesn't match)
             let pe = &mut bufs.pe[..w3 * d_model];
-            kernels::sinusoidal_pe(pe, w3, d_model);
+            if bufs.pe_w3 != w3 {
+                kernels::sinusoidal_pe(pe, w3, d_model);
+                bufs.pe_w3 = w3;
+            }
             kernels::add_inplace(projected, pe, w3 * d_model);
 
             token_offset += w3;
