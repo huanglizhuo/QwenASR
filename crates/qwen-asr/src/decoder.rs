@@ -958,6 +958,7 @@ pub fn decoder_forward(
     let theta = cfg.dec_rope_theta;
     let q_dim = n_heads * head_dim;
     let kv_dim = n_kv_heads * head_dim;
+    let lm_out_dim = cfg.lm_head_dim();
 
     bufs.x[..dim].copy_from_slice(&input_embed[..dim]);
 
@@ -1005,6 +1006,29 @@ pub fn decoder_forward(
         let ffn_int8_ptr = bufs.ffn_int8.as_mut_ptr() as usize;
         let kv_k_ptr = kv_cache.k.as_mut_ptr() as usize;
         let kv_v_ptr = kv_cache.v.as_mut_ptr() as usize;
+
+        // Fused lm_head epilogue (R14-A2): with the INT8 lm_head available and
+        // a multi-threaded pool, the final norm + vocabulary argmax run as the
+        // last stages INSIDE the region (below), replicating
+        // kernels::argmax_matvec_int8's quantize, row partition, and strict->
+        // reduce exactly, so the returned token is bit-identical while the
+        // token costs one pool wake/join cycle fewer and no per-token
+        // thread::scope OS-thread spawns. Single-thread mode (parallel segment
+        // workers force their kernels single-threaded) and the BF16 fallback
+        // keep the old epilogue after the region.
+        let lm_fused = match (&decoder.lm_head_int8, &decoder.lm_head_int8_scales) {
+            (Some(d), Some(s)) if kernels::get_num_threads() > 1 => {
+                Some((d.as_ptr() as usize, s.as_ptr() as usize))
+            }
+            _ => None,
+        };
+        let norm_w: &[f32] = &decoder.norm;
+        let mut best_idx = [0usize; kernels::MAX_THREADS];
+        let mut best_val = [-1e30f32; kernels::MAX_THREADS];
+        let best_idx_ptr = best_idx.as_mut_ptr() as usize;
+        let best_val_ptr = best_val.as_mut_ptr() as usize;
+        let mut fused_token: i32 = 0;
+        let fused_token_ptr = &mut fused_token as *mut i32 as usize;
 
         kernels::parallel_region(|barrier, tid, nt| {
             // Per-thread SwiGLU gate_up scratch, allocated once per decode step
@@ -1151,7 +1175,80 @@ pub fn decoder_forward(
                 // covers the last layer, and this barrier covers the rest.
                 barrier.wait();
             }
+
+            // Fused lm_head epilogue stages (R14-A2). Bit-identity vs the old
+            // post-region epilogue: same rms_norm + copy-back, same
+            // quantize_into, same row partition and strict-> reduce order as
+            // kernels::argmax_matvec_int8 (chunk = lm_out_dim.div_ceil(nt)).
+            if let Some((lm_int8_ptr, lm_scales_ptr)) = lm_fused {
+                // Stage: final norm + copy-back + quantize (tid 0 serial glue).
+                if tid == 0 {
+                    let x = unsafe { std::slice::from_raw_parts(x_ptr as *const f32, dim) };
+                    let x_norm = unsafe { std::slice::from_raw_parts_mut(x_norm_ptr as *mut f32, dim) };
+                    kernels::rms_norm(x_norm, x, norm_w, 1, dim, eps);
+                    let x_mut = unsafe { std::slice::from_raw_parts_mut(x_ptr as *mut f32, dim) };
+                    x_mut.copy_from_slice(x_norm);
+                    let x_int8 = unsafe { std::slice::from_raw_parts_mut(x_int8_ptr as *mut i8, dim) };
+                    unsafe { *(scales_ptr as *mut f32) = kernels::quantize_into(x_int8, x_norm); }
+                }
+                barrier.wait();
+
+                // Stage: argmax over vocab rows, partitioned exactly like
+                // kernels::argmax_matvec_int8 (empty ranges record (0, -1e30)).
+                {
+                    let chunk = lm_out_dim.div_ceil(nt);
+                    let start = tid * chunk;
+                    let end = (start + chunk).min(lm_out_dim);
+                    let x_scale = unsafe { *(scales_ptr as *const f32) };
+                    let (best, bv) = if start < end {
+                        let w_scales = unsafe {
+                            std::slice::from_raw_parts(lm_scales_ptr as *const f32, lm_out_dim)
+                        };
+                        unsafe {
+                            kernels::neon::argmax_int8_range(
+                                x_int8_ptr as *const i8, x_scale,
+                                lm_int8_ptr as *const i8, w_scales,
+                                dim, start, end,
+                            )
+                        }
+                    } else {
+                        (0, -1e30f32)
+                    };
+                    unsafe {
+                        *(best_idx_ptr as *mut usize).add(tid) = best;
+                        *(best_val_ptr as *mut f32).add(tid) = bv;
+                    }
+                }
+                barrier.wait();
+
+                // Stage: strict-> reduce in tid order (tid 0), same tie-break
+                // as argmax_matvec_int8's reduce.
+                if tid == 0 {
+                    let mut bi = unsafe { *(best_idx_ptr as *const usize) };
+                    let mut bv = unsafe { *(best_val_ptr as *const f32) };
+                    for i in 1..nt {
+                        let v = unsafe { *(best_val_ptr as *const f32).add(i) };
+                        if v > bv {
+                            bv = v;
+                            bi = unsafe { *(best_idx_ptr as *const usize).add(i) };
+                        }
+                    }
+                    unsafe { *(fused_token_ptr as *mut i32) = bi as i32; }
+                }
+            }
         });
+
+        if lm_fused.is_some() {
+            // The fused epilogue produced the token inside the region; skip the
+            // outer final norm/argmax and the thread::scope spawns. Ordering
+            // matches the old path: len is committed first, then the next
+            // step's KV capacity and RoPE tables are prepared.
+            kv_cache.len = pos + 1;
+            let next_pos = kv_cache.len;
+            kv_cache.grow(next_pos + 1);
+            rope.ensure(next_pos + 1, head_dim, theta);
+            return fused_token;
+        }
     }
 
     // Non-aarch64 (BF16) path: unchanged dispatch-per-stage layer loop.
@@ -1278,7 +1375,6 @@ pub fn decoder_forward(
         eps,
     );
     bufs.x[..dim].copy_from_slice(&bufs.x_norm[..dim]);
-    let lm_out_dim = cfg.lm_head_dim();
 
     // Overlap the lm_head argmax with preparation for the next decode step.
     // The next position is fixed regardless of which token wins, so we can
