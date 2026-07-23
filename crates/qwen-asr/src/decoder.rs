@@ -1007,6 +1007,11 @@ pub fn decoder_forward(
         let kv_v_ptr = kv_cache.v.as_mut_ptr() as usize;
 
         kernels::parallel_region(|barrier, tid, nt| {
+            // Per-thread SwiGLU gate_up scratch, allocated once per decode step
+            // instead of once per layer: removes 28 heap allocations per token
+            // per thread from the fused region. Sized for this thread's max
+            // row range (range_for chunks by div_ceil; +1 slack).
+            let mut swiglu_scratch = vec![0.0f32; 2 * (intermediate.div_ceil(nt) + 1)];
             for (layer_idx, layer) in layers.iter().enumerate() {
                 let layer_kv_off = layer_idx * n_kv * kv_head_stride;
                 let k_base = unsafe { (kv_k_ptr as *const f32).add(layer_kv_off) };
@@ -1116,6 +1121,7 @@ pub fn decoder_forward(
                             ffn_out_ptr as *mut f32, x_int8_ptr as *const i8, x_scale,
                             layer.gate_up_int8.as_ptr(), layer.gate_up_int8_scales.as_ptr(),
                             dim, s, e,
+                            &mut swiglu_scratch,
                         );
                     }
                 }

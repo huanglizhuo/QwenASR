@@ -1057,6 +1057,28 @@ pub unsafe fn linear_nobias_bf16_scratch(y: &mut [f32], x: &[f32], w_bf16: *cons
     linear_nobias(y, x, &scratch[..n], seq_len, in_dim, out_dim);
 }
 
+thread_local! {
+    /// Per-thread gate_up scratch for [`linear_nobias_bf16_swiglu`]. The
+    /// single-token BF16 decode path (x86 / no-BLAS / single-thread) calls it
+    /// once per layer per decoded token, so a per-call `vec!` would put a heap
+    /// allocation on the critical path of every token. Each OS thread —
+    /// including `parallel_for_dynamic` workers, which run items one at a time
+    /// to completion — gets its own buffer, the same isolation as today's
+    /// per-call fresh allocations.
+    static SWIGLU_SCRATCH_TLS: std::cell::RefCell<Vec<f32>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Borrow the thread-local gate_up scratch at length `n` (zeroed) and pass it
+/// to `f`. Bit-identical to handing `f` a fresh `vec![0.0; n]`.
+fn with_swiglu_scratch<R>(n: usize, f: impl FnOnce(&mut [f32]) -> R) -> R {
+    SWIGLU_SCRATCH_TLS.with(|c| {
+        let mut buf = c.borrow_mut();
+        buf.clear();
+        buf.resize(n, 0.0);
+        f(&mut buf)
+    })
+}
+
 /// Fused gate_up matvec + SwiGLU for single-token decode.
 /// Computes: `ffn_out[j] = silu(gate[j]) * up[j]` where gate/up come from interleaved gate_up_fused matvec.
 /// Keeps gate_up output in L1 cache for the SwiGLU operation.
@@ -1072,13 +1094,14 @@ pub fn linear_nobias_bf16_swiglu(
 
     if n_threads <= 1 {
         // Single-threaded: compute gate_up, then SwiGLU inline
-        let mut gate_buf = vec![0.0f32; 2 * intermediate];
-        bf16_matvec_fused(&mut gate_buf, x, gate_up_bf16, None, in_dim, 2 * intermediate);
-        for j in 0..intermediate {
-            let g = gate_buf[2 * j];
-            let u = gate_buf[2 * j + 1];
-            ffn_out[j] = g / (1.0 + (-g).exp()) * u;
-        }
+        with_swiglu_scratch(2 * intermediate, |gate_buf| {
+            bf16_matvec_fused(gate_buf, x, gate_up_bf16, None, in_dim, 2 * intermediate);
+            for j in 0..intermediate {
+                let g = gate_buf[2 * j];
+                let u = gate_buf[2 * j + 1];
+                ffn_out[j] = g / (1.0 + (-g).exp()) * u;
+            }
+        });
         return;
     }
 
@@ -1100,17 +1123,18 @@ pub fn linear_nobias_bf16_swiglu(
         let x_local = unsafe { std::slice::from_raw_parts(x_ptr as *const f32, in_dim) };
         let w_local = unsafe { (w_ptr as *const u16).add(2 * start * in_dim) };
 
-        // Compute gate_up for this chunk (thread-local stack buffer)
-        let mut gate_up_local = vec![0.0f32; 2 * n_rows];
-        bf16_matvec_fused(&mut gate_up_local, x_local, w_local, None, in_dim, 2 * n_rows);
+        // Compute gate_up for this chunk (thread-local scratch buffer)
+        with_swiglu_scratch(2 * n_rows, |gate_up_local| {
+            bf16_matvec_fused(gate_up_local, x_local, w_local, None, in_dim, 2 * n_rows);
 
-        // Apply SwiGLU inline while data is hot in L1
-        let ffn_local = unsafe { std::slice::from_raw_parts_mut((ffn_ptr as *mut f32).add(start), n_rows) };
-        for j in 0..n_rows {
-            let g = gate_up_local[2 * j];
-            let u = gate_up_local[2 * j + 1];
-            ffn_local[j] = g / (1.0 + (-g).exp()) * u;
-        }
+            // Apply SwiGLU inline while data is hot in L1
+            let ffn_local = unsafe { std::slice::from_raw_parts_mut((ffn_ptr as *mut f32).add(start), n_rows) };
+            for j in 0..n_rows {
+                let g = gate_up_local[2 * j];
+                let u = gate_up_local[2 * j + 1];
+                ffn_local[j] = g / (1.0 + (-g).exp()) * u;
+            }
+        });
     });
 }
 
@@ -1192,7 +1216,11 @@ pub(crate) unsafe fn int8_qkv_range(
 
 /// Compute intermediate rows `[start, end)` of the fused INT8 gate_up + SwiGLU
 /// projection. Slice entry point of the fused decode region (R5-B). `x_int8`
-/// is the already-quantized input of length `in_dim`.
+/// is the already-quantized input of length `in_dim`. `scratch` (len >=
+/// `2 * (end - start)`) holds the gate_up matvec output; it is caller-provided
+/// (allocated once per thread per decode step) because this kernel runs 28×
+/// per decoded token inside the fused region — a per-call `vec!` would put
+/// `28 × nt` heap allocations on the critical path of every token.
 #[cfg(target_arch = "aarch64")]
 #[inline]
 #[allow(clippy::too_many_arguments)] // hot kernel entry point; params mirror the SIMD call
@@ -1200,13 +1228,17 @@ pub(crate) unsafe fn int8_swiglu_range(
     ffn_ptr: *mut f32, x_int8: *const i8, x_scale: f32,
     w_int8: *const i8, w_scales: *const f32,
     in_dim: usize, start: usize, end: usize,
+    scratch: &mut [f32],
 ) {
     if start >= end { return; }
     let n_rows = end - start;
     let w_local = w_int8.add(2 * start * in_dim);
     let w_scales_local = std::slice::from_raw_parts(w_scales.add(2 * start), 2 * n_rows);
-    let mut gate_up_local = vec![0.0f32; 2 * n_rows];
-    neon::matvec_int8(&mut gate_up_local, x_int8, x_scale, w_local, w_scales_local, None, in_dim, 2 * n_rows);
+    // Zero-init preserved from the original `vec![0.0; ..]`; the matvec writes
+    // every element, so this only keeps the proven behavior identical.
+    let gate_up_local = &mut scratch[..2 * n_rows];
+    gate_up_local.fill(0.0);
+    neon::matvec_int8(gate_up_local, x_int8, x_scale, w_local, w_scales_local, None, in_dim, 2 * n_rows);
     let ffn_local = std::slice::from_raw_parts_mut(ffn_ptr.add(start), n_rows);
     for j in 0..n_rows {
         let g = gate_up_local[2 * j];
@@ -2148,6 +2180,57 @@ pub fn quantize_f32_to_int8(x: &[f32]) -> (Vec<i8>, f32) {
     (int8, scale)
 }
 
+thread_local! {
+    /// Per-thread quantization scratch for [`with_quantized_int8`]. The INT8
+    /// lm_head argmax runs once per decoded token, so a per-call `vec!` would
+    /// put a heap allocation on the critical path of every token; each OS
+    /// thread gets its own buffer, the same isolation as a fresh allocation.
+    static QUANT_TLS: std::cell::RefCell<Vec<i8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Quantize x and pass (buffer, scale) to f, reusing thread-local storage.
+/// Bit-identical to [`quantize_f32_to_int8`] — same absmax scaling math, only
+/// the destination buffer is reused instead of freshly allocated.
+pub fn with_quantized_int8<R>(x: &[f32], f: impl FnOnce(&[i8], f32) -> R) -> R {
+    QUANT_TLS.with(|c| {
+        let mut v = c.borrow_mut();
+        v.clear();
+        v.resize(x.len(), 0i8);
+        let scale = quantize_into(&mut v, x);
+        f(&v, scale)
+    })
+}
+
+#[cfg(target_arch = "aarch64")]
+thread_local! {
+    /// Per-thread pool of quantization buffers for
+    /// [`with_quantized_int8_batch`]. The batched INT8 lm_head argmax scores
+    /// all `b` session inputs against the weights once per decoded token; the
+    /// `b` quantized buffers must stay alive simultaneously, so one reused
+    /// buffer per session (indexed by session, not by call) gives the same
+    /// isolation as today's fresh per-session `vec!`s.
+    static QUANT_BATCH_TLS: std::cell::RefCell<Vec<Vec<i8>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Quantize every session input in `xs` into reused thread-local buffers and
+/// pass (buffers, scales) to `f`. Bit-identical to mapping
+/// [`quantize_f32_to_int8`] over `xs` — same absmax scaling math, only the
+/// destination buffers are reused instead of freshly allocated per token.
+#[cfg(target_arch = "aarch64")]
+pub fn with_quantized_int8_batch<R>(xs: &[&[f32]], f: impl FnOnce(&[Vec<i8>], &[f32]) -> R) -> R {
+    QUANT_BATCH_TLS.with(|c| {
+        let mut bufs = c.borrow_mut();
+        bufs.resize_with(xs.len(), Vec::new);
+        let mut scales = Vec::with_capacity(xs.len());
+        for (buf, x) in bufs.iter_mut().zip(xs.iter()) {
+            buf.clear();
+            buf.resize(x.len(), 0i8);
+            scales.push(quantize_into(buf, x));
+        }
+        f(&bufs, &scales)
+    })
+}
+
 /// Quantize `x` into a caller-provided `dst` buffer with absmax scaling and
 /// return the scale. Bit-identical to [`quantize_f32_to_int8`] but writes into
 /// reusable storage (used by the fused decode region to avoid per-stage
@@ -2197,7 +2280,7 @@ pub unsafe fn quantize_bf16_weights_to_int8(w_bf16: *const u16, out_dim: usize, 
 
 /// INT8 threaded argmax: find argmax(x @ W.T) using INT8 quantized weights.
 pub fn argmax_matvec_int8(x: &[f32], w_int8: &[i8], w_scales: &[f32], in_dim: usize, out_dim: usize) -> usize {
-    let (x_int8, x_scale) = quantize_f32_to_int8(x);
+    with_quantized_int8(x, |x_int8, x_scale| {
     let n_threads = get_num_threads();
     #[cfg(target_arch = "aarch64")]
     {
@@ -2256,6 +2339,7 @@ pub fn argmax_matvec_int8(x: &[f32], w_int8: &[i8], w_scales: &[f32], in_dim: us
         let _ = (x, w_int8, w_scales, in_dim, out_dim, n_threads, x_int8, x_scale);
         unimplemented!("INT8 argmax only implemented for aarch64")
     }
+    })
 }
 
 /// Batched INT8 lm_head argmax (R12-E2): stream the (~155 MB) lm_head weights
@@ -2270,13 +2354,7 @@ pub fn argmax_matvec_int8_batched(
     xs: &[&[f32]], w_int8: &[i8], w_scales: &[f32], in_dim: usize, out_dim: usize,
 ) -> Vec<usize> {
     let b = xs.len();
-    let mut x_int8_bufs: Vec<Vec<i8>> = Vec::with_capacity(b);
-    let mut x_scales: Vec<f32> = Vec::with_capacity(b);
-    for x in xs {
-        let (q, s) = quantize_f32_to_int8(x);
-        x_int8_bufs.push(q);
-        x_scales.push(s);
-    }
+    with_quantized_int8_batch(xs, |x_int8_bufs, x_scales| {
     let x_ptrs: Vec<*const i8> = x_int8_bufs.iter().map(|v| v.as_ptr()).collect();
     let n_threads = get_num_threads();
 
@@ -2335,6 +2413,7 @@ pub fn argmax_matvec_int8_batched(
         }
     }
     best
+    })
 }
 
 pub fn argmax_matvec_bf16(x: &[f32], w_bf16: *const u16, in_dim: usize, out_dim: usize) -> usize {
@@ -2491,11 +2570,13 @@ mod tests {
                         if s >= e { continue; }
                         let xi_ptrs: Vec<*const i8> = xi.iter().map(|v| v.as_ptr()).collect();
                         let mut ff_ref: Vec<Vec<f32>> = (0..b).map(|_| vec![0.0f32; n_rows]).collect();
+                        let mut scratch = vec![0.0f32; 2 * n_rows];
                         for j in 0..b {
                             unsafe {
                                 int8_swiglu_range(
                                     ff_ref[j].as_mut_ptr(), xi[j].as_ptr(), xs[j],
                                     w.as_ptr(), ws.as_ptr(), in_dim, s, e,
+                                    &mut scratch,
                                 );
                             }
                         }
@@ -2733,11 +2814,13 @@ mod tests {
             xq[p * in_dim..(p + 1) * in_dim].copy_from_slice(&xi[p]);
         }
         let mut ff_ref = vec![0.0f32; seq_len * n_rows];
+        let mut scratch = vec![0.0f32; 2 * n_rows];
         for p in 0..seq_len {
             unsafe {
                 int8_swiglu_range(
                     ff_ref[p * n_rows..].as_mut_ptr(), xi[p].as_ptr(), xs[p],
                     w.as_ptr(), ws.as_ptr(), in_dim, 0, n_rows,
+                    &mut scratch,
                 );
             }
         }
