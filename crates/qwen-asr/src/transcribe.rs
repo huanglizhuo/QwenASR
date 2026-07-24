@@ -478,12 +478,37 @@ fn prefill_segment_core(
     })
 }
 
+/// Acceptance telemetry for the R14-B1 offline prompt-lookup verifier in
+/// [`decode_segment_core`], surfaced at `kernels::verbose() >= 2`. These
+/// counts validate the B1 economics: per-draft acceptance `p` and
+/// tokens/verify-step determine how much of the ~575 MB/token decode weight
+/// stream the verifier amortizes.
+#[cfg(target_arch = "aarch64")]
+#[derive(Default)]
+struct OfflineVerifyStats {
+    /// Multi-token verify steps executed (`decoder_forward_verify` calls).
+    verify_steps: usize,
+    /// Draft tokens accepted across all verify steps.
+    accepted_drafts: usize,
+    /// Single-token steps taken because the draft proposal was empty.
+    single_steps: usize,
+    /// `propose()` calls that returned no drafts.
+    empty_proposals: usize,
+}
+
 /// Decode a single segment against shared `weights` using a worker-owned
-/// `session`. `on_piece` receives the raw bytes of each decoded *text* token as
-/// it is produced (the serial path streams these through `token_cb`; the
-/// parallel path captures them for ordered replay). This function touches no
-/// [`QwenCtx`] state, so it is safe to run on many threads concurrently as long
-/// as each call has its own `session`.
+/// session's buffers. `on_piece` receives the raw bytes of each decoded *text*
+/// token as it is produced (the serial path streams these through `token_cb`;
+/// the parallel path captures them for ordered replay). This function touches
+/// no [`QwenCtx`] state, so it is safe to run on many threads concurrently as
+/// long as each call has its own session buffers.
+///
+/// `verify_pool` (aarch64 only): `Some` enables the R14-B1 prompt-lookup
+/// speculative decode path (serial/single-session callers pass the ctx-owned
+/// pool when `QWEN_ASR_VERIFY=1` opts in — default OFF, measured acceptance
+/// on ASR text is ~0); `None` keeps the plain autoregressive loop (the L3
+/// parallel workers pass `None` — they run single-threaded by design and v1
+/// does not speculate there).
 #[allow(clippy::too_many_arguments)]
 fn decode_segment_core(
     weights: &SegWeights,
@@ -491,6 +516,7 @@ fn decode_segment_core(
     rope_cache: &mut RopeCache,
     dec_bufs: &mut DecoderBuffers,
     enc_bufs: &mut EncoderBuffers,
+    #[cfg(target_arch = "aarch64")] verify_pool: Option<&mut decoder::VerifyBufferPool>,
     tokenizer: &QwenTokenizer,
     samples: &[f32],
     past_tokens: Option<&[i32]>,
@@ -527,7 +553,123 @@ fn decode_segment_core(
     let mut header_bytes: Vec<u8> = Vec::new();
     let mut tmp_embed = vec![0.0f32; dim];
 
+    // R14-B1 (aarch64, verify_pool = Some): prompt-lookup speculative decode.
+    // Each iteration proposes up to MAX_BATCH-1 drafts from the segment's own
+    // committed-token history (n-gram self-match, ~zero cost) and verifies
+    // them in ONE multi-token forward that streams the decoder weights once.
+    // Every accepted draft is a nearly-free token (~5 ms of DRAM-bound weight
+    // traffic saved). Only verifier-accepted tokens are committed, so the
+    // output is byte-identical to the plain greedy loop below; on the first
+    // mismatch the next iteration simply re-proposes (no realignment latch).
+    #[cfg(target_arch = "aarch64")]
+    let mut verify_pool = verify_pool;
+    #[cfg(target_arch = "aarch64")]
+    let mut lookup = crate::draft::PromptLookup::new();
+    #[cfg(target_arch = "aarch64")]
+    let mut stats = OfflineVerifyStats::default();
+    #[cfg(target_arch = "aarch64")]
+    let (mut verify_embeds, mut verify_out) = if verify_pool.is_some() {
+        (
+            vec![0.0f32; kernels::MAX_BATCH * dim],
+            vec![0i32; kernels::MAX_BATCH],
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
     while n_generated < max_tokens {
+        #[cfg(target_arch = "aarch64")]
+        if let Some(pool) = verify_pool.as_deref_mut() {
+            // Mirror the sequential loop's top-of-iteration EOS handling for
+            // the pending token so a pending EOS is never fed to the model.
+            if token == TOKEN_ENDOFTEXT || token == TOKEN_IM_END {
+                n_generated += 1;
+                break;
+            }
+
+            // Owned copy (≤ 7 tokens): the commit loop below mutates `lookup`,
+            // which `propose`'s returned slice borrows.
+            let drafts = lookup.propose(kernels::MAX_BATCH - 1).to_vec();
+            if drafts.is_empty() {
+                stats.single_steps += 1;
+                stats.empty_proposals += 1;
+                // Fall through to the plain single-token step below.
+            } else {
+                // Verify window [t0, d1..d_k]: one weight stream for kk lanes.
+                let kk = 1 + drafts.len();
+                unsafe {
+                    tok_embed_bf16_to_f32(&mut verify_embeds[..dim], tok_emb, token, dim);
+                }
+                for (i, &d) in drafts.iter().enumerate() {
+                    unsafe {
+                        tok_embed_bf16_to_f32(
+                            &mut verify_embeds[(i + 1) * dim..(i + 2) * dim],
+                            tok_emb,
+                            d,
+                            dim,
+                        );
+                    }
+                }
+                let base = kv_cache.len;
+                let bufs = pool.ensure(kk, cfg);
+                decoder::decoder_forward_verify(
+                    weights.decoder,
+                    cfg,
+                    kv_cache,
+                    rope_cache,
+                    bufs,
+                    &verify_embeds[..kk * dim],
+                    kk,
+                    &mut verify_out[..kk],
+                );
+                // kv_cache.len == base + kk here.
+                let a = decoder::verify_accepted_len(&drafts, &verify_out[..kk]);
+                stats.verify_steps += 1;
+                stats.accepted_drafts += a;
+
+                // Commit the run [t0, d1..d_a] through the exact sequential
+                // per-token semantics (budget, EOS, state machine, on_piece),
+                // then roll kv_cache.len back to the tokens actually fed —
+                // stale rows beyond it are overwritten on the next step.
+                let run_first = token;
+                let mut pushed = 0usize;
+                let mut stop = false;
+                for idx in 0..(a + 1) {
+                    let c = if idx == 0 { run_first } else { drafts[idx - 1] };
+                    if n_generated >= max_tokens {
+                        stop = true;
+                        break;
+                    }
+                    n_generated += 1;
+                    if c == TOKEN_ENDOFTEXT || c == TOKEN_IM_END {
+                        stop = true;
+                        break;
+                    }
+                    if c == TOKEN_ASR_TEXT {
+                        past_asr_text = true;
+                    } else if past_asr_text {
+                        let piece_bytes = tokenizer.decode_bytes(c);
+                        text_bytes.extend_from_slice(piece_bytes);
+                        n_text_tokens += 1;
+                        on_piece(piece_bytes);
+                    } else if c < 151643 {
+                        let piece_bytes = tokenizer.decode_bytes(c);
+                        header_bytes.extend_from_slice(piece_bytes);
+                    }
+                    lookup.push(c);
+                    pushed += 1;
+                }
+                kv_cache.len = base + pushed;
+                if stop {
+                    break;
+                }
+                // The free token is the pending token for the next step; it is
+                // NOT committed yet (the next iteration's run handles it).
+                token = verify_out[a];
+                continue;
+            }
+        }
+
         n_generated += 1;
 
         if token == TOKEN_ENDOFTEXT || token == TOKEN_IM_END {
@@ -544,6 +686,11 @@ fn decode_segment_core(
         } else if token < 151643 {
             let piece_bytes = tokenizer.decode_bytes(token);
             header_bytes.extend_from_slice(piece_bytes);
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        if verify_pool.is_some() {
+            lookup.push(token);
         }
 
         unsafe { tok_embed_bf16_to_f32(&mut tmp_embed, tok_emb, token, dim) };
@@ -569,6 +716,24 @@ fn decode_segment_core(
                 0.0
             }
         );
+        #[cfg(target_arch = "aarch64")]
+        if stats.verify_steps > 0 || stats.single_steps > 0 {
+            // Tokens per verify step = accepted drafts + the one free token
+            // each step commits; this is the B1 amortization multiplier.
+            eprintln!(
+                "  Verify: {} steps ({} accepted drafts, {:.2} tok/step), {} single steps ({} empty proposals)",
+                stats.verify_steps,
+                stats.accepted_drafts,
+                if stats.verify_steps > 0 {
+                    (stats.accepted_drafts + stats.verify_steps) as f64
+                        / stats.verify_steps as f64
+                } else {
+                    0.0
+                },
+                stats.single_steps,
+                stats.empty_proposals,
+            );
+        }
     }
 
     let text = String::from_utf8_lossy(&text_bytes);
@@ -636,6 +801,15 @@ fn transcribe_segment(
         &mut ctx.rope_cache,
         &mut ctx.dec_bufs,
         &mut ctx.enc_bufs,
+        // R14-B1: the serial single-session path speculates with the
+        // ctx-owned verify pool. Opt-in only (default OFF — measured
+        // acceptance on ASR text is ~0); `QWEN_ASR_VERIFY=1` enables.
+        #[cfg(target_arch = "aarch64")]
+        if offline_verify_enabled() {
+            Some(&mut ctx.verify_pool)
+        } else {
+            None
+        },
         tokenizer,
         samples,
         past_tokens,
@@ -1375,6 +1549,10 @@ fn collect_splits_parallel(
                         &mut session.rope_cache,
                         &mut session.dec_bufs,
                         &mut session.enc_bufs,
+                        // Parallel workers run single-threaded by design;
+                        // v1 does not speculate there.
+                        #[cfg(target_arch = "aarch64")]
+                        None,
                         tokenizer,
                         &seg_inputs_ref[idx],
                         None,
@@ -1755,6 +1933,20 @@ fn stream_verify_enabled() -> bool {
     std::env::var("QWEN_ASR_VERIFY")
         .map(|v| v != "0")
         .unwrap_or(true)
+}
+
+/// Whether the R14-B1 offline prompt-lookup verifier is enabled. Default OFF:
+/// measured acceptance on real ASR output is ~0 (audio.wav: 46/46 empty
+/// proposals; long-2min: 0/39 first-draft hits — speech transcripts have no
+/// exploitable token-level n-gram repetition), so the mechanism is kept
+/// byte-identical and tested but opt-in via `QWEN_ASR_VERIFY=1`. The
+/// streaming overlap-draft path above is unaffected (its draft source is the
+/// previous chunk's tail, which DOES predict).
+#[cfg(target_arch = "aarch64")]
+fn offline_verify_enabled() -> bool {
+    std::env::var("QWEN_ASR_VERIFY")
+        .map(|v| v == "1")
+        .unwrap_or(false)
 }
 
 /// Partial-tail re-encode throttle multiplier: the streaming push path only

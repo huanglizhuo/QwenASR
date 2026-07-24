@@ -60,6 +60,7 @@ pub mod c_api;
 pub mod config;
 pub mod context;
 pub mod decoder;
+pub mod draft;
 pub mod encoder;
 pub mod int8_sidecar;
 #[cfg(feature = "android")]
