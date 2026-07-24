@@ -103,10 +103,6 @@ pub fn set_profile(enabled: bool) {
     PROFILE_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
-pub fn is_profiling() -> bool {
-    PROFILE_ENABLED.load(Ordering::Relaxed)
-}
-
 macro_rules! define_profile_counters {
     ($($name:ident),+) => {
         pub struct ProfileCounters {
@@ -153,7 +149,7 @@ macro_rules! define_profile_counters {
 
 define_profile_counters!(
     rms_norm, layer_norm, gelu, swiglu,
-    bf16_matvec, bf16_to_f32_conv, attention_bidir, attention_causal,
+    bf16_matvec, attention_bidir, attention_causal,
     sgemm, conv2d_op, rope, add_inplace_op,
     model_load, encoder_load, decoder_load, tokenizer_load, audio_load, mel_compute
 );
@@ -837,6 +833,7 @@ pub fn matmul_t(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: usiz
 /// slices let every pool thread feed the matrix hardware concurrently.
 /// Returns false when the problem is too small to win over one direct call.
 #[cfg(feature = "blas")]
+#[allow(clippy::too_many_arguments)]
 fn sgemm_nt_pooled(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>,
                    seq_len: usize, in_dim: usize, out_dim: usize, beta: f32) -> bool {
     let nt = get_num_threads();
@@ -2367,7 +2364,7 @@ pub fn argmax_matvec_int8_batched(
         let mut best_val = vec![-1e30f32; b];
         unsafe {
             neon::argmax_int8_batched(
-                b, &mut best, &mut best_val, &x_ptrs, &x_scales,
+                b, &mut best, &mut best_val, &x_ptrs, x_scales,
                 w_int8.as_ptr(), w_scales, in_dim, 0, out_dim,
             );
         }

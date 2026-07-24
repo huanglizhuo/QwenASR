@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 MODEL_DIR="${MODEL_DIR:-$PROJECT_DIR/qwen3-asr-0.6b}"
-INPUT_FILE="${INPUT_FILE:-$PROJECT_DIR/audio.wav}"
+INPUT_FILE="${INPUT_FILE:-$SCRIPT_DIR/samples/audio.wav}"
 RUNS="${RUNS:-3}"
 REPORT_DIR="${REPORT_DIR:-$SCRIPT_DIR/compare-results/second-state-$(date -u +%Y%m%dT%H%M%SZ)}"
 SECOND_STATE_DIR="${SECOND_STATE_DIR:-$PROJECT_DIR/tmp/qwen3_asr_rs}"
@@ -47,7 +47,7 @@ usage() {
 Usage: $0 [options]
 
   --model-dir DIR             Model directory (default: ../qwen3-asr-0.6b)
-  --input FILE                Input WAV file (default: ../audio.wav)
+  --input FILE                Input WAV file (default: samples/audio.wav)
   --runs N                    Number of runs per target (default: 3)
   --report-dir DIR            Output report directory
   --second-state-dir DIR      Directory for second-state clone (default: ../tmp/qwen3_asr_rs)

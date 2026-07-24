@@ -20,6 +20,7 @@
 /// N-gram self-match draft table over one segment's committed-token history.
 /// Reused across the whole segment (the scratch `drafts` vec never
 /// reallocates in steady state).
+#[derive(Default)]
 pub struct PromptLookup {
     /// Committed tokens of this segment, in order.
     history: Vec<i32>,
@@ -29,10 +30,7 @@ pub struct PromptLookup {
 
 impl PromptLookup {
     pub fn new() -> Self {
-        Self {
-            history: Vec::new(),
-            drafts: Vec::new(),
-        }
+        Self::default()
     }
 
     /// Record a committed token (the pending token is pushed only once it is

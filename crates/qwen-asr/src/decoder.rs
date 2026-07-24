@@ -1445,7 +1445,7 @@ pub fn decoder_forward_batched(
 ) {
     const MB: usize = kernels::MAX_BATCH;
     let b = sessions.len();
-    assert!(b >= 1 && b <= MB && out_tokens.len() >= b);
+    assert!((1..=MB).contains(&b) && out_tokens.len() >= b);
     if b == 1 {
         let s = &mut sessions[0];
         out_tokens[0] = decoder_forward(decoder, cfg, s.kv_cache, s.rope, s.bufs, s.input_embed);
@@ -1871,7 +1871,7 @@ pub fn decoder_forward_verify(
 ) {
     const MB: usize = kernels::MAX_BATCH;
     let dim = cfg.dec_hidden;
-    assert!(k >= 1 && k <= MB, "verify k must be in 1..=MAX_BATCH");
+    assert!((1..=MB).contains(&k), "verify k must be in 1..=MAX_BATCH");
     assert!(bufs.len() >= k, "need >= k buffer sets");
     assert!(input_embeds.len() >= k * dim, "need k x dim input embeds");
     assert!(out_argmax.len() >= k, "need k output slots");

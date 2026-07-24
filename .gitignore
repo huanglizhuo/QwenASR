@@ -5,6 +5,7 @@
 *.sidecar
 qwen-asr-int8.sidecar
 /bench/results/
+/bench/wer-results/
 /bench/long/samples/
 /bench/long/results/
 /bench/compare-results/
@@ -12,7 +13,6 @@ qwen-asr-int8.sidecar
 /bench/.venv-mlx-audio/
 /bench/__pycache__/
 /tmp/qwen3_asr_rs/
-/bench/run_mlx_audio.py
 /bench/generate_unified_charts.py
 /qwen3-aligner-0.6b
 /tmp/
@@ -20,6 +20,9 @@ qwen-asr-int8.sidecar
 !/librispeech-wer-bench/librispeech_wer.py
 !/librispeech-wer-bench/run_wer_range.py
 !/librispeech-wer-bench/README.md
+
+# Agent/session local state
+.claude/
 
 /flutter/qwen_asr/rust/target
 

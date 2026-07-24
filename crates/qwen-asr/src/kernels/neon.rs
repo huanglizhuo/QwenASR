@@ -953,9 +953,8 @@ pub unsafe fn matvec_int8_batched(
     bias: Option<&[*const f32]>,
     in_dim: usize, out_dim: usize,
 ) {
-    for o in 0..out_dim {
+    for (o, &ws) in w_scales.iter().enumerate().take(out_dim) {
         let w_row = w_int8.add(o * in_dim);
-        let ws = w_scales[o];
         for bi in 0..b {
             let mut val = int8_row_dot_f32(w_row, x_int8[bi], x_scale[bi], ws, in_dim);
             if let Some(bs) = bias {
@@ -1012,9 +1011,8 @@ pub unsafe fn argmax_int8_batched(
     w_int8: *const i8, w_scales: &[f32],
     in_dim: usize, start: usize, end: usize,
 ) {
-    for o in start..end {
+    for (o, &ws) in w_scales.iter().enumerate().take(end).skip(start) {
         let w_row = w_int8.add(o * in_dim);
-        let ws = w_scales[o];
         for bi in 0..b {
             let val = int8_row_dot_argmax(w_row, x_int8[bi], x_scale[bi], ws, in_dim);
             if val > best_val[bi] {

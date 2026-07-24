@@ -2015,7 +2015,7 @@ fn stream_decode_tail(
         if verify_enabled && !prev_tail.is_empty() {
             const K_MAX: usize = kernels::MAX_BATCH;
             let mut embeds = vec![0f32; K_MAX * dim];
-            let mut out = vec![0i32; K_MAX];
+            let mut out = [0i32; K_MAX];
             let mut drafts_live = true;
 
             'outer: while n_generated < max_new_tokens {
@@ -3318,8 +3318,7 @@ pub fn stream_push_audio(
                 // the reset drops it (mirrors the speech-end commit block).
                 let text_start = stream_text_start(ctx, &state.raw_tokens);
                 let candidate = &state.raw_tokens[text_start..];
-                for i in state.stable_text_tokens.len()..candidate.len() {
-                    let tok = candidate[i];
+                for &tok in &candidate[state.stable_text_tokens.len()..] {
                     state.stable_text_tokens.push(tok);
                     let piece_bytes = tokenizer.decode_bytes(tok);
                     if let Some(ref cb) = ctx.token_cb {
@@ -3352,8 +3351,8 @@ pub fn stream_push_audio(
     {
         let text_start = stream_text_start(ctx, &state.raw_tokens);
         let candidate_tokens = &state.raw_tokens[text_start..];
-        for i in state.stable_text_tokens.len()..candidate_tokens.len() {
-            let piece_bytes = tokenizer.decode_bytes(candidate_tokens[i]);
+        for &tok in &candidate_tokens[state.stable_text_tokens.len()..] {
+            let piece_bytes = tokenizer.decode_bytes(tok);
             state.provisional_bytes.extend_from_slice(piece_bytes);
         }
     }

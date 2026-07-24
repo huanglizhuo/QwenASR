@@ -401,24 +401,21 @@ fn main() {
     let output_requested = srt_requested || vtt_requested || json_requested;
 
     // Resolve file output paths (structured outputs require -i)
-    if output_requested {
-        if input_wav.is_none() {
+    if output_requested
+        && input_wav.is_none() {
             eprintln!("Error: --srt/--vtt/--json requires -i <file>");
             std::process::exit(1);
         }
-    }
-    if srt_requested {
-        if srt_path.is_none() {
+    if srt_requested
+        && srt_path.is_none() {
             let input = input_wav.as_ref().unwrap();
             srt_path = Some(default_output_path(input, "srt"));
         }
-    }
-    if vtt_requested {
-        if vtt_path.is_none() {
+    if vtt_requested
+        && vtt_path.is_none() {
             let input = input_wav.as_ref().unwrap();
             vtt_path = Some(default_output_path(input, "vtt"));
         }
-    }
 
     kernels::set_verbose(verbosity);
     if profile {
@@ -616,11 +613,10 @@ fn main() {
     // Structured output mode: load audio once, transcribe once, optionally align once.
     if output_requested {
         let input = input_wav.as_ref().unwrap();
-        if verbosity >= 1 {
-            if is_video_file(input) {
+        if verbosity >= 1
+            && is_video_file(input) {
                 eprintln!("Extracting audio from video: {}", input);
             }
-        }
         let samples = match preloaded_samples {
             Some(s) => s,
             None => match load_audio(input) {
@@ -714,8 +710,6 @@ fn main() {
                 std::process::exit(1);
             }
         };
-
-        drop(on_segment);
 
         if let Some(error) = write_error {
             eprintln!("Error: {}", error);
