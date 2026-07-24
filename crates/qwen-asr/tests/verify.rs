@@ -51,7 +51,9 @@ fn fresh_prefill(ctx: &QwenCtx, prefill_tokens: &[i32]) -> (KvCache, RopeCache, 
     let seq = prefill_tokens.len();
     let mut embeds = vec![0f32; seq * dim];
     for (i, &t) in prefill_tokens.iter().enumerate() {
-        unsafe { tok_embed_bf16_to_f32(&mut embeds[i * dim..(i + 1) * dim], tok_emb, t, dim); }
+        unsafe {
+            tok_embed_bf16_to_f32(&mut embeds[i * dim..(i + 1) * dim], tok_emb, t, dim);
+        }
     }
 
     let mut kv = KvCache::new(cfg.dec_layers, 2048, cfg.dec_kv_heads, cfg.dec_head_dim);
@@ -77,7 +79,9 @@ fn sequential_argmaxes(ctx: &QwenCtx, prefill_tokens: &[i32], continuation: &[i3
     let mut emb = vec![0f32; dim];
     let mut out = Vec::with_capacity(continuation.len());
     for &t in continuation {
-        unsafe { tok_embed_bf16_to_f32(&mut emb, tok_emb, t, dim); }
+        unsafe {
+            tok_embed_bf16_to_f32(&mut emb, tok_emb, t, dim);
+        }
         let a = decoder_forward(decoder, cfg, &mut kv, &mut rope, &mut bufs, &emb);
         out.push(a);
     }
@@ -134,12 +138,20 @@ fn verify_exactness_vs_sequential() {
             assert_eq!(kv.len, expect_base, "verify entry position drift (k={k})");
             let bufs = pool.ensure(kk, cfg);
             decoder_forward_verify(
-                decoder, cfg, &mut kv, &mut rope, bufs, &embeds[..kk * dim], kk, &mut out[..kk],
+                decoder,
+                cfg,
+                &mut kv,
+                &mut rope,
+                bufs,
+                &embeds[..kk * dim],
+                kk,
+                &mut out[..kk],
             );
             assert_eq!(kv.len, expect_base + kk, "kv.len must be base + k (k={k})");
             for i in 0..kk {
                 assert_eq!(
-                    out[i], seq_argmax[pos + i],
+                    out[i],
+                    seq_argmax[pos + i],
                     "verify argmax mismatch at position {} (chunk k={k})",
                     pos + i
                 );
@@ -196,7 +208,9 @@ fn generate_via_verify(
         let kk = 1 + drafts.len();
 
         // window = [t0, d1, .., d_{kk-1}]
-        unsafe { tok_embed_bf16_to_f32(&mut embeds[..dim], tok_emb, t0, dim); }
+        unsafe {
+            tok_embed_bf16_to_f32(&mut embeds[..dim], tok_emb, t0, dim);
+        }
         for (i, &d) in drafts.iter().enumerate() {
             unsafe {
                 tok_embed_bf16_to_f32(&mut embeds[(i + 1) * dim..(i + 2) * dim], tok_emb, d, dim);
@@ -205,7 +219,14 @@ fn generate_via_verify(
 
         let bufs = pool.ensure(kk, cfg);
         decoder_forward_verify(
-            decoder, cfg, &mut kv, &mut rope, bufs, &embeds[..kk * dim], kk, &mut out[..kk],
+            decoder,
+            cfg,
+            &mut kv,
+            &mut rope,
+            bufs,
+            &embeds[..kk * dim],
+            kk,
+            &mut out[..kk],
         );
         assert_eq!(kv.len, base + kk);
 
@@ -260,7 +281,9 @@ fn verify_rollback_matches_sequential() {
         let mut stream = Vec::with_capacity(n_target);
         let mut cur = seed;
         for _ in 0..n_target {
-            unsafe { tok_embed_bf16_to_f32(&mut emb, tok_emb, cur, dim); }
+            unsafe {
+                tok_embed_bf16_to_f32(&mut emb, tok_emb, cur, dim);
+            }
             let a = decoder_forward(decoder, cfg, &mut kv, &mut rope, &mut bufs, &emb);
             stream.push(a);
             cur = a;
@@ -277,11 +300,13 @@ fn verify_rollback_matches_sequential() {
         // Fixed "wrong" token; if one happens to match the true token the
         // acceptance rule still commits it correctly, so the assertion holds
         // regardless.
-        let wrong = generate_via_verify(&ctx, &prefill, seed, n_target, k, &mut pool, |_committed| {
-            vec![39997i32; k - 1]
-        });
+        let wrong =
+            generate_via_verify(&ctx, &prefill, seed, n_target, k, &mut pool, |_committed| {
+                vec![39997i32; k - 1]
+            });
         assert_eq!(
-            &wrong[..], &seq_stream[..],
+            &wrong[..],
+            &seq_stream[..],
             "wrong-draft verify stream must equal sequential (k={k})"
         );
 
@@ -289,19 +314,21 @@ fn verify_rollback_matches_sequential() {
         // accepted (commit k tokens per step); the committed stream must be
         // identical too. Drafts for the current step are the sequential tokens
         // at the positions the verifier is about to produce.
-        let oracle = generate_via_verify(&ctx, &prefill, seed, n_target, k, &mut pool, |committed| {
-            let generated = committed.len() - 1; // index of next token in seq_stream
-            let mut d = Vec::new();
-            for j in 0..(k - 1) {
-                match seq_stream.get(generated + j) {
-                    Some(&t) => d.push(t),
-                    None => break,
+        let oracle =
+            generate_via_verify(&ctx, &prefill, seed, n_target, k, &mut pool, |committed| {
+                let generated = committed.len() - 1; // index of next token in seq_stream
+                let mut d = Vec::new();
+                for j in 0..(k - 1) {
+                    match seq_stream.get(generated + j) {
+                        Some(&t) => d.push(t),
+                        None => break,
+                    }
                 }
-            }
-            d
-        });
+                d
+            });
         assert_eq!(
-            &oracle[..], &seq_stream[..],
+            &oracle[..],
+            &seq_stream[..],
             "oracle-draft verify stream must equal sequential (k={k})"
         );
     }

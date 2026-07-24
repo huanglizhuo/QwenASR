@@ -71,10 +71,7 @@ pub fn list_models() {
 // ========================================================================
 
 fn hf_url(repo: &str, file: &str) -> String {
-    format!(
-        "https://huggingface.co/{}/resolve/main/{}",
-        repo, file
-    )
+    format!("https://huggingface.co/{}/resolve/main/{}", repo, file)
 }
 
 /// Format bytes as human-readable size.
@@ -101,9 +98,7 @@ fn download_file(url: &str, dest: &Path) -> Result<(), String> {
             .unwrap_or_else(|| "part".to_string()),
     );
     if part_path.exists() {
-        start_byte = fs::metadata(&part_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        start_byte = fs::metadata(&part_path).map(|m| m.len()).unwrap_or(0);
     }
 
     // Already fully downloaded?
@@ -115,13 +110,12 @@ fn download_file(url: &str, dest: &Path) -> Result<(), String> {
     let mut req = ureq::get(url);
     if start_byte > 0 {
         req = req.set("Range", &format!("bytes={}-", start_byte));
-        eprint!(
-            "  Resuming from {} ... ",
-            format_bytes(start_byte)
-        );
+        eprint!("  Resuming from {} ... ", format_bytes(start_byte));
     }
 
-    let resp = req.call().map_err(|e| format!("HTTP request failed: {}", e))?;
+    let resp = req
+        .call()
+        .map_err(|e| format!("HTTP request failed: {}", e))?;
 
     // Parse content length
     let total_bytes = if start_byte > 0 {
@@ -149,7 +143,9 @@ fn download_file(url: &str, dest: &Path) -> Result<(), String> {
     let start_time = std::time::Instant::now();
 
     loop {
-        let n = reader.read(&mut buf).map_err(|e| format!("Read error: {}", e))?;
+        let n = reader
+            .read(&mut buf)
+            .map_err(|e| format!("Read error: {}", e))?;
         if n == 0 {
             break;
         }
@@ -190,8 +186,14 @@ fn download_file(url: &str, dest: &Path) -> Result<(), String> {
     eprintln!(); // newline after progress
 
     // Rename .part to final destination
-    fs::rename(&part_path, dest)
-        .map_err(|e| format!("Cannot rename {} → {}: {}", part_path.display(), dest.display(), e))?;
+    fs::rename(&part_path, dest).map_err(|e| {
+        format!(
+            "Cannot rename {} → {}: {}",
+            part_path.display(),
+            dest.display(),
+            e
+        )
+    })?;
 
     Ok(())
 }

@@ -122,14 +122,22 @@ fn vad_segment_reset_triggers_extra_boundary_resets() {
     ctx.multilingual = false;
     ctx.set_vad_segment_reset(true);
     assert!(ctx.vad_segment_reset, "setter must enable the flag");
-    assert!(!ctx.multilingual, "vad_segment_reset must not touch multilingual");
+    assert!(
+        !ctx.multilingual,
+        "vad_segment_reset must not touch multilingual"
+    );
     let (on_counts, on_text, on_stable_reset) = run_stream(&mut ctx, &samples);
     let on_drops = count_drops(&on_counts);
 
     eprintln!("\n=== Task 3: vad_segment_reset discrete segmentation ===");
     eprintln!("encoder-cache release events — OFF(default): {off_drops}   ON(vad): {on_drops}");
-    eprintln!("mid-stream stable-token reset seen — OFF: {off_stable_reset}   ON: {on_stable_reset}");
-    eprintln!("ON final transcript (first 200 chars): {:.200}", on_text.trim());
+    eprintln!(
+        "mid-stream stable-token reset seen — OFF: {off_stable_reset}   ON: {on_stable_reset}"
+    );
+    eprintln!(
+        "ON final transcript (first 200 chars): {:.200}",
+        on_text.trim()
+    );
 
     // The VAD boundaries (silence gaps) must drive strictly more segment resets
     // than the default path's periodic reanchor/degen resets alone.

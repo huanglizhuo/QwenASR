@@ -27,7 +27,14 @@ pub unsafe fn bf16_to_f32_buf(dst: &mut [f32], src: &[u16]) {
 /// # Safety
 /// w_bf16 must point to at least out_dim * in_dim valid bf16 values.
 #[cfg(target_arch = "aarch64")]
-pub unsafe fn bf16_matvec_fused(y: &mut [f32], x: &[f32], w_bf16: *const u16, bias: Option<&[f32]>, in_dim: usize, out_dim: usize) {
+pub unsafe fn bf16_matvec_fused(
+    y: &mut [f32],
+    x: &[f32],
+    w_bf16: *const u16,
+    bias: Option<&[f32]>,
+    in_dim: usize,
+    out_dim: usize,
+) {
     let mut o = 0usize;
 
     // Process 2 output rows at a time
@@ -61,27 +68,91 @@ pub unsafe fn bf16_matvec_fused(y: &mut [f32], x: &[f32], w_bf16: *const u16, bi
             let r0b = vld1q_u16(w0.add(k + 8));
             let r0c = vld1q_u16(w0.add(k + 16));
             let r0d = vld1q_u16(w0.add(k + 24));
-            a0 = vfmaq_f32(a0, vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r0a), 16)), x0);
-            a1 = vfmaq_f32(a1, vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r0a), 16)), x1);
-            a2 = vfmaq_f32(a2, vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r0b), 16)), x2);
-            a3 = vfmaq_f32(a3, vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r0b), 16)), x3);
-            a0 = vfmaq_f32(a0, vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r0c), 16)), x4);
-            a1 = vfmaq_f32(a1, vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r0c), 16)), x5);
-            a2 = vfmaq_f32(a2, vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r0d), 16)), x6);
-            a3 = vfmaq_f32(a3, vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r0d), 16)), x7);
+            a0 = vfmaq_f32(
+                a0,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r0a), 16)),
+                x0,
+            );
+            a1 = vfmaq_f32(
+                a1,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r0a), 16)),
+                x1,
+            );
+            a2 = vfmaq_f32(
+                a2,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r0b), 16)),
+                x2,
+            );
+            a3 = vfmaq_f32(
+                a3,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r0b), 16)),
+                x3,
+            );
+            a0 = vfmaq_f32(
+                a0,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r0c), 16)),
+                x4,
+            );
+            a1 = vfmaq_f32(
+                a1,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r0c), 16)),
+                x5,
+            );
+            a2 = vfmaq_f32(
+                a2,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r0d), 16)),
+                x6,
+            );
+            a3 = vfmaq_f32(
+                a3,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r0d), 16)),
+                x7,
+            );
 
             let r1a = vld1q_u16(w1.add(k));
             let r1b = vld1q_u16(w1.add(k + 8));
             let r1c = vld1q_u16(w1.add(k + 16));
             let r1d = vld1q_u16(w1.add(k + 24));
-            b0 = vfmaq_f32(b0, vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r1a), 16)), x0);
-            b1 = vfmaq_f32(b1, vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r1a), 16)), x1);
-            b2 = vfmaq_f32(b2, vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r1b), 16)), x2);
-            b3 = vfmaq_f32(b3, vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r1b), 16)), x3);
-            b0 = vfmaq_f32(b0, vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r1c), 16)), x4);
-            b1 = vfmaq_f32(b1, vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r1c), 16)), x5);
-            b2 = vfmaq_f32(b2, vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r1d), 16)), x6);
-            b3 = vfmaq_f32(b3, vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r1d), 16)), x7);
+            b0 = vfmaq_f32(
+                b0,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r1a), 16)),
+                x0,
+            );
+            b1 = vfmaq_f32(
+                b1,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r1a), 16)),
+                x1,
+            );
+            b2 = vfmaq_f32(
+                b2,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r1b), 16)),
+                x2,
+            );
+            b3 = vfmaq_f32(
+                b3,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r1b), 16)),
+                x3,
+            );
+            b0 = vfmaq_f32(
+                b0,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r1c), 16)),
+                x4,
+            );
+            b1 = vfmaq_f32(
+                b1,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r1c), 16)),
+                x5,
+            );
+            b2 = vfmaq_f32(
+                b2,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r1d), 16)),
+                x6,
+            );
+            b3 = vfmaq_f32(
+                b3,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r1d), 16)),
+                x7,
+            );
 
             k += 32;
         }
@@ -90,10 +161,26 @@ pub unsafe fn bf16_matvec_fused(y: &mut [f32], x: &[f32], w_bf16: *const u16, bi
             let xv1 = vld1q_f32(x.as_ptr().add(k + 4));
             let r0 = vld1q_u16(w0.add(k));
             let r1 = vld1q_u16(w1.add(k));
-            a0 = vfmaq_f32(a0, vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r0), 16)), xv0);
-            a1 = vfmaq_f32(a1, vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r0), 16)), xv1);
-            b0 = vfmaq_f32(b0, vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r1), 16)), xv0);
-            b1 = vfmaq_f32(b1, vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r1), 16)), xv1);
+            a0 = vfmaq_f32(
+                a0,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r0), 16)),
+                xv0,
+            );
+            a1 = vfmaq_f32(
+                a1,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r0), 16)),
+                xv1,
+            );
+            b0 = vfmaq_f32(
+                b0,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r1), 16)),
+                xv0,
+            );
+            b1 = vfmaq_f32(
+                b1,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r1), 16)),
+                xv1,
+            );
             k += 8;
         }
         s0 += vaddvq_f32(vaddq_f32(vaddq_f32(a0, a2), vaddq_f32(a1, a3)));
@@ -121,10 +208,16 @@ pub unsafe fn bf16_matvec_fused(y: &mut [f32], x: &[f32], w_bf16: *const u16, bi
         let mut acc1 = vdupq_n_f32(0.0);
         while k + 8 <= in_dim {
             let bf = vld1q_u16(w_row.add(k));
-            acc0 = vfmaq_f32(acc0, vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(bf), 16)),
-                             vld1q_f32(x.as_ptr().add(k)));
-            acc1 = vfmaq_f32(acc1, vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(bf), 16)),
-                             vld1q_f32(x.as_ptr().add(k + 4)));
+            acc0 = vfmaq_f32(
+                acc0,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(bf), 16)),
+                vld1q_f32(x.as_ptr().add(k)),
+            );
+            acc1 = vfmaq_f32(
+                acc1,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(bf), 16)),
+                vld1q_f32(x.as_ptr().add(k + 4)),
+            );
             k += 8;
         }
         sum += vaddvq_f32(vaddq_f32(acc0, acc1));
@@ -142,7 +235,13 @@ pub unsafe fn bf16_matvec_fused(y: &mut [f32], x: &[f32], w_bf16: *const u16, bi
 /// # Safety
 /// w_bf16 must point to at least end * in_dim valid bf16 values.
 #[cfg(target_arch = "aarch64")]
-pub unsafe fn argmax_bf16_range(x: &[f32], w_bf16: *const u16, in_dim: usize, start: usize, end: usize) -> (usize, f32) {
+pub unsafe fn argmax_bf16_range(
+    x: &[f32],
+    w_bf16: *const u16,
+    in_dim: usize,
+    start: usize,
+    end: usize,
+) -> (usize, f32) {
     let mut best = start;
     let mut best_val = -1e30f32;
     let mut o = start;
@@ -175,27 +274,91 @@ pub unsafe fn argmax_bf16_range(x: &[f32], w_bf16: *const u16, in_dim: usize, st
             let r0b = vld1q_u16(w0.add(k + 8));
             let r0c = vld1q_u16(w0.add(k + 16));
             let r0d = vld1q_u16(w0.add(k + 24));
-            a0 = vfmaq_f32(a0, vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r0a), 16)), x0);
-            a1 = vfmaq_f32(a1, vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r0a), 16)), x1);
-            a2 = vfmaq_f32(a2, vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r0b), 16)), x2);
-            a3 = vfmaq_f32(a3, vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r0b), 16)), x3);
-            a0 = vfmaq_f32(a0, vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r0c), 16)), x4);
-            a1 = vfmaq_f32(a1, vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r0c), 16)), x5);
-            a2 = vfmaq_f32(a2, vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r0d), 16)), x6);
-            a3 = vfmaq_f32(a3, vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r0d), 16)), x7);
+            a0 = vfmaq_f32(
+                a0,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r0a), 16)),
+                x0,
+            );
+            a1 = vfmaq_f32(
+                a1,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r0a), 16)),
+                x1,
+            );
+            a2 = vfmaq_f32(
+                a2,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r0b), 16)),
+                x2,
+            );
+            a3 = vfmaq_f32(
+                a3,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r0b), 16)),
+                x3,
+            );
+            a0 = vfmaq_f32(
+                a0,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r0c), 16)),
+                x4,
+            );
+            a1 = vfmaq_f32(
+                a1,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r0c), 16)),
+                x5,
+            );
+            a2 = vfmaq_f32(
+                a2,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r0d), 16)),
+                x6,
+            );
+            a3 = vfmaq_f32(
+                a3,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r0d), 16)),
+                x7,
+            );
 
             let r1a = vld1q_u16(w1.add(k));
             let r1b = vld1q_u16(w1.add(k + 8));
             let r1c = vld1q_u16(w1.add(k + 16));
             let r1d = vld1q_u16(w1.add(k + 24));
-            b0 = vfmaq_f32(b0, vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r1a), 16)), x0);
-            b1 = vfmaq_f32(b1, vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r1a), 16)), x1);
-            b2 = vfmaq_f32(b2, vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r1b), 16)), x2);
-            b3 = vfmaq_f32(b3, vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r1b), 16)), x3);
-            b0 = vfmaq_f32(b0, vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r1c), 16)), x4);
-            b1 = vfmaq_f32(b1, vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r1c), 16)), x5);
-            b2 = vfmaq_f32(b2, vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r1d), 16)), x6);
-            b3 = vfmaq_f32(b3, vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r1d), 16)), x7);
+            b0 = vfmaq_f32(
+                b0,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r1a), 16)),
+                x0,
+            );
+            b1 = vfmaq_f32(
+                b1,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r1a), 16)),
+                x1,
+            );
+            b2 = vfmaq_f32(
+                b2,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r1b), 16)),
+                x2,
+            );
+            b3 = vfmaq_f32(
+                b3,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r1b), 16)),
+                x3,
+            );
+            b0 = vfmaq_f32(
+                b0,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r1c), 16)),
+                x4,
+            );
+            b1 = vfmaq_f32(
+                b1,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r1c), 16)),
+                x5,
+            );
+            b2 = vfmaq_f32(
+                b2,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(r1d), 16)),
+                x6,
+            );
+            b3 = vfmaq_f32(
+                b3,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(r1d), 16)),
+                x7,
+            );
 
             k += 32;
         }
@@ -213,8 +376,14 @@ pub unsafe fn argmax_bf16_range(x: &[f32], w_bf16: *const u16, in_dim: usize, st
             k += 1;
         }
 
-        if s0 > best_val { best_val = s0; best = o; }
-        if s1 > best_val { best_val = s1; best = o + 1; }
+        if s0 > best_val {
+            best_val = s0;
+            best = o;
+        }
+        if s1 > best_val {
+            best_val = s1;
+            best = o + 1;
+        }
         o += 2;
     }
 
@@ -227,10 +396,16 @@ pub unsafe fn argmax_bf16_range(x: &[f32], w_bf16: *const u16, in_dim: usize, st
         let mut acc1 = vdupq_n_f32(0.0);
         while k + 8 <= in_dim {
             let bf = vld1q_u16(w_row.add(k));
-            acc0 = vfmaq_f32(acc0, vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(bf), 16)),
-                             vld1q_f32(x.as_ptr().add(k)));
-            acc1 = vfmaq_f32(acc1, vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(bf), 16)),
-                             vld1q_f32(x.as_ptr().add(k + 4)));
+            acc0 = vfmaq_f32(
+                acc0,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_low_u16(bf), 16)),
+                vld1q_f32(x.as_ptr().add(k)),
+            );
+            acc1 = vfmaq_f32(
+                acc1,
+                vreinterpretq_f32_u32(vshll_n_u16(vget_high_u16(bf), 16)),
+                vld1q_f32(x.as_ptr().add(k + 4)),
+            );
             k += 8;
         }
         sum += vaddvq_f32(vaddq_f32(acc0, acc1));
@@ -240,7 +415,10 @@ pub unsafe fn argmax_bf16_range(x: &[f32], w_bf16: *const u16, in_dim: usize, st
             sum += w_val * x[k];
             k += 1;
         }
-        if sum > best_val { best_val = sum; best = o; }
+        if sum > best_val {
+            best_val = sum;
+            best = o;
+        }
         o += 1;
     }
 
@@ -258,15 +436,35 @@ pub unsafe fn dot_f32(a: &[f32], b: &[f32], n: usize) -> f32 {
     let mut acc3 = vdupq_n_f32(0.0);
 
     while i + 16 <= n {
-        acc0 = vfmaq_f32(acc0, vld1q_f32(a.as_ptr().add(i)), vld1q_f32(b.as_ptr().add(i)));
-        acc1 = vfmaq_f32(acc1, vld1q_f32(a.as_ptr().add(i + 4)), vld1q_f32(b.as_ptr().add(i + 4)));
-        acc2 = vfmaq_f32(acc2, vld1q_f32(a.as_ptr().add(i + 8)), vld1q_f32(b.as_ptr().add(i + 8)));
-        acc3 = vfmaq_f32(acc3, vld1q_f32(a.as_ptr().add(i + 12)), vld1q_f32(b.as_ptr().add(i + 12)));
+        acc0 = vfmaq_f32(
+            acc0,
+            vld1q_f32(a.as_ptr().add(i)),
+            vld1q_f32(b.as_ptr().add(i)),
+        );
+        acc1 = vfmaq_f32(
+            acc1,
+            vld1q_f32(a.as_ptr().add(i + 4)),
+            vld1q_f32(b.as_ptr().add(i + 4)),
+        );
+        acc2 = vfmaq_f32(
+            acc2,
+            vld1q_f32(a.as_ptr().add(i + 8)),
+            vld1q_f32(b.as_ptr().add(i + 8)),
+        );
+        acc3 = vfmaq_f32(
+            acc3,
+            vld1q_f32(a.as_ptr().add(i + 12)),
+            vld1q_f32(b.as_ptr().add(i + 12)),
+        );
         i += 16;
     }
 
     while i + 4 <= n {
-        acc0 = vfmaq_f32(acc0, vld1q_f32(a.as_ptr().add(i)), vld1q_f32(b.as_ptr().add(i)));
+        acc0 = vfmaq_f32(
+            acc0,
+            vld1q_f32(a.as_ptr().add(i)),
+            vld1q_f32(b.as_ptr().add(i)),
+        );
         i += 4;
     }
 
@@ -373,7 +571,10 @@ pub unsafe fn rms_norm_row(out: &mut [f32], x: &[f32], weight: &[f32], hidden: u
         let w0 = vld1q_f32(weight.as_ptr().add(i));
         let w1 = vld1q_f32(weight.as_ptr().add(i + 4));
         vst1q_f32(out.as_mut_ptr().add(i), vmulq_f32(vmulq_f32(x0, rms_v), w0));
-        vst1q_f32(out.as_mut_ptr().add(i + 4), vmulq_f32(vmulq_f32(x1, rms_v), w1));
+        vst1q_f32(
+            out.as_mut_ptr().add(i + 4),
+            vmulq_f32(vmulq_f32(x1, rms_v), w1),
+        );
         i += 8;
     }
     while i < hidden {
@@ -431,7 +632,14 @@ pub unsafe fn rms_norm_inplace(x: &mut [f32], weight: &[f32], hidden: usize, eps
 /// # Safety
 /// Uses NEON intrinsics; all slices must have at least hidden elements.
 #[cfg(target_arch = "aarch64")]
-pub unsafe fn layer_norm_row(out: &mut [f32], x: &[f32], weight: &[f32], bias: &[f32], hidden: usize, eps: f32) {
+pub unsafe fn layer_norm_row(
+    out: &mut [f32],
+    x: &[f32],
+    weight: &[f32],
+    bias: &[f32],
+    hidden: usize,
+    eps: f32,
+) {
     // Pass 1: compute mean
     let mut i = 0usize;
     let mut sum0 = vdupq_n_f32(0.0);
@@ -479,8 +687,14 @@ pub unsafe fn layer_norm_row(out: &mut [f32], x: &[f32], weight: &[f32], bias: &
         let w1 = vld1q_f32(weight.as_ptr().add(i + 4));
         let b0 = vld1q_f32(bias.as_ptr().add(i));
         let b1 = vld1q_f32(bias.as_ptr().add(i + 4));
-        vst1q_f32(out.as_mut_ptr().add(i), vfmaq_f32(b0, vmulq_f32(x0, inv_v), w0));
-        vst1q_f32(out.as_mut_ptr().add(i + 4), vfmaq_f32(b1, vmulq_f32(x1, inv_v), w1));
+        vst1q_f32(
+            out.as_mut_ptr().add(i),
+            vfmaq_f32(b0, vmulq_f32(x0, inv_v), w0),
+        );
+        vst1q_f32(
+            out.as_mut_ptr().add(i + 4),
+            vfmaq_f32(b1, vmulq_f32(x1, inv_v), w1),
+        );
         i += 8;
     }
     while i < hidden {
@@ -559,7 +773,7 @@ pub unsafe fn gelu_inplace(x: &mut [f32], n: usize) {
         let v = vld1q_f32(x.as_ptr().add(i));
         let v3 = vmulq_f32(vmulq_f32(v, v), v);
         let inner = vmulq_f32(coeff, vfmaq_f32(v, c3, v3)); // coeff * (v + c3 * v^3)
-        // tanh(x) ≈ (1 - 2/(exp(2x)+1)) = approximate via fast_exp
+                                                            // tanh(x) ≈ (1 - 2/(exp(2x)+1)) = approximate via fast_exp
         let exp2x = fast_exp_neon(vmulq_f32(vdupq_n_f32(2.0), inner));
         let tanh_v = vsubq_f32(one, vdivq_f32(vdupq_n_f32(2.0), vaddq_f32(exp2x, one)));
         let result = vmulq_f32(half, vmulq_f32(v, vaddq_f32(one, tanh_v)));
@@ -583,7 +797,11 @@ pub unsafe fn gelu_inplace(x: &mut [f32], n: usize) {
 /// w_bf16 must point to at least out_dim * in_dim valid bf16 values.
 /// in_dim must be a multiple of 16 for alignment.
 #[cfg(target_arch = "aarch64")]
-pub unsafe fn quantize_bf16_to_int8(w_bf16: *const u16, out_dim: usize, in_dim: usize) -> (Vec<i8>, Vec<f32>) {
+pub unsafe fn quantize_bf16_to_int8(
+    w_bf16: *const u16,
+    out_dim: usize,
+    in_dim: usize,
+) -> (Vec<i8>, Vec<f32>) {
     let mut int8_data = vec![0i8; out_dim * in_dim];
     let mut scales = vec![0.0f32; out_dim];
 
@@ -606,7 +824,9 @@ pub unsafe fn quantize_bf16_to_int8(w_bf16: *const u16, out_dim: usize, in_dim: 
         let mut max_abs = vmaxvq_f32(vmax);
         while k < in_dim {
             let v = f32::from_bits((*w_row.add(k) as u32) << 16).abs();
-            if v > max_abs { max_abs = v; }
+            if v > max_abs {
+                max_abs = v;
+            }
             k += 1;
         }
 
@@ -663,10 +883,14 @@ unsafe fn sdot_s32(mut acc: int32x4_t, a: int8x16_t, b: int8x16_t) -> int32x4_t 
 #[cfg(target_arch = "aarch64")]
 #[allow(clippy::too_many_arguments)] // hot kernel entry point; params mirror the C-style ABI
 pub unsafe fn matvec_int8(
-    y: &mut [f32], x_int8: *const i8, x_scale: f32,
-    w_int8: *const i8, w_scales: &[f32],
+    y: &mut [f32],
+    x_int8: *const i8,
+    x_scale: f32,
+    w_int8: *const i8,
+    w_scales: &[f32],
     bias: Option<&[f32]>,
-    in_dim: usize, out_dim: usize,
+    in_dim: usize,
+    out_dim: usize,
 ) {
     let mut o = 0;
     while o + 1 < out_dim {
@@ -723,7 +947,11 @@ pub unsafe fn matvec_int8(
         let mut k = 0;
         while k + 32 <= in_dim {
             acc0 = sdot_s32(acc0, vld1q_s8(x_int8.add(k)), vld1q_s8(w_row.add(k)));
-            acc1 = sdot_s32(acc1, vld1q_s8(x_int8.add(k + 16)), vld1q_s8(w_row.add(k + 16)));
+            acc1 = sdot_s32(
+                acc1,
+                vld1q_s8(x_int8.add(k + 16)),
+                vld1q_s8(w_row.add(k + 16)),
+            );
             k += 32;
         }
         while k + 16 <= in_dim {
@@ -735,7 +963,9 @@ pub unsafe fn matvec_int8(
             val += (*x_int8.add(k) as f32) * (*w_row.add(k) as f32) * x_scale * w_scales[o];
             k += 1;
         }
-        if let Some(b) = bias { val += b[o]; }
+        if let Some(b) = bias {
+            val += b[o];
+        }
         y[o] = val;
         o += 1;
     }
@@ -749,9 +979,13 @@ pub unsafe fn matvec_int8(
 /// Uses NEON SDOT via inline asm. in_dim should be a multiple of 16 for best perf.
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn argmax_int8_range(
-    x_int8: *const i8, x_scale: f32,
-    w_int8: *const i8, w_scales: &[f32],
-    in_dim: usize, start: usize, end: usize,
+    x_int8: *const i8,
+    x_scale: f32,
+    w_int8: *const i8,
+    w_scales: &[f32],
+    in_dim: usize,
+    start: usize,
+    end: usize,
 ) -> (usize, f32) {
     let mut best = start;
     let mut best_val = -1e30f32;
@@ -829,9 +1063,21 @@ pub unsafe fn argmax_int8_range(
 
         while k + 64 <= in_dim {
             acc0 = sdot_s32(acc0, vld1q_s8(x_int8.add(k)), vld1q_s8(w_row.add(k)));
-            acc1 = sdot_s32(acc1, vld1q_s8(x_int8.add(k + 16)), vld1q_s8(w_row.add(k + 16)));
-            acc2 = sdot_s32(acc2, vld1q_s8(x_int8.add(k + 32)), vld1q_s8(w_row.add(k + 32)));
-            acc3 = sdot_s32(acc3, vld1q_s8(x_int8.add(k + 48)), vld1q_s8(w_row.add(k + 48)));
+            acc1 = sdot_s32(
+                acc1,
+                vld1q_s8(x_int8.add(k + 16)),
+                vld1q_s8(w_row.add(k + 16)),
+            );
+            acc2 = sdot_s32(
+                acc2,
+                vld1q_s8(x_int8.add(k + 32)),
+                vld1q_s8(w_row.add(k + 32)),
+            );
+            acc3 = sdot_s32(
+                acc3,
+                vld1q_s8(x_int8.add(k + 48)),
+                vld1q_s8(w_row.add(k + 48)),
+            );
             k += 64;
         }
 
@@ -882,14 +1128,22 @@ pub unsafe fn argmax_int8_range(
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn int8_row_dot_f32(
-    w_row: *const i8, x_int8: *const i8, x_scale: f32, w_scale: f32, in_dim: usize,
+    w_row: *const i8,
+    x_int8: *const i8,
+    x_scale: f32,
+    w_scale: f32,
+    in_dim: usize,
 ) -> f32 {
     let mut acc0 = vdupq_n_s32(0);
     let mut acc1 = vdupq_n_s32(0);
     let mut k = 0;
     while k + 32 <= in_dim {
         acc0 = sdot_s32(acc0, vld1q_s8(x_int8.add(k)), vld1q_s8(w_row.add(k)));
-        acc1 = sdot_s32(acc1, vld1q_s8(x_int8.add(k + 16)), vld1q_s8(w_row.add(k + 16)));
+        acc1 = sdot_s32(
+            acc1,
+            vld1q_s8(x_int8.add(k + 16)),
+            vld1q_s8(w_row.add(k + 16)),
+        );
         k += 32;
     }
     while k + 16 <= in_dim {
@@ -912,14 +1166,22 @@ unsafe fn int8_row_dot_f32(
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn int8_row_dot_argmax(
-    w_row: *const i8, x_int8: *const i8, x_scale: f32, w_scale: f32, in_dim: usize,
+    w_row: *const i8,
+    x_int8: *const i8,
+    x_scale: f32,
+    w_scale: f32,
+    in_dim: usize,
 ) -> f32 {
     let mut acc0 = vdupq_n_s32(0);
     let mut acc1 = vdupq_n_s32(0);
     let mut k = 0;
     while k + 32 <= in_dim {
         acc0 = sdot_s32(acc0, vld1q_s8(x_int8.add(k)), vld1q_s8(w_row.add(k)));
-        acc1 = sdot_s32(acc1, vld1q_s8(x_int8.add(k + 16)), vld1q_s8(w_row.add(k + 16)));
+        acc1 = sdot_s32(
+            acc1,
+            vld1q_s8(x_int8.add(k + 16)),
+            vld1q_s8(w_row.add(k + 16)),
+        );
         k += 32;
     }
     while k + 16 <= in_dim {
@@ -948,10 +1210,14 @@ unsafe fn int8_row_dot_argmax(
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn matvec_int8_batched(
     b: usize,
-    y: &[*mut f32], x_int8: &[*const i8], x_scale: &[f32],
-    w_int8: *const i8, w_scales: &[f32],
+    y: &[*mut f32],
+    x_int8: &[*const i8],
+    x_scale: &[f32],
+    w_int8: *const i8,
+    w_scales: &[f32],
     bias: Option<&[*const f32]>,
-    in_dim: usize, out_dim: usize,
+    in_dim: usize,
+    out_dim: usize,
 ) {
     for (o, &ws) in w_scales.iter().enumerate().take(out_dim) {
         let w_row = w_int8.add(o * in_dim);
@@ -977,9 +1243,13 @@ pub unsafe fn matvec_int8_batched(
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn swiglu_int8_batched(
     b: usize,
-    ffn: &[*mut f32], x_int8: &[*const i8], x_scale: &[f32],
-    w_int8: *const i8, w_scales: &[f32],
-    in_dim: usize, n_rows: usize,
+    ffn: &[*mut f32],
+    x_int8: &[*const i8],
+    x_scale: &[f32],
+    w_int8: *const i8,
+    w_scales: &[f32],
+    in_dim: usize,
+    n_rows: usize,
 ) {
     for j in 0..n_rows {
         let wg = w_int8.add(2 * j * in_dim);
@@ -1006,10 +1276,15 @@ pub unsafe fn swiglu_int8_batched(
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn argmax_int8_batched(
     b: usize,
-    best: &mut [usize], best_val: &mut [f32],
-    x_int8: &[*const i8], x_scale: &[f32],
-    w_int8: *const i8, w_scales: &[f32],
-    in_dim: usize, start: usize, end: usize,
+    best: &mut [usize],
+    best_val: &mut [f32],
+    x_int8: &[*const i8],
+    x_scale: &[f32],
+    w_int8: *const i8,
+    w_scales: &[f32],
+    in_dim: usize,
+    start: usize,
+    end: usize,
 ) {
     for (o, &ws) in w_scales.iter().enumerate().take(end).skip(start) {
         let w_row = w_int8.add(o * in_dim);
@@ -1053,13 +1328,23 @@ pub unsafe fn argmax_int8_batched(
 /// `y` valid for `seq_len*out_dim`; `x_int8` for `seq_len*in_dim`; `x_scales`
 /// for `seq_len`; `w_int8` for `out_dim*in_dim`; `w_scales` for `out_dim`.
 /// `[start, end)` within `[0, out_dim)`.
-#[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "int8-prefill",
+    not(feature = "blas"),
+    target_arch = "aarch64"
+))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn matvec_int8_prefill_rows(
-    y: *mut f32, x_int8: *const i8, x_scales: *const f32,
-    w_int8: *const i8, w_scales: *const f32,
-    in_dim: usize, out_dim: usize, seq_len: usize,
-    start: usize, end: usize,
+    y: *mut f32,
+    x_int8: *const i8,
+    x_scales: *const f32,
+    w_int8: *const i8,
+    w_scales: *const f32,
+    in_dim: usize,
+    out_dim: usize,
+    seq_len: usize,
+    start: usize,
+    end: usize,
 ) {
     for o in start..end {
         let w_row = w_int8.add(o * in_dim);
@@ -1082,13 +1367,23 @@ pub unsafe fn matvec_int8_prefill_rows(
 /// `ffn` valid for `seq_len*n_rows`; `x_int8` for `seq_len*in_dim`; `x_scales`
 /// for `seq_len`; `w_int8` for `2*n_rows*in_dim`; `w_scales` for `2*n_rows`.
 /// `[start, end)` within `[0, n_rows)`.
-#[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "int8-prefill",
+    not(feature = "blas"),
+    target_arch = "aarch64"
+))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn swiglu_int8_prefill_rows(
-    ffn: *mut f32, x_int8: *const i8, x_scales: *const f32,
-    w_int8: *const i8, w_scales: *const f32,
-    in_dim: usize, n_rows: usize, seq_len: usize,
-    start: usize, end: usize,
+    ffn: *mut f32,
+    x_int8: *const i8,
+    x_scales: *const f32,
+    w_int8: *const i8,
+    w_scales: *const f32,
+    in_dim: usize,
+    n_rows: usize,
+    seq_len: usize,
+    start: usize,
+    end: usize,
 ) {
     for j in start..end {
         let wg = w_int8.add(2 * j * in_dim);
@@ -1123,13 +1418,25 @@ pub unsafe fn swiglu_int8_prefill_rows(
 /// `y` valid for `seq_len*out_dim`; `x_int8` for `seq_len*in_dim`; `x_scales`
 /// for `seq_len`; `w_int8` for `out_dim*in_dim`; `w_scales` for `out_dim`;
 /// `bias` (if non-null) for `out_dim`. `[start, end)` within `[0, out_dim)`.
-#[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "int8-encoder",
+    not(feature = "blas"),
+    target_arch = "aarch64"
+))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn matvec_int8_encoder_rows(
-    y: *mut f32, x_int8: *const i8, x_scales: *const f32,
-    w_int8: *const i8, w_scales: *const f32, bias: *const f32,
-    in_dim: usize, out_dim: usize, seq_len: usize,
-    start: usize, end: usize, accumulate: bool,
+    y: *mut f32,
+    x_int8: *const i8,
+    x_scales: *const f32,
+    w_int8: *const i8,
+    w_scales: *const f32,
+    bias: *const f32,
+    in_dim: usize,
+    out_dim: usize,
+    seq_len: usize,
+    start: usize,
+    end: usize,
+    accumulate: bool,
 ) {
     for o in start..end {
         let w_row = w_int8.add(o * in_dim);

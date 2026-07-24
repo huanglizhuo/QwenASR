@@ -15,7 +15,6 @@
 ///     public native void free();
 /// }
 /// ```
-
 use std::os::raw::{c_char, c_void};
 
 // JNI types

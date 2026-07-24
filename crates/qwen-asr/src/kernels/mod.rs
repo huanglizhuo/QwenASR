@@ -1,10 +1,10 @@
 //! BLAS/vDSP bindings, thread pool, and SIMD kernel dispatch.
 
+#[cfg(target_arch = "x86_64")]
+pub mod avx;
 pub mod generic;
 #[cfg(target_arch = "aarch64")]
 pub mod neon;
-#[cfg(target_arch = "x86_64")]
-pub mod avx;
 
 const SUPERPAGE_SIZE: usize = 2 * 1024 * 1024;
 
@@ -35,11 +35,20 @@ pub fn superpage_vec<T: Copy>(n: usize) -> Vec<T> {
 #[link(name = "Accelerate", kind = "framework")]
 extern "C" {
     fn cblas_sgemm(
-        order: i32, transa: i32, transb: i32,
-        m: i32, n: i32, k: i32,
-        alpha: f32, a: *const f32, lda: i32,
-        b: *const f32, ldb: i32,
-        beta: f32, c: *mut f32, ldc: i32,
+        order: i32,
+        transa: i32,
+        transb: i32,
+        m: i32,
+        n: i32,
+        k: i32,
+        alpha: f32,
+        a: *const f32,
+        lda: i32,
+        b: *const f32,
+        ldb: i32,
+        beta: f32,
+        c: *mut f32,
+        ldc: i32,
     );
 }
 
@@ -48,22 +57,29 @@ extern "C" {
 #[link(name = "Accelerate", kind = "framework")]
 extern "C" {
     fn vDSP_dotpr(
-        a: *const f32, a_stride: i32,
-        b: *const f32, b_stride: i32,
+        a: *const f32,
+        a_stride: i32,
+        b: *const f32,
+        b_stride: i32,
         result: *mut f32,
         n: u64,
     );
     fn vDSP_vsmul(
-        a: *const f32, a_stride: i32,
+        a: *const f32,
+        a_stride: i32,
         scalar: *const f32,
-        c: *mut f32, c_stride: i32,
+        c: *mut f32,
+        c_stride: i32,
         n: u64,
     );
     fn vDSP_vsma(
-        a: *const f32, a_stride: i32,
+        a: *const f32,
+        a_stride: i32,
         scalar: *const f32,
-        b: *const f32, b_stride: i32,
-        c: *mut f32, c_stride: i32,
+        b: *const f32,
+        b_stride: i32,
+        c: *mut f32,
+        c_stride: i32,
         n: u64,
     );
     fn vvexpf(dst: *mut f32, src: *const f32, n: *const i32);
@@ -72,11 +88,20 @@ extern "C" {
 #[cfg(all(feature = "blas", not(target_vendor = "apple")))]
 extern "C" {
     fn cblas_sgemm(
-        order: i32, transa: i32, transb: i32,
-        m: i32, n: i32, k: i32,
-        alpha: f32, a: *const f32, lda: i32,
-        b: *const f32, ldb: i32,
-        beta: f32, c: *mut f32, ldc: i32,
+        order: i32,
+        transa: i32,
+        transb: i32,
+        m: i32,
+        n: i32,
+        k: i32,
+        alpha: f32,
+        a: *const f32,
+        lda: i32,
+        b: *const f32,
+        ldb: i32,
+        beta: f32,
+        c: *mut f32,
+        ldc: i32,
     );
 }
 
@@ -94,7 +119,7 @@ static VERBOSE: AtomicI32 = AtomicI32::new(0);
 // Profiling support
 // ========================================================================
 
-use std::sync::atomic::{AtomicU64, AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::time::Instant;
 
 static PROFILE_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -148,10 +173,23 @@ macro_rules! define_profile_counters {
 }
 
 define_profile_counters!(
-    rms_norm, layer_norm, gelu, swiglu,
-    bf16_matvec, attention_bidir, attention_causal,
-    sgemm, conv2d_op, rope, add_inplace_op,
-    model_load, encoder_load, decoder_load, tokenizer_load, audio_load, mel_compute
+    rms_norm,
+    layer_norm,
+    gelu,
+    swiglu,
+    bf16_matvec,
+    attention_bidir,
+    attention_causal,
+    sgemm,
+    conv2d_op,
+    rope,
+    add_inplace_op,
+    model_load,
+    encoder_load,
+    decoder_load,
+    tokenizer_load,
+    audio_load,
+    mel_compute
 );
 
 pub static PROF: ProfileCounters = ProfileCounters::new();
@@ -165,7 +203,10 @@ impl ProfileGuard {
     #[inline]
     pub fn new(counter: &'static (AtomicU64, AtomicU64)) -> Option<Self> {
         if PROFILE_ENABLED.load(Ordering::Relaxed) {
-            Some(ProfileGuard { start: Instant::now(), counter })
+            Some(ProfileGuard {
+                start: Instant::now(),
+                counter,
+            })
         } else {
             None
         }
@@ -183,8 +224,12 @@ impl Drop for ProfileGuard {
 
 // Convenience: unused ProfileTimer alias removed
 
-pub fn profile_reset() { PROF.reset(); }
-pub fn profile_report() { PROF.report(); }
+pub fn profile_reset() {
+    PROF.reset();
+}
+pub fn profile_report() {
+    PROF.report();
+}
 
 pub fn set_verbose(v: i32) {
     VERBOSE.store(v, Ordering::Relaxed);
@@ -200,14 +245,14 @@ pub fn verbose() -> i32 {
 
 mod pool;
 
-pub use pool::{get_default_threads, get_num_cpus, get_num_threads, set_threads};
 pub(crate) use pool::parallel_for;
 pub(crate) use pool::parallel_for_dynamic;
-pub(crate) use pool::set_thread_override;
-#[cfg(target_arch = "aarch64")]
-pub(crate) use pool::{range_for, MAX_THREADS};
 #[cfg(target_arch = "aarch64")]
 pub(crate) use pool::parallel_region;
+pub(crate) use pool::set_thread_override;
+pub use pool::{get_default_threads, get_num_cpus, get_num_threads, set_threads};
+#[cfg(target_arch = "aarch64")]
+pub(crate) use pool::{range_for, MAX_THREADS};
 
 // ========================================================================
 // Dispatch helpers - pick NEON/AVX/generic at compile time
@@ -220,10 +265,18 @@ pub fn bf16_to_f32(bf16: u16) -> f32 {
 
 pub fn bf16_to_f32_buf(dst: &mut [f32], src: &[u16]) {
     #[cfg(target_arch = "aarch64")]
-    { unsafe { neon::bf16_to_f32_buf(dst, src); } }
+    {
+        unsafe {
+            neon::bf16_to_f32_buf(dst, src);
+        }
+    }
 
     #[cfg(target_arch = "x86_64")]
-    { unsafe { avx::bf16_to_f32_buf(dst, src); } }
+    {
+        unsafe {
+            avx::bf16_to_f32_buf(dst, src);
+        }
+    }
 
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     for i in 0..src.len() {
@@ -262,38 +315,69 @@ pub fn bf16_to_f32_buf_parallel(dst: &mut [f32], src: &[u16]) {
         let start = item * ITEM;
         let end = (start + ITEM).min(n);
         let len = end - start;
-        let dst_local = unsafe { std::slice::from_raw_parts_mut((dst_send as *mut f32).add(start), len) };
-        let src_local = unsafe { std::slice::from_raw_parts((src_send as *const u16).add(start), len) };
+        let dst_local =
+            unsafe { std::slice::from_raw_parts_mut((dst_send as *mut f32).add(start), len) };
+        let src_local =
+            unsafe { std::slice::from_raw_parts((src_send as *const u16).add(start), len) };
         bf16_to_f32_buf(dst_local, src_local);
     });
 }
 
-fn bf16_matvec_fused(y: &mut [f32], x: &[f32], w_bf16: *const u16, bias: Option<&[f32]>, in_dim: usize, out_dim: usize) {
+fn bf16_matvec_fused(
+    y: &mut [f32],
+    x: &[f32],
+    w_bf16: *const u16,
+    bias: Option<&[f32]>,
+    in_dim: usize,
+    out_dim: usize,
+) {
     #[cfg(target_arch = "aarch64")]
-    { unsafe { neon::bf16_matvec_fused(y, x, w_bf16, bias, in_dim, out_dim); } }
+    {
+        unsafe {
+            neon::bf16_matvec_fused(y, x, w_bf16, bias, in_dim, out_dim);
+        }
+    }
 
     #[cfg(target_arch = "x86_64")]
-    { unsafe { avx::bf16_matvec_fused(y, x, w_bf16, bias, in_dim, out_dim); } }
+    {
+        unsafe {
+            avx::bf16_matvec_fused(y, x, w_bf16, bias, in_dim, out_dim);
+        }
+    }
 
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     // SAFETY: Callers provide `w_bf16` with at least `out_dim * in_dim`
     // readable elements; the architecture-specific implementations above
     // rely on the same contract.
-    unsafe { generic::bf16_matvec_fused(y, x, w_bf16, bias, in_dim, out_dim); }
+    unsafe {
+        generic::bf16_matvec_fused(y, x, w_bf16, bias, in_dim, out_dim);
+    }
 }
 
-fn argmax_bf16_range(x: &[f32], w_bf16: *const u16, in_dim: usize, start: usize, end: usize) -> (usize, f32) {
+fn argmax_bf16_range(
+    x: &[f32],
+    w_bf16: *const u16,
+    in_dim: usize,
+    start: usize,
+    end: usize,
+) -> (usize, f32) {
     #[cfg(target_arch = "aarch64")]
-    { unsafe { neon::argmax_bf16_range(x, w_bf16, in_dim, start, end) } }
+    {
+        unsafe { neon::argmax_bf16_range(x, w_bf16, in_dim, start, end) }
+    }
 
     #[cfg(target_arch = "x86_64")]
-    { unsafe { avx::argmax_bf16_range(x, w_bf16, in_dim, start, end) } }
+    {
+        unsafe { avx::argmax_bf16_range(x, w_bf16, in_dim, start, end) }
+    }
 
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     // SAFETY: Callers provide `w_bf16` with at least `end * in_dim` readable
     // elements; the architecture-specific implementations above use the same
     // raw-pointer contract.
-    unsafe { generic::argmax_bf16_range(x, w_bf16, in_dim, start, end) }
+    unsafe {
+        generic::argmax_bf16_range(x, w_bf16, in_dim, start, end)
+    }
 }
 
 #[inline]
@@ -301,17 +385,33 @@ pub fn dot_f32(a: &[f32], b: &[f32], n: usize) -> f32 {
     #[cfg(all(feature = "vdsp", target_vendor = "apple"))]
     {
         let mut result = 0.0f32;
-        unsafe { vDSP_dotpr(a.as_ptr(), 1, b.as_ptr(), 1, &mut result, n as u64); }
+        unsafe {
+            vDSP_dotpr(a.as_ptr(), 1, b.as_ptr(), 1, &mut result, n as u64);
+        }
         result
     }
 
-    #[cfg(all(target_arch = "aarch64", not(all(feature = "vdsp", target_vendor = "apple"))))]
-    { unsafe { neon::dot_f32(a, b, n) } }
+    #[cfg(all(
+        target_arch = "aarch64",
+        not(all(feature = "vdsp", target_vendor = "apple"))
+    ))]
+    {
+        unsafe { neon::dot_f32(a, b, n) }
+    }
 
-    #[cfg(all(target_arch = "x86_64", not(all(feature = "vdsp", target_vendor = "apple"))))]
-    { unsafe { avx::dot_f32(a, b, n) } }
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(all(feature = "vdsp", target_vendor = "apple"))
+    ))]
+    {
+        unsafe { avx::dot_f32(a, b, n) }
+    }
 
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64", all(feature = "vdsp", target_vendor = "apple"))))]
+    #[cfg(not(any(
+        target_arch = "aarch64",
+        target_arch = "x86_64",
+        all(feature = "vdsp", target_vendor = "apple")
+    )))]
     generic::dot_f32(a, b, n)
 }
 
@@ -319,16 +419,36 @@ pub fn dot_f32(a: &[f32], b: &[f32], n: usize) -> f32 {
 pub fn vec_scale_inplace(dst: &mut [f32], scale: f32, n: usize) {
     #[cfg(all(feature = "vdsp", target_vendor = "apple"))]
     {
-        unsafe { vDSP_vsmul(dst.as_ptr(), 1, &scale, dst.as_mut_ptr(), 1, n as u64); }
+        unsafe {
+            vDSP_vsmul(dst.as_ptr(), 1, &scale, dst.as_mut_ptr(), 1, n as u64);
+        }
     }
 
-    #[cfg(all(target_arch = "aarch64", not(all(feature = "vdsp", target_vendor = "apple"))))]
-    { unsafe { neon::vec_scale_inplace(dst, scale, n); } }
+    #[cfg(all(
+        target_arch = "aarch64",
+        not(all(feature = "vdsp", target_vendor = "apple"))
+    ))]
+    {
+        unsafe {
+            neon::vec_scale_inplace(dst, scale, n);
+        }
+    }
 
-    #[cfg(all(target_arch = "x86_64", not(all(feature = "vdsp", target_vendor = "apple"))))]
-    { unsafe { avx::vec_scale_inplace(dst, scale, n); } }
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(all(feature = "vdsp", target_vendor = "apple"))
+    ))]
+    {
+        unsafe {
+            avx::vec_scale_inplace(dst, scale, n);
+        }
+    }
 
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64", all(feature = "vdsp", target_vendor = "apple"))))]
+    #[cfg(not(any(
+        target_arch = "aarch64",
+        target_arch = "x86_64",
+        all(feature = "vdsp", target_vendor = "apple")
+    )))]
     generic::vec_scale_inplace(dst, scale, n);
 }
 
@@ -336,26 +456,63 @@ pub fn vec_scale_inplace(dst: &mut [f32], scale: f32, n: usize) {
 pub fn vec_axpy_inplace(dst: &mut [f32], src: &[f32], alpha: f32, n: usize) {
     #[cfg(all(feature = "vdsp", target_vendor = "apple"))]
     {
-        unsafe { vDSP_vsma(src.as_ptr(), 1, &alpha, dst.as_ptr(), 1, dst.as_mut_ptr(), 1, n as u64); }
+        unsafe {
+            vDSP_vsma(
+                src.as_ptr(),
+                1,
+                &alpha,
+                dst.as_ptr(),
+                1,
+                dst.as_mut_ptr(),
+                1,
+                n as u64,
+            );
+        }
     }
 
-    #[cfg(all(target_arch = "aarch64", not(all(feature = "vdsp", target_vendor = "apple"))))]
-    { unsafe { neon::vec_axpy_inplace(dst, src, alpha, n); } }
+    #[cfg(all(
+        target_arch = "aarch64",
+        not(all(feature = "vdsp", target_vendor = "apple"))
+    ))]
+    {
+        unsafe {
+            neon::vec_axpy_inplace(dst, src, alpha, n);
+        }
+    }
 
-    #[cfg(all(target_arch = "x86_64", not(all(feature = "vdsp", target_vendor = "apple"))))]
-    { unsafe { avx::vec_axpy_inplace(dst, src, alpha, n); } }
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(all(feature = "vdsp", target_vendor = "apple"))
+    ))]
+    {
+        unsafe {
+            avx::vec_axpy_inplace(dst, src, alpha, n);
+        }
+    }
 
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64", all(feature = "vdsp", target_vendor = "apple"))))]
+    #[cfg(not(any(
+        target_arch = "aarch64",
+        target_arch = "x86_64",
+        all(feature = "vdsp", target_vendor = "apple")
+    )))]
     generic::vec_axpy_inplace(dst, src, alpha, n);
 }
 
 #[inline]
 pub fn vec_scale_add(dst: &mut [f32], src: &[f32], correction: f32, n: usize) {
     #[cfg(target_arch = "aarch64")]
-    { unsafe { neon::vec_scale_add(dst, src, correction, n); } }
+    {
+        unsafe {
+            neon::vec_scale_add(dst, src, correction, n);
+        }
+    }
 
     #[cfg(target_arch = "x86_64")]
-    { unsafe { avx::vec_scale_add(dst, src, correction, n); } }
+    {
+        unsafe {
+            avx::vec_scale_add(dst, src, correction, n);
+        }
+    }
 
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     generic::vec_scale_add(dst, src, correction, n);
@@ -367,7 +524,9 @@ pub fn vec_scale_add(dst: &mut [f32], src: &[f32], correction: f32, n: usize) {
 
 pub fn add_inplace(a: &mut [f32], b: &[f32], n: usize) {
     let _pg = ProfileGuard::new(&PROF.add_inplace_op);
-    for i in 0..n { a[i] += b[i]; }
+    for i in 0..n {
+        a[i] += b[i];
+    }
 }
 
 // ========================================================================
@@ -417,18 +576,32 @@ const FALLBACK_MIN_MACS: usize = 1 << 22; // 4M
 #[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
 #[allow(clippy::too_many_arguments)]
 unsafe fn gemm_nt_rows(
-    y: *mut f32, x: *const f32, w: *const f32, bias: Option<*const f32>,
-    seq_len: usize, in_dim: usize, out_dim: usize,
-    start: usize, end: usize, accumulate: bool,
+    y: *mut f32,
+    x: *const f32,
+    w: *const f32,
+    bias: Option<*const f32>,
+    seq_len: usize,
+    in_dim: usize,
+    out_dim: usize,
+    start: usize,
+    end: usize,
+    accumulate: bool,
 ) {
     for o in start..end {
         let w_row = std::slice::from_raw_parts(w.add(o * in_dim), in_dim);
-        let bo = match bias { Some(b) => *b.add(o), None => 0.0 };
+        let bo = match bias {
+            Some(b) => *b.add(o),
+            None => 0.0,
+        };
         for s in 0..seq_len {
             let x_row = std::slice::from_raw_parts(x.add(s * in_dim), in_dim);
             let d = neon::dot_f32(x_row, w_row, in_dim) + bo;
             let cell = y.add(s * out_dim + o);
-            if accumulate { *cell += d; } else { *cell = d; }
+            if accumulate {
+                *cell += d;
+            } else {
+                *cell = d;
+            }
         }
     }
 }
@@ -439,8 +612,14 @@ unsafe fn gemm_nt_rows(
 #[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
 #[allow(clippy::too_many_arguments)]
 fn gemm_nt_fallback(
-    y: &mut [f32], x: &[f32], w: &[f32], bias: Option<&[f32]>,
-    seq_len: usize, in_dim: usize, out_dim: usize, accumulate: bool,
+    y: &mut [f32],
+    x: &[f32],
+    w: &[f32],
+    bias: Option<&[f32]>,
+    seq_len: usize,
+    in_dim: usize,
+    out_dim: usize,
+    accumulate: bool,
 ) {
     const MIN_COLS: usize = 128;
     let nt = get_num_threads();
@@ -450,8 +629,18 @@ fn gemm_nt_fallback(
     if !parallel {
         // SAFETY: single-threaded full-range pass; slices sized by the wrapper.
         unsafe {
-            gemm_nt_rows(y.as_mut_ptr(), x.as_ptr(), w.as_ptr(), bias.map(|b| b.as_ptr()),
-                         seq_len, in_dim, out_dim, 0, out_dim, accumulate);
+            gemm_nt_rows(
+                y.as_mut_ptr(),
+                x.as_ptr(),
+                w.as_ptr(),
+                bias.map(|b| b.as_ptr()),
+                seq_len,
+                in_dim,
+                out_dim,
+                0,
+                out_dim,
+                accumulate,
+            );
         }
         return;
     }
@@ -466,12 +655,23 @@ fn gemm_nt_fallback(
     parallel_for_dynamic(n_items, |item| {
         let start = item * ROWS;
         let end = (start + ROWS).min(out_dim);
-        if start >= end { return; }
+        if start >= end {
+            return;
+        }
         // SAFETY: items write disjoint output-column ranges [start,end).
         unsafe {
-            gemm_nt_rows(y_send as *mut f32, x_send as *const f32, w_send as *const f32,
-                         b_send.map(|p| p as *const f32),
-                         seq_len, in_dim, out_dim, start, end, accumulate);
+            gemm_nt_rows(
+                y_send as *mut f32,
+                x_send as *const f32,
+                w_send as *const f32,
+                b_send.map(|p| p as *const f32),
+                seq_len,
+                in_dim,
+                out_dim,
+                start,
+                end,
+                accumulate,
+            );
         }
     });
 }
@@ -483,11 +683,19 @@ fn gemm_nt_fallback(
 /// `a`/`b`/`c` valid for `m*k`, `k*n`, `m*n` elements; `[start,end)` within `[0,m)`.
 #[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
 unsafe fn gemm_nn_rows(
-    c: *mut f32, a: *const f32, b: *const f32, k: usize, n: usize, start: usize, end: usize,
+    c: *mut f32,
+    a: *const f32,
+    b: *const f32,
+    k: usize,
+    n: usize,
+    start: usize,
+    end: usize,
 ) {
     for mi in start..end {
         let c_row = std::slice::from_raw_parts_mut(c.add(mi * n), n);
-        for v in c_row.iter_mut() { *v = 0.0; }
+        for v in c_row.iter_mut() {
+            *v = 0.0;
+        }
         for ki in 0..k {
             let av = *a.add(mi * k + ki);
             let b_row = std::slice::from_raw_parts(b.add(ki * n), n);
@@ -501,13 +709,13 @@ unsafe fn gemm_nn_rows(
 #[cfg(all(not(feature = "blas"), target_arch = "aarch64"))]
 fn gemm_nn_fallback(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: usize) {
     let nt = get_num_threads();
-    let parallel = nt > 1
-        && m >= 2
-        && n >= 64
-        && m.saturating_mul(k).saturating_mul(n) >= FALLBACK_MIN_MACS;
+    let parallel =
+        nt > 1 && m >= 2 && n >= 64 && m.saturating_mul(k).saturating_mul(n) >= FALLBACK_MIN_MACS;
     if !parallel {
         // SAFETY: single-threaded full-range pass; slices sized by the wrapper.
-        unsafe { gemm_nn_rows(c.as_mut_ptr(), a.as_ptr(), b.as_ptr(), k, n, 0, m); }
+        unsafe {
+            gemm_nn_rows(c.as_mut_ptr(), a.as_ptr(), b.as_ptr(), k, n, 0, m);
+        }
         return;
     }
     let c_send = c.as_mut_ptr() as usize;
@@ -519,9 +727,21 @@ fn gemm_nn_fallback(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: 
     parallel_for_dynamic(n_items, |item| {
         let start = item * ROWS;
         let end = (start + ROWS).min(m);
-        if start >= end { return; }
+        if start >= end {
+            return;
+        }
         // SAFETY: items write disjoint output rows [start,end) of c.
-        unsafe { gemm_nn_rows(c_send as *mut f32, a_send as *const f32, b_send as *const f32, k, n, start, end); }
+        unsafe {
+            gemm_nn_rows(
+                c_send as *mut f32,
+                a_send as *const f32,
+                b_send as *const f32,
+                k,
+                n,
+                start,
+                end,
+            );
+        }
     });
 }
 
@@ -540,7 +760,11 @@ fn gemm_nn_fallback(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: 
 /// wired into the Flutter Android build only), and in that case defaults **ON**;
 /// `QWEN_ASR_INT8_PREFILL=0` is a runtime kill switch. Cached after first read,
 /// matching the `QWEN_ASR_VERIFY`/`QWEN_ASR_SIDECAR` knobs.
-#[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "int8-prefill",
+    not(feature = "blas"),
+    target_arch = "aarch64"
+))]
 pub fn int8_prefill_enabled() -> bool {
     use std::sync::OnceLock;
     static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -556,9 +780,17 @@ pub fn int8_prefill_enabled() -> bool {
 /// by row, to the single-token `quantize_into` (the same per-row absmax used by
 /// the decode path), so the prefill GEMM's quantized inputs match the reference.
 /// Shared by the INT8 decoder-prefill (stage 1) and encoder (stage 2) paths.
-#[cfg(all(any(feature = "int8-prefill", feature = "int8-encoder"), not(feature = "blas"), target_arch = "aarch64"))]
+#[cfg(all(
+    any(feature = "int8-prefill", feature = "int8-encoder"),
+    not(feature = "blas"),
+    target_arch = "aarch64"
+))]
 pub(crate) fn quantize_rows_into(
-    dst: &mut [i8], scales: &mut [f32], x: &[f32], seq_len: usize, dim: usize,
+    dst: &mut [i8],
+    scales: &mut [f32],
+    x: &[f32],
+    seq_len: usize,
+    dim: usize,
 ) {
     debug_assert_eq!(dst.len(), seq_len * dim);
     debug_assert_eq!(scales.len(), seq_len);
@@ -579,12 +811,21 @@ pub(crate) fn quantize_rows_into(
 /// # Safety
 /// `y` sized `seq_len*out_dim`; `x_int8` sized `seq_len*in_dim`; `x_scales`
 /// sized `seq_len`; `w_int8`/`w_scales` cover `out_dim` rows / `in_dim` cols.
-#[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "int8-prefill",
+    not(feature = "blas"),
+    target_arch = "aarch64"
+))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn int8_prefill_matvec(
-    y: &mut [f32], x_int8: &[i8], x_scales: &[f32],
-    w_int8: *const i8, w_scales: *const f32,
-    in_dim: usize, out_dim: usize, seq_len: usize,
+    y: &mut [f32],
+    x_int8: &[i8],
+    x_scales: &[f32],
+    w_int8: *const i8,
+    w_scales: *const f32,
+    in_dim: usize,
+    out_dim: usize,
+    seq_len: usize,
 ) {
     const MIN_COLS: usize = 128;
     let nt = get_num_threads();
@@ -593,8 +834,16 @@ pub(crate) unsafe fn int8_prefill_matvec(
         && seq_len.saturating_mul(in_dim).saturating_mul(out_dim) >= FALLBACK_MIN_MACS;
     if !parallel {
         neon::matvec_int8_prefill_rows(
-            y.as_mut_ptr(), x_int8.as_ptr(), x_scales.as_ptr(), w_int8, w_scales,
-            in_dim, out_dim, seq_len, 0, out_dim,
+            y.as_mut_ptr(),
+            x_int8.as_ptr(),
+            x_scales.as_ptr(),
+            w_int8,
+            w_scales,
+            in_dim,
+            out_dim,
+            seq_len,
+            0,
+            out_dim,
         );
         return;
     }
@@ -608,13 +857,22 @@ pub(crate) unsafe fn int8_prefill_matvec(
     parallel_for_dynamic(n_items, |item| {
         let start = item * ROWS;
         let end = (start + ROWS).min(out_dim);
-        if start >= end { return; }
+        if start >= end {
+            return;
+        }
         // SAFETY: items write disjoint output-column ranges [start,end).
         unsafe {
             neon::matvec_int8_prefill_rows(
-                y_send as *mut f32, x_send as *const i8, xs_send as *const f32,
-                w_send as *const i8, ws_send as *const f32,
-                in_dim, out_dim, seq_len, start, end,
+                y_send as *mut f32,
+                x_send as *const i8,
+                xs_send as *const f32,
+                w_send as *const i8,
+                ws_send as *const f32,
+                in_dim,
+                out_dim,
+                seq_len,
+                start,
+                end,
             );
         }
     });
@@ -628,12 +886,21 @@ pub(crate) unsafe fn int8_prefill_matvec(
 /// # Safety
 /// `ffn` sized `seq_len*n_rows`; `x_int8` sized `seq_len*in_dim`; `x_scales`
 /// sized `seq_len`; `w_int8`/`w_scales` cover `2*n_rows` rows / `in_dim` cols.
-#[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "int8-prefill",
+    not(feature = "blas"),
+    target_arch = "aarch64"
+))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn int8_prefill_swiglu(
-    ffn: &mut [f32], x_int8: &[i8], x_scales: &[f32],
-    w_int8: *const i8, w_scales: *const f32,
-    in_dim: usize, n_rows: usize, seq_len: usize,
+    ffn: &mut [f32],
+    x_int8: &[i8],
+    x_scales: &[f32],
+    w_int8: *const i8,
+    w_scales: *const f32,
+    in_dim: usize,
+    n_rows: usize,
+    seq_len: usize,
 ) {
     let nt = get_num_threads();
     let parallel = nt > 1
@@ -641,8 +908,16 @@ pub(crate) unsafe fn int8_prefill_swiglu(
         && seq_len.saturating_mul(in_dim).saturating_mul(2 * n_rows) >= FALLBACK_MIN_MACS;
     if !parallel {
         neon::swiglu_int8_prefill_rows(
-            ffn.as_mut_ptr(), x_int8.as_ptr(), x_scales.as_ptr(), w_int8, w_scales,
-            in_dim, n_rows, seq_len, 0, n_rows,
+            ffn.as_mut_ptr(),
+            x_int8.as_ptr(),
+            x_scales.as_ptr(),
+            w_int8,
+            w_scales,
+            in_dim,
+            n_rows,
+            seq_len,
+            0,
+            n_rows,
         );
         return;
     }
@@ -656,13 +931,22 @@ pub(crate) unsafe fn int8_prefill_swiglu(
     parallel_for_dynamic(n_items, |item| {
         let start = item * ROWS;
         let end = (start + ROWS).min(n_rows);
-        if start >= end { return; }
+        if start >= end {
+            return;
+        }
         // SAFETY: items write disjoint intermediate-row ranges [start,end).
         unsafe {
             neon::swiglu_int8_prefill_rows(
-                ffn_send as *mut f32, x_send as *const i8, xs_send as *const f32,
-                w_send as *const i8, ws_send as *const f32,
-                in_dim, n_rows, seq_len, start, end,
+                ffn_send as *mut f32,
+                x_send as *const i8,
+                xs_send as *const f32,
+                w_send as *const i8,
+                ws_send as *const f32,
+                in_dim,
+                n_rows,
+                seq_len,
+                start,
+                end,
             );
         }
     });
@@ -683,7 +967,11 @@ pub(crate) unsafe fn int8_prefill_swiglu(
 /// `int8-encoder` cargo feature is compiled in (opt-in, wired into the Flutter
 /// Android build only), and defaults **ON**; `QWEN_ASR_INT8_ENCODER=0` is a
 /// runtime kill switch. Cached after first read, matching `QWEN_ASR_INT8_PREFILL`.
-#[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "int8-encoder",
+    not(feature = "blas"),
+    target_arch = "aarch64"
+))]
 pub fn int8_encoder_enabled() -> bool {
     use std::sync::OnceLock;
     static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -699,13 +987,24 @@ pub fn int8_encoder_enabled() -> bool {
 /// round-clamp) but reads the encoder's already-prepacked f32 weights (which are
 /// the exact bf16→f32 widening), so the INT8 result equals quantizing the
 /// original bf16 directly. Returns `(int8_data, per_row_scales)`.
-#[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
-pub fn quantize_f32_weights_to_int8(w: &[f32], out_dim: usize, in_dim: usize) -> (Vec<i8>, Vec<f32>) {
+#[cfg(all(
+    feature = "int8-encoder",
+    not(feature = "blas"),
+    target_arch = "aarch64"
+))]
+pub fn quantize_f32_weights_to_int8(
+    w: &[f32],
+    out_dim: usize,
+    in_dim: usize,
+) -> (Vec<i8>, Vec<f32>) {
     debug_assert_eq!(w.len(), out_dim * in_dim);
     let mut int8 = vec![0i8; out_dim * in_dim];
     let mut scales = vec![0.0f32; out_dim];
     for r in 0..out_dim {
-        scales[r] = quantize_into(&mut int8[r * in_dim..(r + 1) * in_dim], &w[r * in_dim..(r + 1) * in_dim]);
+        scales[r] = quantize_into(
+            &mut int8[r * in_dim..(r + 1) * in_dim],
+            &w[r * in_dim..(r + 1) * in_dim],
+        );
     }
     (int8, scales)
 }
@@ -720,12 +1019,23 @@ pub fn quantize_f32_weights_to_int8(w: &[f32], out_dim: usize, in_dim: usize) ->
 /// `y` sized `seq_len*out_dim`; `x_int8` sized `seq_len*in_dim`; `x_scales`
 /// sized `seq_len`; `w_int8`/`w_scales` cover `out_dim` rows / `in_dim` cols;
 /// `bias` (if `Some`) covers `out_dim`.
-#[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "int8-encoder",
+    not(feature = "blas"),
+    target_arch = "aarch64"
+))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn int8_encoder_matvec(
-    y: &mut [f32], x_int8: &[i8], x_scales: &[f32],
-    w_int8: *const i8, w_scales: *const f32, bias: Option<&[f32]>,
-    in_dim: usize, out_dim: usize, seq_len: usize, accumulate: bool,
+    y: &mut [f32],
+    x_int8: &[i8],
+    x_scales: &[f32],
+    w_int8: *const i8,
+    w_scales: *const f32,
+    bias: Option<&[f32]>,
+    in_dim: usize,
+    out_dim: usize,
+    seq_len: usize,
+    accumulate: bool,
 ) {
     const MIN_COLS: usize = 128;
     let bias_ptr = bias.map_or(std::ptr::null(), |b| b.as_ptr());
@@ -735,8 +1045,18 @@ pub(crate) unsafe fn int8_encoder_matvec(
         && seq_len.saturating_mul(in_dim).saturating_mul(out_dim) >= FALLBACK_MIN_MACS;
     if !parallel {
         neon::matvec_int8_encoder_rows(
-            y.as_mut_ptr(), x_int8.as_ptr(), x_scales.as_ptr(), w_int8, w_scales, bias_ptr,
-            in_dim, out_dim, seq_len, 0, out_dim, accumulate,
+            y.as_mut_ptr(),
+            x_int8.as_ptr(),
+            x_scales.as_ptr(),
+            w_int8,
+            w_scales,
+            bias_ptr,
+            in_dim,
+            out_dim,
+            seq_len,
+            0,
+            out_dim,
+            accumulate,
         );
         return;
     }
@@ -751,13 +1071,24 @@ pub(crate) unsafe fn int8_encoder_matvec(
     parallel_for_dynamic(n_items, |item| {
         let start = item * ROWS;
         let end = (start + ROWS).min(out_dim);
-        if start >= end { return; }
+        if start >= end {
+            return;
+        }
         // SAFETY: items write disjoint output-column ranges [start,end).
         unsafe {
             neon::matvec_int8_encoder_rows(
-                y_send as *mut f32, x_send as *const i8, xs_send as *const f32,
-                w_send as *const i8, ws_send as *const f32, b_send as *const f32,
-                in_dim, out_dim, seq_len, start, end, accumulate,
+                y_send as *mut f32,
+                x_send as *const i8,
+                xs_send as *const f32,
+                w_send as *const i8,
+                ws_send as *const f32,
+                b_send as *const f32,
+                in_dim,
+                out_dim,
+                seq_len,
+                start,
+                end,
+                accumulate,
             );
         }
     });
@@ -768,18 +1099,29 @@ pub fn matmul_nn(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: usi
     #[cfg(feature = "blas")]
     unsafe {
         cblas_sgemm(
-            CBLAS_ROW_MAJOR, CBLAS_NO_TRANS, CBLAS_NO_TRANS,
-            m as i32, n as i32, k as i32,
-            1.0, a.as_ptr(), k as i32,
-            b.as_ptr(), n as i32,
-            0.0, c.as_mut_ptr(), n as i32,
+            CBLAS_ROW_MAJOR,
+            CBLAS_NO_TRANS,
+            CBLAS_NO_TRANS,
+            m as i32,
+            n as i32,
+            k as i32,
+            1.0,
+            a.as_ptr(),
+            k as i32,
+            b.as_ptr(),
+            n as i32,
+            0.0,
+            c.as_mut_ptr(),
+            n as i32,
         );
     }
 
     #[cfg(not(feature = "blas"))]
     {
         #[cfg(target_arch = "aarch64")]
-        { gemm_nn_fallback(c, a, b, m, k, n); }
+        {
+            gemm_nn_fallback(c, a, b, m, k, n);
+        }
 
         #[cfg(not(target_arch = "aarch64"))]
         for mi in 0..m {
@@ -799,18 +1141,29 @@ pub fn matmul_t(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: usiz
     #[cfg(feature = "blas")]
     unsafe {
         cblas_sgemm(
-            CBLAS_ROW_MAJOR, CBLAS_NO_TRANS, CBLAS_TRANS,
-            m as i32, n as i32, k as i32,
-            1.0, a.as_ptr(), k as i32,
-            b.as_ptr(), k as i32,
-            0.0, c.as_mut_ptr(), n as i32,
+            CBLAS_ROW_MAJOR,
+            CBLAS_NO_TRANS,
+            CBLAS_TRANS,
+            m as i32,
+            n as i32,
+            k as i32,
+            1.0,
+            a.as_ptr(),
+            k as i32,
+            b.as_ptr(),
+            k as i32,
+            0.0,
+            c.as_mut_ptr(),
+            n as i32,
         );
     }
 
     #[cfg(not(feature = "blas"))]
     {
         #[cfg(target_arch = "aarch64")]
-        { gemm_nt_fallback(c, a, b, None, m, k, n, false); }
+        {
+            gemm_nt_fallback(c, a, b, None, m, k, n, false);
+        }
 
         #[cfg(not(target_arch = "aarch64"))]
         for mi in 0..m {
@@ -834,15 +1187,22 @@ pub fn matmul_t(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: usiz
 /// Returns false when the problem is too small to win over one direct call.
 #[cfg(feature = "blas")]
 #[allow(clippy::too_many_arguments)]
-fn sgemm_nt_pooled(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>,
-                   seq_len: usize, in_dim: usize, out_dim: usize, beta: f32) -> bool {
+fn sgemm_nt_pooled(
+    y: &mut [f32],
+    x: &[f32],
+    w: &[f32],
+    b: Option<&[f32]>,
+    seq_len: usize,
+    in_dim: usize,
+    out_dim: usize,
+    beta: f32,
+) -> bool {
     let nt = get_num_threads();
     // Each slice needs enough columns for an efficient BLAS kernel, and the
     // whole product enough MACs to amortize the pool dispatch.
     const MIN_COLS: usize = 128;
     const MIN_MACS: usize = 1 << 22;
-    if nt <= 1 || seq_len < 2 || out_dim < 2 * MIN_COLS
-        || seq_len * in_dim * out_dim < MIN_MACS {
+    if nt <= 1 || seq_len < 2 || out_dim < 2 * MIN_COLS || seq_len * in_dim * out_dim < MIN_MACS {
         return false;
     }
     let y_send = y.as_mut_ptr() as usize;
@@ -860,11 +1220,20 @@ fn sgemm_nt_pooled(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>,
         // SAFETY: items write disjoint column ranges [start, end) of y.
         unsafe {
             cblas_sgemm(
-                CBLAS_ROW_MAJOR, CBLAS_NO_TRANS, CBLAS_TRANS,
-                seq_len as i32, (end - start) as i32, in_dim as i32,
-                1.0, x_send as *const f32, in_dim as i32,
-                (w_send as *const f32).add(start * in_dim), in_dim as i32,
-                beta, (y_send as *mut f32).add(start), out_dim as i32,
+                CBLAS_ROW_MAJOR,
+                CBLAS_NO_TRANS,
+                CBLAS_TRANS,
+                seq_len as i32,
+                (end - start) as i32,
+                in_dim as i32,
+                1.0,
+                x_send as *const f32,
+                in_dim as i32,
+                (w_send as *const f32).add(start * in_dim),
+                in_dim as i32,
+                beta,
+                (y_send as *mut f32).add(start),
+                out_dim as i32,
             );
             if let Some(bp) = b_send {
                 let bp = bp as *const f32;
@@ -881,7 +1250,15 @@ fn sgemm_nt_pooled(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>,
 }
 
 /// y = x @ W^T + b: `x[seq,in]`, `W[out,in]`, `b[out]`, `y[seq,out]`
-pub fn linear(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>, seq_len: usize, in_dim: usize, out_dim: usize) {
+pub fn linear(
+    y: &mut [f32],
+    x: &[f32],
+    w: &[f32],
+    b: Option<&[f32]>,
+    seq_len: usize,
+    in_dim: usize,
+    out_dim: usize,
+) {
     let _pg = ProfileGuard::new(&PROF.sgemm);
     #[cfg(feature = "blas")]
     unsafe {
@@ -889,11 +1266,20 @@ pub fn linear(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>, seq_len: u
             return;
         }
         cblas_sgemm(
-            CBLAS_ROW_MAJOR, CBLAS_NO_TRANS, CBLAS_TRANS,
-            seq_len as i32, out_dim as i32, in_dim as i32,
-            1.0, x.as_ptr(), in_dim as i32,
-            w.as_ptr(), in_dim as i32,
-            0.0, y.as_mut_ptr(), out_dim as i32,
+            CBLAS_ROW_MAJOR,
+            CBLAS_NO_TRANS,
+            CBLAS_TRANS,
+            seq_len as i32,
+            out_dim as i32,
+            in_dim as i32,
+            1.0,
+            x.as_ptr(),
+            in_dim as i32,
+            w.as_ptr(),
+            in_dim as i32,
+            0.0,
+            y.as_mut_ptr(),
+            out_dim as i32,
         );
         if let Some(b) = b {
             for s in 0..seq_len {
@@ -909,7 +1295,9 @@ pub fn linear(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>, seq_len: u
     #[cfg(not(feature = "blas"))]
     {
         #[cfg(target_arch = "aarch64")]
-        { gemm_nt_fallback(y, x, w, b, seq_len, in_dim, out_dim, false); }
+        {
+            gemm_nt_fallback(y, x, w, b, seq_len, in_dim, out_dim, false);
+        }
 
         #[cfg(not(target_arch = "aarch64"))]
         for s in 0..seq_len {
@@ -926,12 +1314,27 @@ pub fn linear(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>, seq_len: u
     }
 }
 
-pub fn linear_nobias(y: &mut [f32], x: &[f32], w: &[f32], seq_len: usize, in_dim: usize, out_dim: usize) {
+pub fn linear_nobias(
+    y: &mut [f32],
+    x: &[f32],
+    w: &[f32],
+    seq_len: usize,
+    in_dim: usize,
+    out_dim: usize,
+) {
     linear(y, x, w, None, seq_len, in_dim, out_dim);
 }
 
 /// y += bias + x @ w.T  (accumulate into existing y, fusing residual add)
-pub fn linear_accumulate(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>, seq_len: usize, in_dim: usize, out_dim: usize) {
+pub fn linear_accumulate(
+    y: &mut [f32],
+    x: &[f32],
+    w: &[f32],
+    b: Option<&[f32]>,
+    seq_len: usize,
+    in_dim: usize,
+    out_dim: usize,
+) {
     let _pg = ProfileGuard::new(&PROF.sgemm);
     #[cfg(feature = "blas")]
     unsafe {
@@ -949,18 +1352,29 @@ pub fn linear_accumulate(y: &mut [f32], x: &[f32], w: &[f32], b: Option<&[f32]>,
         }
         // y = 1.0 * x @ w.T + 1.0 * y  (accumulate matmul into y)
         cblas_sgemm(
-            CBLAS_ROW_MAJOR, CBLAS_NO_TRANS, CBLAS_TRANS,
-            seq_len as i32, out_dim as i32, in_dim as i32,
-            1.0, x.as_ptr(), in_dim as i32,
-            w.as_ptr(), in_dim as i32,
-            1.0, y.as_mut_ptr(), out_dim as i32,
+            CBLAS_ROW_MAJOR,
+            CBLAS_NO_TRANS,
+            CBLAS_TRANS,
+            seq_len as i32,
+            out_dim as i32,
+            in_dim as i32,
+            1.0,
+            x.as_ptr(),
+            in_dim as i32,
+            w.as_ptr(),
+            in_dim as i32,
+            1.0,
+            y.as_mut_ptr(),
+            out_dim as i32,
         );
     }
 
     #[cfg(not(feature = "blas"))]
     {
         #[cfg(target_arch = "aarch64")]
-        { gemm_nt_fallback(y, x, w, b, seq_len, in_dim, out_dim, true); }
+        {
+            gemm_nt_fallback(y, x, w, b, seq_len, in_dim, out_dim, true);
+        }
 
         #[cfg(not(target_arch = "aarch64"))]
         for s in 0..seq_len {
@@ -985,7 +1399,14 @@ fn bf16_to_f32_view(src: *const u16, n: usize) -> Vec<f32> {
 }
 
 /// Threaded bf16 matvec
-fn bf16_matvec_threaded(y: &mut [f32], x: &[f32], w_bf16: *const u16, bias: Option<&[f32]>, in_dim: usize, out_dim: usize) {
+fn bf16_matvec_threaded(
+    y: &mut [f32],
+    x: &[f32],
+    w_bf16: *const u16,
+    bias: Option<&[f32]>,
+    in_dim: usize,
+    out_dim: usize,
+) {
     let n_threads = get_num_threads();
     if n_threads <= 1 {
         bf16_matvec_fused(y, x, w_bf16, bias, in_dim, out_dim);
@@ -1011,12 +1432,17 @@ fn bf16_matvec_threaded(y: &mut [f32], x: &[f32], w_bf16: *const u16, bias: Opti
     parallel_for_dynamic(n_items, |item| {
         let start = item * ROWS;
         let end = (start + ROWS).min(out_dim);
-        if start >= end { return; }
+        if start >= end {
+            return;
+        }
 
-        let y_local = unsafe { std::slice::from_raw_parts_mut((y_send as *mut f32).add(start), end - start) };
+        let y_local =
+            unsafe { std::slice::from_raw_parts_mut((y_send as *mut f32).add(start), end - start) };
         let x_local = unsafe { std::slice::from_raw_parts(x_send as *const f32, in_dim) };
         let w_local = unsafe { (w_send as *const u16).add(start * in_dim) };
-        let bias_local = bias_send.map(|p| unsafe { std::slice::from_raw_parts((p as *const f32).add(start), end - start) });
+        let bias_local = bias_send.map(|p| unsafe {
+            std::slice::from_raw_parts((p as *const f32).add(start), end - start)
+        });
 
         bf16_matvec_fused(y_local, x_local, w_local, bias_local, in_dim, end - start);
     });
@@ -1024,14 +1450,27 @@ fn bf16_matvec_threaded(y: &mut [f32], x: &[f32], w_bf16: *const u16, bias: Opti
 
 /// Like linear_nobias_bf16 for seq_len=1, but ADDS to the destination: `y[i] += W[i] @ x`.
 /// Achieves fused residual add by passing y as its own "bias".
-pub fn linear_nobias_bf16_addto(y: &mut [f32], x: &[f32], w_bf16: *const u16, in_dim: usize, out_dim: usize) {
+pub fn linear_nobias_bf16_addto(
+    y: &mut [f32],
+    x: &[f32],
+    w_bf16: *const u16,
+    in_dim: usize,
+    out_dim: usize,
+) {
     let _pg = ProfileGuard::new(&PROF.bf16_matvec);
     // SAFETY: bf16_matvec_fused reads bias[i] before writing y[i], so aliasing y as bias is safe.
     let bias = unsafe { std::slice::from_raw_parts(y.as_ptr(), out_dim) };
     bf16_matvec_threaded(y, x, w_bf16, Some(bias), in_dim, out_dim);
 }
 
-pub fn linear_nobias_bf16(y: &mut [f32], x: &[f32], w_bf16: *const u16, seq_len: usize, in_dim: usize, out_dim: usize) {
+pub fn linear_nobias_bf16(
+    y: &mut [f32],
+    x: &[f32],
+    w_bf16: *const u16,
+    seq_len: usize,
+    in_dim: usize,
+    out_dim: usize,
+) {
     let _pg = ProfileGuard::new(&PROF.bf16_matvec);
     if seq_len == 1 {
         bf16_matvec_threaded(y, x, w_bf16, None, in_dim, out_dim);
@@ -1044,7 +1483,15 @@ pub fn linear_nobias_bf16(y: &mut [f32], x: &[f32], w_bf16: *const u16, seq_len:
 /// Like linear_nobias_bf16 but reuses a caller-provided scratch buffer for bf16→f32 conversion.
 /// # Safety
 /// Caller must ensure w_bf16 points to at least out_dim * in_dim valid bf16 values.
-pub unsafe fn linear_nobias_bf16_scratch(y: &mut [f32], x: &[f32], w_bf16: *const u16, seq_len: usize, in_dim: usize, out_dim: usize, scratch: &mut [f32]) {
+pub unsafe fn linear_nobias_bf16_scratch(
+    y: &mut [f32],
+    x: &[f32],
+    w_bf16: *const u16,
+    seq_len: usize,
+    in_dim: usize,
+    out_dim: usize,
+    scratch: &mut [f32],
+) {
     let _pg = ProfileGuard::new(&PROF.bf16_matvec);
     if seq_len == 1 {
         bf16_matvec_threaded(y, x, w_bf16, None, in_dim, out_dim);
@@ -1116,7 +1563,9 @@ pub fn linear_nobias_bf16_swiglu(
     parallel_for_dynamic(n_items, |item| {
         let start = item * ROWS;
         let end = (start + ROWS).min(intermediate);
-        if start >= end { return; }
+        if start >= end {
+            return;
+        }
         let n_rows = end - start;
 
         let x_local = unsafe { std::slice::from_raw_parts(x_ptr as *const f32, in_dim) };
@@ -1127,7 +1576,8 @@ pub fn linear_nobias_bf16_swiglu(
             bf16_matvec_fused(gate_up_local, x_local, w_local, None, in_dim, 2 * n_rows);
 
             // Apply SwiGLU inline while data is hot in L1
-            let ffn_local = unsafe { std::slice::from_raw_parts_mut((ffn_ptr as *mut f32).add(start), n_rows) };
+            let ffn_local =
+                unsafe { std::slice::from_raw_parts_mut((ffn_ptr as *mut f32).add(start), n_rows) };
             for j in 0..n_rows {
                 let g = gate_up_local[2 * j];
                 let u = gate_up_local[2 * j + 1];
@@ -1147,18 +1597,34 @@ pub fn linear_nobias_bf16_swiglu(
 #[inline]
 #[allow(clippy::too_many_arguments)] // hot kernel entry point; params mirror the SIMD call
 pub(crate) unsafe fn int8_matvec_range(
-    y_ptr: *mut f32, x_int8: *const i8, x_scale: f32,
-    w_int8: *const i8, w_scales: *const f32,
+    y_ptr: *mut f32,
+    x_int8: *const i8,
+    x_scale: f32,
+    w_int8: *const i8,
+    w_scales: *const f32,
     bias_ptr: Option<*const f32>,
-    in_dim: usize, start: usize, end: usize,
+    in_dim: usize,
+    start: usize,
+    end: usize,
 ) {
-    if start >= end { return; }
+    if start >= end {
+        return;
+    }
     let n = end - start;
     let y_local = std::slice::from_raw_parts_mut(y_ptr.add(start), n);
     let w_local = w_int8.add(start * in_dim);
     let w_scales_local = std::slice::from_raw_parts(w_scales.add(start), n);
     let bias_local = bias_ptr.map(|p| std::slice::from_raw_parts(p.add(start), n));
-    neon::matvec_int8(y_local, x_int8, x_scale, w_local, w_scales_local, bias_local, in_dim, n);
+    neon::matvec_int8(
+        y_local,
+        x_int8,
+        x_scale,
+        w_local,
+        w_scales_local,
+        bias_local,
+        in_dim,
+        n,
+    );
 }
 
 /// Compute the `[start, end)` slice (over the concatenated `q|k|v` output rows,
@@ -1168,15 +1634,26 @@ pub(crate) unsafe fn int8_matvec_range(
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn int8_qkv_range(
-    q_ptr: *mut f32, k_ptr: *mut f32, v_ptr: *mut f32,
-    x_int8: *const i8, x_scale: f32,
-    wq: *const i8, wq_scales: *const f32,
-    wk: *const i8, wk_scales: *const f32,
-    wv: *const i8, wv_scales: *const f32,
-    in_dim: usize, q_dim: usize, kv_dim: usize,
-    start: usize, end: usize,
+    q_ptr: *mut f32,
+    k_ptr: *mut f32,
+    v_ptr: *mut f32,
+    x_int8: *const i8,
+    x_scale: f32,
+    wq: *const i8,
+    wq_scales: *const f32,
+    wk: *const i8,
+    wk_scales: *const f32,
+    wv: *const i8,
+    wv_scales: *const f32,
+    in_dim: usize,
+    q_dim: usize,
+    kv_dim: usize,
+    start: usize,
+    end: usize,
 ) {
-    if start >= end { return; }
+    if start >= end {
+        return;
+    }
     let total_dim = q_dim + 2 * kv_dim;
     let q_end = q_dim;
     let k_end = q_end + kv_dim;
@@ -1188,7 +1665,16 @@ pub(crate) unsafe fn int8_qkv_range(
         if s < e {
             let y = std::slice::from_raw_parts_mut(q_ptr.add(s), e - s);
             let sc = std::slice::from_raw_parts(wq_scales.add(s), e - s);
-            neon::matvec_int8(y, x_int8, x_scale, wq.add(s * in_dim), sc, None, in_dim, e - s);
+            neon::matvec_int8(
+                y,
+                x_int8,
+                x_scale,
+                wq.add(s * in_dim),
+                sc,
+                None,
+                in_dim,
+                e - s,
+            );
         }
     }
     // K range
@@ -1198,7 +1684,16 @@ pub(crate) unsafe fn int8_qkv_range(
         if s < e {
             let y = std::slice::from_raw_parts_mut(k_ptr.add(s), e - s);
             let sc = std::slice::from_raw_parts(wk_scales.add(s), e - s);
-            neon::matvec_int8(y, x_int8, x_scale, wk.add(s * in_dim), sc, None, in_dim, e - s);
+            neon::matvec_int8(
+                y,
+                x_int8,
+                x_scale,
+                wk.add(s * in_dim),
+                sc,
+                None,
+                in_dim,
+                e - s,
+            );
         }
     }
     // V range
@@ -1208,7 +1703,16 @@ pub(crate) unsafe fn int8_qkv_range(
         if s < e {
             let y = std::slice::from_raw_parts_mut(v_ptr.add(s), e - s);
             let sc = std::slice::from_raw_parts(wv_scales.add(s), e - s);
-            neon::matvec_int8(y, x_int8, x_scale, wv.add(s * in_dim), sc, None, in_dim, e - s);
+            neon::matvec_int8(
+                y,
+                x_int8,
+                x_scale,
+                wv.add(s * in_dim),
+                sc,
+                None,
+                in_dim,
+                e - s,
+            );
         }
     }
 }
@@ -1224,12 +1728,19 @@ pub(crate) unsafe fn int8_qkv_range(
 #[inline]
 #[allow(clippy::too_many_arguments)] // hot kernel entry point; params mirror the SIMD call
 pub(crate) unsafe fn int8_swiglu_range(
-    ffn_ptr: *mut f32, x_int8: *const i8, x_scale: f32,
-    w_int8: *const i8, w_scales: *const f32,
-    in_dim: usize, start: usize, end: usize,
+    ffn_ptr: *mut f32,
+    x_int8: *const i8,
+    x_scale: f32,
+    w_int8: *const i8,
+    w_scales: *const f32,
+    in_dim: usize,
+    start: usize,
+    end: usize,
     scratch: &mut [f32],
 ) {
-    if start >= end { return; }
+    if start >= end {
+        return;
+    }
     let n_rows = end - start;
     let w_local = w_int8.add(2 * start * in_dim);
     let w_scales_local = std::slice::from_raw_parts(w_scales.add(2 * start), 2 * n_rows);
@@ -1237,7 +1748,16 @@ pub(crate) unsafe fn int8_swiglu_range(
     // every element, so this only keeps the proven behavior identical.
     let gate_up_local = &mut scratch[..2 * n_rows];
     gate_up_local.fill(0.0);
-    neon::matvec_int8(gate_up_local, x_int8, x_scale, w_local, w_scales_local, None, in_dim, 2 * n_rows);
+    neon::matvec_int8(
+        gate_up_local,
+        x_int8,
+        x_scale,
+        w_local,
+        w_scales_local,
+        None,
+        in_dim,
+        2 * n_rows,
+    );
     let ffn_local = std::slice::from_raw_parts_mut(ffn_ptr.add(start), n_rows);
     for j in 0..n_rows {
         let g = gate_up_local[2 * j];
@@ -1269,12 +1789,19 @@ pub(crate) const MAX_BATCH: usize = 8;
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn int8_matvec_range_batched(
     b: usize,
-    y: &[*mut f32], x_int8: &[*const i8], x_scale: &[f32],
-    w_int8: *const i8, w_scales: *const f32,
+    y: &[*mut f32],
+    x_int8: &[*const i8],
+    x_scale: &[f32],
+    w_int8: *const i8,
+    w_scales: *const f32,
     bias: Option<&[*const f32]>,
-    in_dim: usize, start: usize, end: usize,
+    in_dim: usize,
+    start: usize,
+    end: usize,
 ) {
-    if start >= end { return; }
+    if start >= end {
+        return;
+    }
     let n = end - start;
     let mut y_off = [std::ptr::null_mut::<f32>(); MAX_BATCH];
     let mut bias_off = [std::ptr::null::<f32>(); MAX_BATCH];
@@ -1282,13 +1809,26 @@ pub(crate) unsafe fn int8_matvec_range_batched(
         y_off[bi] = y[bi].add(start);
     }
     if let Some(bs) = bias {
-        for bi in 0..b { bias_off[bi] = bs[bi].add(start); }
+        for bi in 0..b {
+            bias_off[bi] = bs[bi].add(start);
+        }
     }
     let w_local = w_int8.add(start * in_dim);
     let w_scales_local = std::slice::from_raw_parts(w_scales.add(start), n);
     neon::matvec_int8_batched(
-        b, &y_off[..b], &x_int8[..b], &x_scale[..b], w_local, w_scales_local,
-        if bias.is_some() { Some(&bias_off[..b]) } else { None }, in_dim, n,
+        b,
+        &y_off[..b],
+        &x_int8[..b],
+        &x_scale[..b],
+        w_local,
+        w_scales_local,
+        if bias.is_some() {
+            Some(&bias_off[..b])
+        } else {
+            None
+        },
+        in_dim,
+        n,
     );
 }
 
@@ -1299,15 +1839,26 @@ pub(crate) unsafe fn int8_matvec_range_batched(
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn int8_qkv_range_batched(
     b: usize,
-    q: &[*mut f32], k: &[*mut f32], v: &[*mut f32],
-    x_int8: &[*const i8], x_scale: &[f32],
-    wq: *const i8, wq_scales: *const f32,
-    wk: *const i8, wk_scales: *const f32,
-    wv: *const i8, wv_scales: *const f32,
-    in_dim: usize, q_dim: usize, kv_dim: usize,
-    start: usize, end: usize,
+    q: &[*mut f32],
+    k: &[*mut f32],
+    v: &[*mut f32],
+    x_int8: &[*const i8],
+    x_scale: &[f32],
+    wq: *const i8,
+    wq_scales: *const f32,
+    wk: *const i8,
+    wk_scales: *const f32,
+    wv: *const i8,
+    wv_scales: *const f32,
+    in_dim: usize,
+    q_dim: usize,
+    kv_dim: usize,
+    start: usize,
+    end: usize,
 ) {
-    if start >= end { return; }
+    if start >= end {
+        return;
+    }
     let total_dim = q_dim + 2 * kv_dim;
     let q_end = q_dim;
     let k_end = q_end + kv_dim;
@@ -1344,11 +1895,18 @@ pub(crate) unsafe fn int8_qkv_range_batched(
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn int8_swiglu_range_batched(
     b: usize,
-    ffn: &[*mut f32], x_int8: &[*const i8], x_scale: &[f32],
-    w_int8: *const i8, w_scales: *const f32,
-    in_dim: usize, start: usize, end: usize,
+    ffn: &[*mut f32],
+    x_int8: &[*const i8],
+    x_scale: &[f32],
+    w_int8: *const i8,
+    w_scales: *const f32,
+    in_dim: usize,
+    start: usize,
+    end: usize,
 ) {
-    if start >= end { return; }
+    if start >= end {
+        return;
+    }
     let n_rows = end - start;
     let mut ffn_off = [std::ptr::null_mut::<f32>(); MAX_BATCH];
     for bi in 0..b {
@@ -1357,7 +1915,14 @@ pub(crate) unsafe fn int8_swiglu_range_batched(
     let w_local = w_int8.add(2 * start * in_dim);
     let w_scales_local = std::slice::from_raw_parts(w_scales.add(2 * start), 2 * n_rows);
     neon::swiglu_int8_batched(
-        b, &ffn_off[..b], &x_int8[..b], &x_scale[..b], w_local, w_scales_local, in_dim, n_rows,
+        b,
+        &ffn_off[..b],
+        &x_int8[..b],
+        &x_scale[..b],
+        w_local,
+        w_scales_local,
+        in_dim,
+        n_rows,
     );
 }
 
@@ -1366,8 +1931,19 @@ pub(crate) unsafe fn int8_swiglu_range_batched(
 // ========================================================================
 
 #[allow(clippy::too_many_arguments)]
-fn im2col(input: &[f32], cols: &mut [f32], c_in: usize, h_in: usize, w_in: usize,
-          kh: usize, kw: usize, stride: usize, padding: usize, h_out: usize, w_out: usize) {
+fn im2col(
+    input: &[f32],
+    cols: &mut [f32],
+    c_in: usize,
+    h_in: usize,
+    w_in: usize,
+    kh: usize,
+    kw: usize,
+    stride: usize,
+    padding: usize,
+    h_out: usize,
+    w_out: usize,
+) {
     let col_len = h_out * w_out;
     for ic in 0..c_in {
         for ki in 0..kh {
@@ -1379,11 +1955,12 @@ fn im2col(input: &[f32], cols: &mut [f32], c_in: usize, h_in: usize, w_in: usize
                     for ow in 0..w_out {
                         let iw = ow * stride + kj;
                         let iw = iw as isize - padding as isize;
-                        let val = if ih >= 0 && (ih as usize) < h_in && iw >= 0 && (iw as usize) < w_in {
-                            input[ic * h_in * w_in + ih as usize * w_in + iw as usize]
-                        } else {
-                            0.0
-                        };
+                        let val =
+                            if ih >= 0 && (ih as usize) < h_in && iw >= 0 && (iw as usize) < w_in {
+                                input[ic * h_in * w_in + ih as usize * w_in + iw as usize]
+                            } else {
+                                0.0
+                            };
                         cols[col_row * col_len + oh * w_out + ow] = val;
                     }
                 }
@@ -1393,23 +1970,47 @@ fn im2col(input: &[f32], cols: &mut [f32], c_in: usize, h_in: usize, w_in: usize
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn conv2d_with_cols(out: &mut [f32], input: &[f32], weight: &[f32], bias: Option<&[f32]>,
-                        cols: &mut Vec<f32>,
-                        c_in: usize, c_out: usize, h_in: usize, w_in: usize,
-                        kh: usize, kw: usize, stride: usize, padding: usize) {
+pub fn conv2d_with_cols(
+    out: &mut [f32],
+    input: &[f32],
+    weight: &[f32],
+    bias: Option<&[f32]>,
+    cols: &mut Vec<f32>,
+    c_in: usize,
+    c_out: usize,
+    h_in: usize,
+    w_in: usize,
+    kh: usize,
+    kw: usize,
+    stride: usize,
+    padding: usize,
+) {
     let h_out = (h_in + 2 * padding - kh) / stride + 1;
     let w_out = (w_in + 2 * padding - kw) / stride + 1;
     let patch_size = c_in * kh * kw;
     let spatial_out = h_out * w_out;
     cols.resize(patch_size * spatial_out, 0.0);
-    conv2d_impl(out, input, weight, bias, cols, c_in, c_out, h_in, w_in, kh, kw, stride, padding);
+    conv2d_impl(
+        out, input, weight, bias, cols, c_in, c_out, h_in, w_in, kh, kw, stride, padding,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
-fn conv2d_impl(out: &mut [f32], input: &[f32], weight: &[f32], bias: Option<&[f32]>,
-               cols: &mut [f32],
-               c_in: usize, c_out: usize, h_in: usize, w_in: usize,
-               kh: usize, kw: usize, stride: usize, padding: usize) {
+fn conv2d_impl(
+    out: &mut [f32],
+    input: &[f32],
+    weight: &[f32],
+    bias: Option<&[f32]>,
+    cols: &mut [f32],
+    c_in: usize,
+    c_out: usize,
+    h_in: usize,
+    w_in: usize,
+    kh: usize,
+    kw: usize,
+    stride: usize,
+    padding: usize,
+) {
     let _pg = ProfileGuard::new(&PROF.conv2d_op);
     let h_out = (h_in + 2 * padding - kh) / stride + 1;
     let w_out = (w_in + 2 * padding - kw) / stride + 1;
@@ -1429,7 +2030,9 @@ fn conv2d_impl(out: &mut [f32], input: &[f32], weight: &[f32], bias: Option<&[f3
         parallel_for_dynamic(n_items, |item| {
             let start = item * PROW;
             let end = (start + PROW).min(patch_size);
-            if start >= end { return; }
+            if start >= end {
+                return;
+            }
             for col_row in start..end {
                 let ic = col_row / (kh * kw);
                 let rem = col_row % (kh * kw);
@@ -1439,18 +2042,27 @@ fn conv2d_impl(out: &mut [f32], input: &[f32], weight: &[f32], bias: Option<&[f3
                     let ih = (oh * stride + ki) as isize - padding as isize;
                     for ow in 0..w_out {
                         let iw = (ow * stride + kj) as isize - padding as isize;
-                        let val = if ih >= 0 && (ih as usize) < h_in && iw >= 0 && (iw as usize) < w_in {
-                            unsafe { *(input_ptr as *const f32).add(ic * h_in * w_in + ih as usize * w_in + iw as usize) }
-                        } else {
-                            0.0
-                        };
-                        unsafe { *(cols_ptr as *mut f32).add(col_row * spatial_out + oh * w_out + ow) = val; }
+                        let val =
+                            if ih >= 0 && (ih as usize) < h_in && iw >= 0 && (iw as usize) < w_in {
+                                unsafe {
+                                    *(input_ptr as *const f32)
+                                        .add(ic * h_in * w_in + ih as usize * w_in + iw as usize)
+                                }
+                            } else {
+                                0.0
+                            };
+                        unsafe {
+                            *(cols_ptr as *mut f32).add(col_row * spatial_out + oh * w_out + ow) =
+                                val;
+                        }
                     }
                 }
             }
         });
     } else {
-        im2col(input, cols, c_in, h_in, w_in, kh, kw, stride, padding, h_out, w_out);
+        im2col(
+            input, cols, c_in, h_in, w_in, kh, kw, stride, padding, h_out, w_out,
+        );
     }
 
     // GEMM: weight[c_out, patch_size] @ cols[patch_size, spatial_out] = out[c_out, spatial_out]
@@ -1459,8 +2071,8 @@ fn conv2d_impl(out: &mut [f32], input: &[f32], weight: &[f32], bias: Option<&[f3
     // idling behind a single main-thread BLAS call.
     #[cfg(feature = "blas")]
     unsafe {
-        if n_threads > 1 && c_out >= 2 * n_threads
-            && c_out * patch_size * spatial_out >= (1 << 22) {
+        if n_threads > 1 && c_out >= 2 * n_threads && c_out * patch_size * spatial_out >= (1 << 22)
+        {
             let out_send = out.as_mut_ptr() as usize;
             let w_send = weight.as_ptr() as usize;
             let cols_send = cols.as_ptr() as usize;
@@ -1472,14 +2084,25 @@ fn conv2d_impl(out: &mut [f32], input: &[f32], weight: &[f32], bias: Option<&[f3
             parallel_for_dynamic(n_items, |item| {
                 let start = item * COUT;
                 let end = (start + COUT).min(c_out);
-                if start >= end { return; }
+                if start >= end {
+                    return;
+                }
                 // SAFETY: items write disjoint row ranges [start, end) of out.
                 cblas_sgemm(
-                    CBLAS_ROW_MAJOR, CBLAS_NO_TRANS, CBLAS_NO_TRANS,
-                    (end - start) as i32, spatial_out as i32, patch_size as i32,
-                    1.0, (w_send as *const f32).add(start * patch_size), patch_size as i32,
-                    cols_send as *const f32, spatial_out as i32,
-                    0.0, (out_send as *mut f32).add(start * spatial_out), spatial_out as i32,
+                    CBLAS_ROW_MAJOR,
+                    CBLAS_NO_TRANS,
+                    CBLAS_NO_TRANS,
+                    (end - start) as i32,
+                    spatial_out as i32,
+                    patch_size as i32,
+                    1.0,
+                    (w_send as *const f32).add(start * patch_size),
+                    patch_size as i32,
+                    cols_send as *const f32,
+                    spatial_out as i32,
+                    0.0,
+                    (out_send as *mut f32).add(start * spatial_out),
+                    spatial_out as i32,
                 );
                 if let Some(bp) = bias_send {
                     let bp = bp as *const f32;
@@ -1495,11 +2118,20 @@ fn conv2d_impl(out: &mut [f32], input: &[f32], weight: &[f32], bias: Option<&[f3
             return;
         }
         cblas_sgemm(
-            CBLAS_ROW_MAJOR, CBLAS_NO_TRANS, CBLAS_NO_TRANS,
-            c_out as i32, spatial_out as i32, patch_size as i32,
-            1.0, weight.as_ptr(), patch_size as i32,
-            cols.as_ptr(), spatial_out as i32,
-            0.0, out.as_mut_ptr(), spatial_out as i32,
+            CBLAS_ROW_MAJOR,
+            CBLAS_NO_TRANS,
+            CBLAS_NO_TRANS,
+            c_out as i32,
+            spatial_out as i32,
+            patch_size as i32,
+            1.0,
+            weight.as_ptr(),
+            patch_size as i32,
+            cols.as_ptr(),
+            spatial_out as i32,
+            0.0,
+            out.as_mut_ptr(),
+            spatial_out as i32,
         );
     }
 
@@ -1507,7 +2139,9 @@ fn conv2d_impl(out: &mut [f32], input: &[f32], weight: &[f32], bias: Option<&[f3
     {
         // out[c_out, spatial_out] = weight[c_out, patch_size] @ cols[patch_size, spatial_out]
         #[cfg(target_arch = "aarch64")]
-        { gemm_nn_fallback(out, weight, cols, c_out, patch_size, spatial_out); }
+        {
+            gemm_nn_fallback(out, weight, cols, c_out, patch_size, spatial_out);
+        }
 
         #[cfg(not(target_arch = "aarch64"))]
         for oc in 0..c_out {
@@ -1537,27 +2171,48 @@ fn conv2d_impl(out: &mut [f32], input: &[f32], weight: &[f32], bias: Option<&[f3
 // Normalization
 // ========================================================================
 
-pub fn layer_norm(out: &mut [f32], x: &[f32], weight: &[f32], bias: &[f32],
-                  seq_len: usize, hidden: usize, eps: f32) {
+pub fn layer_norm(
+    out: &mut [f32],
+    x: &[f32],
+    weight: &[f32],
+    bias: &[f32],
+    seq_len: usize,
+    hidden: usize,
+    eps: f32,
+) {
     let _pg = ProfileGuard::new(&PROF.layer_norm);
     for s in 0..seq_len {
         let x_row = &x[s * hidden..(s + 1) * hidden];
         let out_row = &mut out[s * hidden..(s + 1) * hidden];
 
         #[cfg(target_arch = "aarch64")]
-        { unsafe { neon::layer_norm_row(out_row, x_row, weight, bias, hidden, eps); } continue; }
+        {
+            unsafe {
+                neon::layer_norm_row(out_row, x_row, weight, bias, hidden, eps);
+            }
+            continue;
+        }
 
         #[cfg(target_arch = "x86_64")]
-        { unsafe { avx::layer_norm_row(out_row, x_row, weight, bias, hidden, eps); } continue; }
+        {
+            unsafe {
+                avx::layer_norm_row(out_row, x_row, weight, bias, hidden, eps);
+            }
+            continue;
+        }
 
         #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
         {
             let mean: f32 = x_row.iter().sum::<f32>() / hidden as f32;
 
-            let var: f32 = x_row.iter().map(|&v| {
-                let d = v - mean;
-                d * d
-            }).sum::<f32>() / hidden as f32;
+            let var: f32 = x_row
+                .iter()
+                .map(|&v| {
+                    let d = v - mean;
+                    d * d
+                })
+                .sum::<f32>()
+                / hidden as f32;
 
             let inv_std = 1.0 / (var + eps).sqrt();
 
@@ -1568,17 +2223,34 @@ pub fn layer_norm(out: &mut [f32], x: &[f32], weight: &[f32], bias: &[f32],
     }
 }
 
-pub fn rms_norm(out: &mut [f32], x: &[f32], weight: &[f32], seq_len: usize, hidden: usize, eps: f32) {
+pub fn rms_norm(
+    out: &mut [f32],
+    x: &[f32],
+    weight: &[f32],
+    seq_len: usize,
+    hidden: usize,
+    eps: f32,
+) {
     let _pg = ProfileGuard::new(&PROF.rms_norm);
     for s in 0..seq_len {
         let x_row = &x[s * hidden..(s + 1) * hidden];
         let out_row = &mut out[s * hidden..(s + 1) * hidden];
 
         #[cfg(target_arch = "aarch64")]
-        { unsafe { neon::rms_norm_row(out_row, x_row, weight, hidden, eps); } continue; }
+        {
+            unsafe {
+                neon::rms_norm_row(out_row, x_row, weight, hidden, eps);
+            }
+            continue;
+        }
 
         #[cfg(target_arch = "x86_64")]
-        { unsafe { avx::rms_norm_row(out_row, x_row, weight, hidden, eps); } continue; }
+        {
+            unsafe {
+                avx::rms_norm_row(out_row, x_row, weight, hidden, eps);
+            }
+            continue;
+        }
 
         #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
         {
@@ -1591,7 +2263,14 @@ pub fn rms_norm(out: &mut [f32], x: &[f32], weight: &[f32], seq_len: usize, hidd
     }
 }
 
-pub fn rms_norm_per_head(x: &mut [f32], weight: &[f32], seq_len: usize, n_heads: usize, head_dim: usize, eps: f32) {
+pub fn rms_norm_per_head(
+    x: &mut [f32],
+    weight: &[f32],
+    seq_len: usize,
+    n_heads: usize,
+    head_dim: usize,
+    eps: f32,
+) {
     let hidden = n_heads * head_dim;
     for s in 0..seq_len {
         for h in 0..n_heads {
@@ -1600,7 +2279,9 @@ pub fn rms_norm_per_head(x: &mut [f32], weight: &[f32], seq_len: usize, n_heads:
             #[cfg(target_arch = "aarch64")]
             {
                 let vec = &mut x[off..off + head_dim];
-                unsafe { neon::rms_norm_inplace(vec, weight, head_dim, eps); }
+                unsafe {
+                    neon::rms_norm_inplace(vec, weight, head_dim, eps);
+                }
                 continue;
             }
 
@@ -1640,12 +2321,20 @@ pub fn gelu(x: &mut [f32], n: usize) {
         parallel_for_dynamic(n_items, |item| {
             let start = item * ITEM;
             let end = (start + ITEM).min(n);
-            if start >= end { return; }
-            let x_local = unsafe { std::slice::from_raw_parts_mut((x_ptr as *mut f32).add(start), end - start) };
+            if start >= end {
+                return;
+            }
+            let x_local = unsafe {
+                std::slice::from_raw_parts_mut((x_ptr as *mut f32).add(start), end - start)
+            };
             #[cfg(target_arch = "aarch64")]
-            unsafe { neon::gelu_inplace(x_local, end - start); }
+            unsafe {
+                neon::gelu_inplace(x_local, end - start);
+            }
             #[cfg(target_arch = "x86_64")]
-            unsafe { avx::gelu_inplace(x_local, end - start); }
+            unsafe {
+                avx::gelu_inplace(x_local, end - start);
+            }
             #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
             for i in 0..(end - start) {
                 let val = x_local[i];
@@ -1657,10 +2346,18 @@ pub fn gelu(x: &mut [f32], n: usize) {
         return;
     }
     #[cfg(target_arch = "aarch64")]
-    { unsafe { neon::gelu_inplace(x, n); } }
+    {
+        unsafe {
+            neon::gelu_inplace(x, n);
+        }
+    }
 
     #[cfg(target_arch = "x86_64")]
-    { unsafe { avx::gelu_inplace(x, n); } }
+    {
+        unsafe {
+            avx::gelu_inplace(x, n);
+        }
+    }
 
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     for i in 0..n {
@@ -1688,9 +2385,15 @@ pub fn swiglu_separate_inplace(gate: &mut [f32], up: &[f32], seq_len: usize, int
         parallel_for_dynamic(n_items, |item| {
             let start = item * ITEM;
             let end = (start + ITEM).min(total);
-            if start >= end { return; }
-            let g = unsafe { std::slice::from_raw_parts_mut((gate_ptr as *mut f32).add(start), end - start) };
-            let u = unsafe { std::slice::from_raw_parts((up_ptr as *const f32).add(start), end - start) };
+            if start >= end {
+                return;
+            }
+            let g = unsafe {
+                std::slice::from_raw_parts_mut((gate_ptr as *mut f32).add(start), end - start)
+            };
+            let u = unsafe {
+                std::slice::from_raw_parts((up_ptr as *const f32).add(start), end - start)
+            };
             for j in 0..(end - start) {
                 let gv = g[j];
                 g[j] = gv / (1.0 + (-gv).exp()) * u[j];
@@ -1716,15 +2419,25 @@ pub fn softmax(x: &mut [f32], rows: usize, cols: usize) {
         #[cfg(all(feature = "vdsp", target_vendor = "apple"))]
         {
             let n = cols as i32;
-            unsafe { vvexpf(row.as_mut_ptr(), row.as_ptr(), &n); }
+            unsafe {
+                vvexpf(row.as_mut_ptr(), row.as_ptr(), &n);
+            }
         }
         #[cfg(not(all(feature = "vdsp", target_vendor = "apple")))]
         {
             #[cfg(target_arch = "aarch64")]
-            { unsafe { neon::exp_inplace(row); } }
+            {
+                unsafe {
+                    neon::exp_inplace(row);
+                }
+            }
 
             #[cfg(target_arch = "x86_64")]
-            { unsafe { avx::exp_inplace(row); } }
+            {
+                unsafe {
+                    avx::exp_inplace(row);
+                }
+            }
 
             #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
             for c in 0..cols {
@@ -1748,10 +2461,19 @@ pub fn softmax(x: &mut [f32], rows: usize, cols: usize) {
 // ========================================================================
 
 #[allow(clippy::too_many_arguments)]
-fn bidirectional_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
-                                  n_heads: usize, head_dim: usize, scale: f32,
-                                  window_starts: &[i32], n_windows: usize,
-                                  head_start: usize, head_end: usize) {
+fn bidirectional_attention_heads(
+    out: &mut [f32],
+    q: &[f32],
+    k: &[f32],
+    v: &[f32],
+    n_heads: usize,
+    head_dim: usize,
+    scale: f32,
+    window_starts: &[i32],
+    n_windows: usize,
+    head_start: usize,
+    head_end: usize,
+) {
     let hidden = n_heads * head_dim;
 
     for h in head_start..head_end {
@@ -1762,11 +2484,14 @@ fn bidirectional_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32
             for i in ws..we {
                 let q_off = i * hidden + h * head_dim;
                 let q_row = &q[q_off..q_off + head_dim];
-                let o_row = &mut out[i * hidden + h * head_dim..i * hidden + h * head_dim + head_dim];
+                let o_row =
+                    &mut out[i * hidden + h * head_dim..i * hidden + h * head_dim + head_dim];
 
                 let mut max_score = -1e30f32;
                 let mut sum_exp = 0.0f32;
-                for val in o_row.iter_mut().take(head_dim) { *val = 0.0; }
+                for val in o_row.iter_mut().take(head_dim) {
+                    *val = 0.0;
+                }
 
                 for j in ws..we {
                     let k_off = j * hidden + h * head_dim;
@@ -1798,9 +2523,18 @@ fn bidirectional_attention_heads(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn bidirectional_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
-                               seq: usize, n_heads: usize, head_dim: usize, scale: f32,
-                               window_starts: &[i32], n_windows: usize) {
+pub fn bidirectional_attention(
+    out: &mut [f32],
+    q: &[f32],
+    k: &[f32],
+    v: &[f32],
+    seq: usize,
+    n_heads: usize,
+    head_dim: usize,
+    scale: f32,
+    window_starts: &[i32],
+    n_windows: usize,
+) {
     let _pg = ProfileGuard::new(&PROF.attention_bidir);
     let n_threads = get_num_threads();
     let hidden = n_heads * head_dim;
@@ -1816,21 +2550,44 @@ pub fn bidirectional_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
         // independent softmax over the same K/V, so per-head results are
         // bit-identical regardless of which core runs which head.
         parallel_for_dynamic(n_heads, |h| {
-            let out_local = unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut f32, seq * hidden) };
+            let out_local =
+                unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut f32, seq * hidden) };
             let q_local = unsafe { std::slice::from_raw_parts(q_ptr as *const f32, seq * hidden) };
             let k_local = unsafe { std::slice::from_raw_parts(k_ptr as *const f32, seq * hidden) };
             let v_local = unsafe { std::slice::from_raw_parts(v_ptr as *const f32, seq * hidden) };
-            let ws_local = unsafe { std::slice::from_raw_parts(ws_ptr as *const i32, n_windows + 1) };
+            let ws_local =
+                unsafe { std::slice::from_raw_parts(ws_ptr as *const i32, n_windows + 1) };
 
-            bidirectional_attention_heads(out_local, q_local, k_local, v_local,
-                                         n_heads, head_dim, scale,
-                                         ws_local, n_windows, h, h + 1);
+            bidirectional_attention_heads(
+                out_local,
+                q_local,
+                k_local,
+                v_local,
+                n_heads,
+                head_dim,
+                scale,
+                ws_local,
+                n_windows,
+                h,
+                h + 1,
+            );
         });
         return;
     }
 
-    bidirectional_attention_heads(out, q, k, v, n_heads, head_dim, scale,
-                                 window_starts, n_windows, 0, n_heads);
+    bidirectional_attention_heads(
+        out,
+        q,
+        k,
+        v,
+        n_heads,
+        head_dim,
+        scale,
+        window_starts,
+        n_windows,
+        0,
+        n_heads,
+    );
 }
 
 /// Two-pass causal attention using BLAS sgemm with head-contiguous KV cache.
@@ -1851,11 +2608,19 @@ pub fn bidirectional_attention(out: &mut [f32], q: &[f32], k: &[f32], v: &[f32],
 /// path and the non-blas fallback.
 #[allow(clippy::too_many_arguments)]
 #[inline]
-fn paired_attention_row(out_row: &mut [f32], q_row: &[f32],
-                        k_base: *const f32, v_base: *const f32,
-                        head_stride: usize, k_end: usize,
-                        heads_per_kv: usize, head_dim: usize, scale: f32,
-                        head_start: usize, head_end: usize) {
+fn paired_attention_row(
+    out_row: &mut [f32],
+    q_row: &[f32],
+    k_base: *const f32,
+    v_base: *const f32,
+    head_stride: usize,
+    k_end: usize,
+    heads_per_kv: usize,
+    head_dim: usize,
+    scale: f32,
+    head_start: usize,
+    head_end: usize,
+) {
     // Per-head online-softmax state, indexed within the current group.
     // heads_per_kv is bounded by the model's head count; keep on stack.
     const MAX_GROUP: usize = 32;
@@ -1877,7 +2642,9 @@ fn paired_attention_row(out_row: &mut [f32], q_row: &[f32],
             max_score[g] = -1e30f32;
             sum_exp[g] = 0.0f32;
         }
-        for val in o_span.iter_mut() { *val = 0.0; }
+        for val in o_span.iter_mut() {
+            *val = 0.0;
+        }
 
         let k_head = unsafe { k_base.add(kv_h * head_stride) };
         let v_head = unsafe { v_base.add(kv_h * head_stride) };
@@ -1921,20 +2688,41 @@ fn paired_attention_row(out_row: &mut [f32], q_row: &[f32],
 
 #[cfg(feature = "blas")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn causal_attention_heads(out: &mut [f32], q: &[f32],
-                           k_base: *const f32, v_base: *const f32,
-                           head_stride: usize,
-                           seq_q: usize, seq_k: usize, n_heads: usize, n_kv_heads: usize,
-                           head_dim: usize, scale: f32, q_offset: usize,
-                           head_start: usize, head_end: usize) {
+pub(crate) fn causal_attention_heads(
+    out: &mut [f32],
+    q: &[f32],
+    k_base: *const f32,
+    v_base: *const f32,
+    head_stride: usize,
+    seq_q: usize,
+    seq_k: usize,
+    n_heads: usize,
+    n_kv_heads: usize,
+    head_dim: usize,
+    scale: f32,
+    q_offset: usize,
+    head_start: usize,
+    head_end: usize,
+) {
     let heads_per_kv = n_heads / n_kv_heads;
     let q_hidden = n_heads * head_dim;
 
     // Single-token path: GQA-paired online softmax without allocation or BLAS.
     if seq_q == 1 {
         let k_end = (q_offset + 1).min(seq_k);
-        paired_attention_row(out, q, k_base, v_base, head_stride, k_end,
-                             heads_per_kv, head_dim, scale, head_start, head_end);
+        paired_attention_row(
+            out,
+            q,
+            k_base,
+            v_base,
+            head_stride,
+            k_end,
+            heads_per_kv,
+            head_dim,
+            scale,
+            head_start,
+            head_end,
+        );
         return;
     }
 
@@ -1953,13 +2741,20 @@ pub(crate) fn causal_attention_heads(out: &mut [f32], q: &[f32],
         // Q_h rows are strided by q_hidden inside `q`; K_h is contiguous.
         unsafe {
             cblas_sgemm(
-                CBLAS_ROW_MAJOR, CBLAS_NO_TRANS, CBLAS_TRANS,
-                seq_q as i32, seq_k as i32, head_dim as i32,
+                CBLAS_ROW_MAJOR,
+                CBLAS_NO_TRANS,
+                CBLAS_TRANS,
+                seq_q as i32,
+                seq_k as i32,
+                head_dim as i32,
                 scale,
-                q.as_ptr().add(h * head_dim), q_hidden as i32,
-                k_head, head_dim as i32,
+                q.as_ptr().add(h * head_dim),
+                q_hidden as i32,
+                k_head,
+                head_dim as i32,
                 0.0,
-                scores.as_mut_ptr(), seq_k as i32,
+                scores.as_mut_ptr(),
+                seq_k as i32,
             );
         }
 
@@ -1968,45 +2763,70 @@ pub(crate) fn causal_attention_heads(out: &mut [f32], q: &[f32],
             let k_end = (q_offset + i + 1).min(seq_k);
             let row = &mut scores[i * seq_k..i * seq_k + seq_k];
             if k_end == 0 {
-                for v in row.iter_mut() { *v = 0.0; }
+                for v in row.iter_mut() {
+                    *v = 0.0;
+                }
                 continue;
             }
 
             let mut max_s = row[0];
-            for &s in &row[1..k_end] { if s > max_s { max_s = s; } }
-            for s in &mut row[..k_end] { *s -= max_s; }
+            for &s in &row[1..k_end] {
+                if s > max_s {
+                    max_s = s;
+                }
+            }
+            for s in &mut row[..k_end] {
+                *s -= max_s;
+            }
 
             #[cfg(all(feature = "vdsp", target_vendor = "apple"))]
             {
                 let n = k_end as i32;
-                unsafe { vvexpf(row.as_mut_ptr(), row.as_ptr(), &n); }
+                unsafe {
+                    vvexpf(row.as_mut_ptr(), row.as_ptr(), &n);
+                }
             }
             #[cfg(not(all(feature = "vdsp", target_vendor = "apple")))]
             {
-                for s in &mut row[..k_end] { *s = s.exp(); }
+                for s in &mut row[..k_end] {
+                    *s = s.exp();
+                }
             }
 
             let mut sum_exp = 0.0f32;
-            for &s in &row[..k_end] { sum_exp += s; }
+            for &s in &row[..k_end] {
+                sum_exp += s;
+            }
             if sum_exp > 0.0 {
                 let inv = 1.0 / sum_exp;
-                for s in &mut row[..k_end] { *s *= inv; }
+                for s in &mut row[..k_end] {
+                    *s *= inv;
+                }
             }
             // Zero the masked (future) keys so the O = S @ V GEMM ignores them.
-            for s in &mut row[k_end..seq_k] { *s = 0.0; }
+            for s in &mut row[k_end..seq_k] {
+                *s = 0.0;
+            }
         }
 
         // O[seq_q, head_dim] = S[seq_q, seq_k] @ V_h[seq_k, head_dim].
         // O rows are strided by q_hidden inside `out`.
         unsafe {
             cblas_sgemm(
-                CBLAS_ROW_MAJOR, CBLAS_NO_TRANS, CBLAS_NO_TRANS,
-                seq_q as i32, head_dim as i32, seq_k as i32,
+                CBLAS_ROW_MAJOR,
+                CBLAS_NO_TRANS,
+                CBLAS_NO_TRANS,
+                seq_q as i32,
+                head_dim as i32,
+                seq_k as i32,
                 1.0,
-                scores.as_ptr(), seq_k as i32,
-                v_head, head_dim as i32,
+                scores.as_ptr(),
+                seq_k as i32,
+                v_head,
+                head_dim as i32,
                 0.0,
-                out.as_mut_ptr().add(h * head_dim), q_hidden as i32,
+                out.as_mut_ptr().add(h * head_dim),
+                q_hidden as i32,
             );
         }
     }
@@ -2016,12 +2836,22 @@ pub(crate) fn causal_attention_heads(out: &mut [f32], q: &[f32],
 /// layout. Runs the GQA-paired scan row by row for any `seq_q`.
 #[cfg(not(feature = "blas"))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn causal_attention_heads(out: &mut [f32], q: &[f32],
-                           k_base: *const f32, v_base: *const f32,
-                           head_stride: usize,
-                           seq_q: usize, seq_k: usize, n_heads: usize, n_kv_heads: usize,
-                           head_dim: usize, scale: f32, q_offset: usize,
-                           head_start: usize, head_end: usize) {
+pub(crate) fn causal_attention_heads(
+    out: &mut [f32],
+    q: &[f32],
+    k_base: *const f32,
+    v_base: *const f32,
+    head_stride: usize,
+    seq_q: usize,
+    seq_k: usize,
+    n_heads: usize,
+    n_kv_heads: usize,
+    head_dim: usize,
+    scale: f32,
+    q_offset: usize,
+    head_start: usize,
+    head_end: usize,
+) {
     let heads_per_kv = n_heads / n_kv_heads;
     let q_hidden = n_heads * head_dim;
 
@@ -2029,10 +2859,19 @@ pub(crate) fn causal_attention_heads(out: &mut [f32], q: &[f32],
         let global_pos = q_offset + i;
         let k_end = (global_pos + 1).min(seq_k);
         let row_base = i * q_hidden;
-        paired_attention_row(&mut out[row_base..row_base + q_hidden],
-                             &q[row_base..row_base + q_hidden],
-                             k_base, v_base, head_stride, k_end,
-                             heads_per_kv, head_dim, scale, head_start, head_end);
+        paired_attention_row(
+            &mut out[row_base..row_base + q_hidden],
+            &q[row_base..row_base + q_hidden],
+            k_base,
+            v_base,
+            head_stride,
+            k_end,
+            heads_per_kv,
+            head_dim,
+            scale,
+            head_start,
+            head_end,
+        );
     }
 }
 
@@ -2042,31 +2881,48 @@ pub(crate) fn causal_attention_heads(out: &mut [f32], q: &[f32],
 /// Returns this worker's `[head_start, head_end)`, or `None` if empty. Shared
 /// by the threaded public kernel and the fused decode region.
 #[inline]
-pub(crate) fn attn_head_range(tid: usize, nt: usize, seq_q: usize, n_heads: usize, n_kv_heads: usize)
-    -> Option<(usize, usize)>
-{
+pub(crate) fn attn_head_range(
+    tid: usize,
+    nt: usize,
+    seq_q: usize,
+    n_heads: usize,
+    n_kv_heads: usize,
+) -> Option<(usize, usize)> {
     if seq_q == 1 && n_heads.is_multiple_of(n_kv_heads) {
         let heads_per_kv = n_heads / n_kv_heads;
         let chunk = n_kv_heads.div_ceil(nt);
         let g0 = tid * chunk;
         let g1 = (g0 + chunk).min(n_kv_heads);
-        if g0 >= g1 { return None; }
+        if g0 >= g1 {
+            return None;
+        }
         Some((g0 * heads_per_kv, g1 * heads_per_kv))
     } else {
         let chunk = n_heads.div_ceil(nt);
         let h0 = tid * chunk;
         let h1 = (h0 + chunk).min(n_heads);
-        if h0 >= h1 { return None; }
+        if h0 >= h1 {
+            return None;
+        }
         Some((h0, h1))
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn causal_attention(out: &mut [f32], q: &[f32],
-                         k_base: *const f32, v_base: *const f32,
-                         head_stride: usize,
-                         seq_q: usize, seq_k: usize, n_heads: usize, n_kv_heads: usize,
-                         head_dim: usize, scale: f32, q_offset: usize) {
+pub fn causal_attention(
+    out: &mut [f32],
+    q: &[f32],
+    k_base: *const f32,
+    v_base: *const f32,
+    head_stride: usize,
+    seq_q: usize,
+    seq_k: usize,
+    n_heads: usize,
+    n_kv_heads: usize,
+    head_dim: usize,
+    scale: f32,
+    q_offset: usize,
+) {
     let _pg = ProfileGuard::new(&PROF.attention_causal);
     let n_threads = get_num_threads();
     if n_threads > 1 && n_heads >= 2 {
@@ -2082,21 +2938,47 @@ pub fn causal_attention(out: &mut [f32], q: &[f32],
                 None => return,
             };
 
-            let out_local = unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut f32, seq_q * q_hidden) };
-            let q_local = unsafe { std::slice::from_raw_parts(q_ptr as *const f32, seq_q * q_hidden) };
+            let out_local =
+                unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut f32, seq_q * q_hidden) };
+            let q_local =
+                unsafe { std::slice::from_raw_parts(q_ptr as *const f32, seq_q * q_hidden) };
 
-            causal_attention_heads(out_local, q_local,
-                                   k_ptr as *const f32, v_ptr as *const f32,
-                                   head_stride,
-                                   seq_q, seq_k, n_heads, n_kv_heads,
-                                   head_dim, scale, q_offset, h0, h1);
+            causal_attention_heads(
+                out_local,
+                q_local,
+                k_ptr as *const f32,
+                v_ptr as *const f32,
+                head_stride,
+                seq_q,
+                seq_k,
+                n_heads,
+                n_kv_heads,
+                head_dim,
+                scale,
+                q_offset,
+                h0,
+                h1,
+            );
         });
         return;
     }
 
-    causal_attention_heads(out, q, k_base, v_base, head_stride,
-                            seq_q, seq_k, n_heads, n_kv_heads,
-                            head_dim, scale, q_offset, 0, n_heads);
+    causal_attention_heads(
+        out,
+        q,
+        k_base,
+        v_base,
+        head_stride,
+        seq_q,
+        seq_k,
+        n_heads,
+        n_kv_heads,
+        head_dim,
+        scale,
+        q_offset,
+        0,
+        n_heads,
+    );
 }
 
 // ========================================================================
@@ -2118,8 +3000,14 @@ pub fn sinusoidal_pe(pe: &mut [f32], n_pos: usize, d_model: usize) {
     }
 }
 
-pub fn apply_rope_neox(x: &mut [f32], cos_vals: &[f32], sin_vals: &[f32],
-                        seq: usize, n_heads: usize, head_dim: usize) {
+pub fn apply_rope_neox(
+    x: &mut [f32],
+    cos_vals: &[f32],
+    sin_vals: &[f32],
+    seq: usize,
+    n_heads: usize,
+    head_dim: usize,
+) {
     let _pg = ProfileGuard::new(&PROF.rope);
     let half = head_dim / 2;
     let hidden = n_heads * head_dim;
@@ -2154,7 +3042,7 @@ pub fn apply_rope_neox(x: &mut [f32], cos_vals: &[f32], sin_vals: &[f32],
                 while d < half {
                     let x1 = vec[d];
                     let x2 = vec[half + d];
-                    vec[d]        = x1 * c[d] - x2 * sn[d];
+                    vec[d] = x1 * c[d] - x2 * sn[d];
                     vec[half + d] = x2 * c[d] + x1 * sn[d];
                     d += 1;
                 }
@@ -2165,7 +3053,7 @@ pub fn apply_rope_neox(x: &mut [f32], cos_vals: &[f32], sin_vals: &[f32],
                 for d in 0..half {
                     let x1 = vec[d];
                     let x2 = vec[half + d];
-                    vec[d]        = x1 * c[d]        + (-x2) * sn[d];
+                    vec[d] = x1 * c[d] + (-x2) * sn[d];
                     vec[half + d] = x2 * c[half + d] + x1 * sn[half + d];
                 }
             }
@@ -2239,7 +3127,9 @@ pub fn with_quantized_int8_batch<R>(xs: &[&[f32]], f: impl FnOnce(&[Vec<i8>], &[
 pub fn quantize_into(dst: &mut [i8], x: &[f32]) -> f32 {
     debug_assert_eq!(dst.len(), x.len());
     let mut max_abs = 0.0f32;
-    for &v in x { max_abs = max_abs.max(v.abs()); }
+    for &v in x {
+        max_abs = max_abs.max(v.abs());
+    }
     let scale = if max_abs > 0.0 { max_abs / 127.0 } else { 1.0 };
     let inv_scale = 127.0 / max_abs.max(1e-10);
     for (d, &v) in dst.iter_mut().zip(x.iter()) {
@@ -2253,9 +3143,15 @@ pub fn quantize_into(dst: &mut [i8], x: &[f32]) -> f32 {
 /// # Safety
 /// `w_bf16` must point to at least `out_dim * in_dim` readable `u16` (BF16)
 /// values that stay valid for the duration of the call.
-pub unsafe fn quantize_bf16_weights_to_int8(w_bf16: *const u16, out_dim: usize, in_dim: usize) -> (Vec<i8>, Vec<f32>) {
+pub unsafe fn quantize_bf16_weights_to_int8(
+    w_bf16: *const u16,
+    out_dim: usize,
+    in_dim: usize,
+) -> (Vec<i8>, Vec<f32>) {
     #[cfg(target_arch = "aarch64")]
-    unsafe { neon::quantize_bf16_to_int8(w_bf16, out_dim, in_dim) }
+    unsafe {
+        neon::quantize_bf16_to_int8(w_bf16, out_dim, in_dim)
+    }
     #[cfg(not(target_arch = "aarch64"))]
     {
         let mut int8_data = vec![0i8; out_dim * in_dim];
@@ -2265,7 +3161,9 @@ pub unsafe fn quantize_bf16_weights_to_int8(w_bf16: *const u16, out_dim: usize, 
             let mut max_abs = 0.0f32;
             for k in 0..in_dim {
                 let v = f32::from_bits((src[row * in_dim + k] as u32) << 16).abs();
-                if v > max_abs { max_abs = v; }
+                if v > max_abs {
+                    max_abs = v;
+                }
             }
             let scale = if max_abs > 0.0 { max_abs / 127.0 } else { 1.0 };
             let inv_scale = 127.0 / max_abs.max(1e-10);
@@ -2280,66 +3178,91 @@ pub unsafe fn quantize_bf16_weights_to_int8(w_bf16: *const u16, out_dim: usize, 
 }
 
 /// INT8 threaded argmax: find argmax(x @ W.T) using INT8 quantized weights.
-pub fn argmax_matvec_int8(x: &[f32], w_int8: &[i8], w_scales: &[f32], in_dim: usize, out_dim: usize) -> usize {
+pub fn argmax_matvec_int8(
+    x: &[f32],
+    w_int8: &[i8],
+    w_scales: &[f32],
+    in_dim: usize,
+    out_dim: usize,
+) -> usize {
     with_quantized_int8(x, |x_int8, x_scale| {
-    let n_threads = get_num_threads();
-    #[cfg(target_arch = "aarch64")]
-    {
-        if n_threads <= 1 {
-            let (best, _) = unsafe {
-                neon::argmax_int8_range(x_int8.as_ptr(), x_scale, w_int8.as_ptr(), w_scales, in_dim, 0, out_dim)
-            };
-            return best;
-        }
+        let n_threads = get_num_threads();
+        #[cfg(target_arch = "aarch64")]
+        {
+            if n_threads <= 1 {
+                let (best, _) = unsafe {
+                    neon::argmax_int8_range(
+                        x_int8.as_ptr(),
+                        x_scale,
+                        w_int8.as_ptr(),
+                        w_scales,
+                        in_dim,
+                        0,
+                        out_dim,
+                    )
+                };
+                return best;
+            }
 
-        let mut best_indices = [0usize; MAX_THREADS];
-        let mut best_vals = [-1e30f32; MAX_THREADS];
+            let mut best_indices = [0usize; MAX_THREADS];
+            let mut best_vals = [-1e30f32; MAX_THREADS];
 
-        let x_int8_ptr = x_int8.as_ptr() as usize;
-        let w_int8_ptr = w_int8.as_ptr() as usize;
-        let w_scales_ptr = w_scales.as_ptr() as usize;
-        let bi_ptr = best_indices.as_mut_ptr() as usize;
-        let bv_ptr = best_vals.as_mut_ptr() as usize;
+            let x_int8_ptr = x_int8.as_ptr() as usize;
+            let w_int8_ptr = w_int8.as_ptr() as usize;
+            let w_scales_ptr = w_scales.as_ptr() as usize;
+            let bi_ptr = best_indices.as_mut_ptr() as usize;
+            let bv_ptr = best_vals.as_mut_ptr() as usize;
 
-        parallel_for(|tid, nt| {
-            let chunk = out_dim.div_ceil(nt);
-            let start = tid * chunk;
-            let end = (start + chunk).min(out_dim);
-            if start >= end {
-                unsafe {
-                    *(bv_ptr as *mut f32).add(tid) = -1e30;
-                    *(bi_ptr as *mut usize).add(tid) = 0;
+            parallel_for(|tid, nt| {
+                let chunk = out_dim.div_ceil(nt);
+                let start = tid * chunk;
+                let end = (start + chunk).min(out_dim);
+                if start >= end {
+                    unsafe {
+                        *(bv_ptr as *mut f32).add(tid) = -1e30;
+                        *(bi_ptr as *mut usize).add(tid) = 0;
+                    }
+                    return;
                 }
-                return;
-            }
 
-            let w_scales_local = unsafe { std::slice::from_raw_parts(w_scales_ptr as *const f32, out_dim) };
-            let (best, best_val) = unsafe {
-                neon::argmax_int8_range(x_int8_ptr as *const i8, x_scale, w_int8_ptr as *const i8, w_scales_local, in_dim, start, end)
-            };
-            unsafe {
-                *(bi_ptr as *mut usize).add(tid) = best;
-                *(bv_ptr as *mut f32).add(tid) = best_val;
-            }
-        });
+                let w_scales_local =
+                    unsafe { std::slice::from_raw_parts(w_scales_ptr as *const f32, out_dim) };
+                let (best, best_val) = unsafe {
+                    neon::argmax_int8_range(
+                        x_int8_ptr as *const i8,
+                        x_scale,
+                        w_int8_ptr as *const i8,
+                        w_scales_local,
+                        in_dim,
+                        start,
+                        end,
+                    )
+                };
+                unsafe {
+                    *(bi_ptr as *mut usize).add(tid) = best;
+                    *(bv_ptr as *mut f32).add(tid) = best_val;
+                }
+            });
 
-        let mut best = best_indices[0];
-        let mut best_val = best_vals[0];
-        for i in 1..n_threads {
-            if best_vals[i] > best_val {
-                best_val = best_vals[i];
-                best = best_indices[i];
+            let mut best = best_indices[0];
+            let mut best_val = best_vals[0];
+            for i in 1..n_threads {
+                if best_vals[i] > best_val {
+                    best_val = best_vals[i];
+                    best = best_indices[i];
+                }
             }
+            best
         }
-        best
-    }
 
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        // Fallback: use f32 computation
-        let _ = (x, w_int8, w_scales, in_dim, out_dim, n_threads, x_int8, x_scale);
-        unimplemented!("INT8 argmax only implemented for aarch64")
-    }
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            // Fallback: use f32 computation
+            let _ = (
+                x, w_int8, w_scales, in_dim, out_dim, n_threads, x_int8, x_scale,
+            );
+            unimplemented!("INT8 argmax only implemented for aarch64")
+        }
     })
 }
 
@@ -2352,68 +3275,93 @@ pub fn argmax_matvec_int8(x: &[f32], w_int8: &[i8], w_scales: &[f32], in_dim: us
 /// give the same index-stable tie-break as the single-session kernel.
 #[cfg(target_arch = "aarch64")]
 pub fn argmax_matvec_int8_batched(
-    xs: &[&[f32]], w_int8: &[i8], w_scales: &[f32], in_dim: usize, out_dim: usize,
+    xs: &[&[f32]],
+    w_int8: &[i8],
+    w_scales: &[f32],
+    in_dim: usize,
+    out_dim: usize,
 ) -> Vec<usize> {
     let b = xs.len();
     with_quantized_int8_batch(xs, |x_int8_bufs, x_scales| {
-    let x_ptrs: Vec<*const i8> = x_int8_bufs.iter().map(|v| v.as_ptr()).collect();
-    let n_threads = get_num_threads();
+        let x_ptrs: Vec<*const i8> = x_int8_bufs.iter().map(|v| v.as_ptr()).collect();
+        let n_threads = get_num_threads();
 
-    if n_threads <= 1 {
+        if n_threads <= 1 {
+            let mut best = vec![0usize; b];
+            let mut best_val = vec![-1e30f32; b];
+            unsafe {
+                neon::argmax_int8_batched(
+                    b,
+                    &mut best,
+                    &mut best_val,
+                    &x_ptrs,
+                    x_scales,
+                    w_int8.as_ptr(),
+                    w_scales,
+                    in_dim,
+                    0,
+                    out_dim,
+                );
+            }
+            return best;
+        }
+
+        // Per-thread × per-session best, laid out row-major [tid * b + bi].
+        let mut best_all = vec![0usize; n_threads * b];
+        let mut best_val_all = vec![-1e30f32; n_threads * b];
+        let x_ptrs_addr = x_ptrs.as_ptr() as usize;
+        let x_scales_addr = x_scales.as_ptr() as usize;
+        let w_int8_ptr = w_int8.as_ptr() as usize;
+        let w_scales_ptr = w_scales.as_ptr() as usize;
+        let bi_ptr = best_all.as_mut_ptr() as usize;
+        let bv_ptr = best_val_all.as_mut_ptr() as usize;
+
+        parallel_for(|tid, nt| {
+            let chunk = out_dim.div_ceil(nt);
+            let start = tid * chunk;
+            let end = (start + chunk).min(out_dim);
+            let base = tid * b;
+            let best =
+                unsafe { std::slice::from_raw_parts_mut((bi_ptr as *mut usize).add(base), b) };
+            let best_val =
+                unsafe { std::slice::from_raw_parts_mut((bv_ptr as *mut f32).add(base), b) };
+            if start >= end {
+                return;
+            }
+            let x_ptrs = unsafe { std::slice::from_raw_parts(x_ptrs_addr as *const *const i8, b) };
+            let x_scales = unsafe { std::slice::from_raw_parts(x_scales_addr as *const f32, b) };
+            let w_scales =
+                unsafe { std::slice::from_raw_parts(w_scales_ptr as *const f32, out_dim) };
+            unsafe {
+                neon::argmax_int8_batched(
+                    b,
+                    best,
+                    best_val,
+                    x_ptrs,
+                    x_scales,
+                    w_int8_ptr as *const i8,
+                    w_scales,
+                    in_dim,
+                    start,
+                    end,
+                );
+            }
+        });
+
+        // Reduce per session: threads own increasing contiguous row ranges, so a
+        // strict-`>` reduce keeps the lowest-index winner on ties.
         let mut best = vec![0usize; b];
         let mut best_val = vec![-1e30f32; b];
-        unsafe {
-            neon::argmax_int8_batched(
-                b, &mut best, &mut best_val, &x_ptrs, x_scales,
-                w_int8.as_ptr(), w_scales, in_dim, 0, out_dim,
-            );
-        }
-        return best;
-    }
-
-    // Per-thread × per-session best, laid out row-major [tid * b + bi].
-    let mut best_all = vec![0usize; n_threads * b];
-    let mut best_val_all = vec![-1e30f32; n_threads * b];
-    let x_ptrs_addr = x_ptrs.as_ptr() as usize;
-    let x_scales_addr = x_scales.as_ptr() as usize;
-    let w_int8_ptr = w_int8.as_ptr() as usize;
-    let w_scales_ptr = w_scales.as_ptr() as usize;
-    let bi_ptr = best_all.as_mut_ptr() as usize;
-    let bv_ptr = best_val_all.as_mut_ptr() as usize;
-
-    parallel_for(|tid, nt| {
-        let chunk = out_dim.div_ceil(nt);
-        let start = tid * chunk;
-        let end = (start + chunk).min(out_dim);
-        let base = tid * b;
-        let best = unsafe { std::slice::from_raw_parts_mut((bi_ptr as *mut usize).add(base), b) };
-        let best_val = unsafe { std::slice::from_raw_parts_mut((bv_ptr as *mut f32).add(base), b) };
-        if start >= end { return; }
-        let x_ptrs = unsafe { std::slice::from_raw_parts(x_ptrs_addr as *const *const i8, b) };
-        let x_scales = unsafe { std::slice::from_raw_parts(x_scales_addr as *const f32, b) };
-        let w_scales = unsafe { std::slice::from_raw_parts(w_scales_ptr as *const f32, out_dim) };
-        unsafe {
-            neon::argmax_int8_batched(
-                b, best, best_val, x_ptrs, x_scales,
-                w_int8_ptr as *const i8, w_scales, in_dim, start, end,
-            );
-        }
-    });
-
-    // Reduce per session: threads own increasing contiguous row ranges, so a
-    // strict-`>` reduce keeps the lowest-index winner on ties.
-    let mut best = vec![0usize; b];
-    let mut best_val = vec![-1e30f32; b];
-    for tid in 0..n_threads {
-        for bi in 0..b {
-            let v = best_val_all[tid * b + bi];
-            if v > best_val[bi] {
-                best_val[bi] = v;
-                best[bi] = best_all[tid * b + bi];
+        for tid in 0..n_threads {
+            for bi in 0..b {
+                let v = best_val_all[tid * b + bi];
+                if v > best_val[bi] {
+                    best_val[bi] = v;
+                    best[bi] = best_all[tid * b + bi];
+                }
             }
         }
-    }
-    best
+        best
     })
 }
 
@@ -2479,18 +3427,29 @@ mod tests {
     // Deterministic LCG helpers so tests are reproducible without deps.
     struct Rng(u64);
     impl Rng {
-        fn new(seed: u64) -> Self { Rng(seed) }
+        fn new(seed: u64) -> Self {
+            Rng(seed)
+        }
         fn next_u32(&mut self) -> u32 {
-            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (self.0 >> 32) as u32
         }
-        fn i8(&mut self) -> i8 { ((self.next_u32() % 255) as i32 - 127) as i8 }
-        fn f32_pm1(&mut self) -> f32 { (self.next_u32() as f32 / u32::MAX as f32) * 2.0 - 1.0 }
+        fn i8(&mut self) -> i8 {
+            ((self.next_u32() % 255) as i32 - 127) as i8
+        }
+        fn f32_pm1(&mut self) -> f32 {
+            (self.next_u32() as f32 / u32::MAX as f32) * 2.0 - 1.0
+        }
     }
 
     fn gen_w(rng: &mut Rng, rows: usize, in_dim: usize) -> (Vec<i8>, Vec<f32>) {
         let w: Vec<i8> = (0..rows * in_dim).map(|_| rng.i8()).collect();
-        let s: Vec<f32> = (0..rows).map(|_| 0.001 + rng.f32_pm1().abs() * 0.02).collect();
+        let s: Vec<f32> = (0..rows)
+            .map(|_| 0.001 + rng.f32_pm1().abs() * 0.02)
+            .collect();
         (w, s)
     }
 
@@ -2520,31 +3479,55 @@ mod tests {
                             .map(|_| (0..out_dim).map(|_| rng.f32_pm1()).collect())
                             .collect();
                         // partial range: middle slice + full
-                        for &(s, e) in &[(0usize, out_dim), (0, out_dim / 2), (out_dim / 3, out_dim)] {
-                            if s >= e { continue; }
+                        for &(s, e) in
+                            &[(0usize, out_dim), (0, out_dim / 2), (out_dim / 3, out_dim)]
+                        {
+                            if s >= e {
+                                continue;
+                            }
                             let xi_ptrs: Vec<*const i8> = xi.iter().map(|v| v.as_ptr()).collect();
-                            let bias_ptrs: Vec<*const f32> = bias.iter().map(|v| v.as_ptr()).collect();
+                            let bias_ptrs: Vec<*const f32> =
+                                bias.iter().map(|v| v.as_ptr()).collect();
 
                             // Reference: single-session int8_matvec_range per session.
-                            let mut y_ref: Vec<Vec<f32>> = (0..b).map(|_| vec![0.0f32; out_dim]).collect();
+                            let mut y_ref: Vec<Vec<f32>> =
+                                (0..b).map(|_| vec![0.0f32; out_dim]).collect();
                             for j in 0..b {
                                 unsafe {
                                     int8_matvec_range(
-                                        y_ref[j].as_mut_ptr(), xi[j].as_ptr(), xs[j],
-                                        w.as_ptr(), ws.as_ptr(),
-                                        if use_bias { Some(bias[j].as_ptr()) } else { None },
-                                        in_dim, s, e,
+                                        y_ref[j].as_mut_ptr(),
+                                        xi[j].as_ptr(),
+                                        xs[j],
+                                        w.as_ptr(),
+                                        ws.as_ptr(),
+                                        if use_bias {
+                                            Some(bias[j].as_ptr())
+                                        } else {
+                                            None
+                                        },
+                                        in_dim,
+                                        s,
+                                        e,
                                     );
                                 }
                             }
                             // Batched.
-                            let mut y_bat: Vec<Vec<f32>> = (0..b).map(|_| vec![0.0f32; out_dim]).collect();
-                            let y_ptrs: Vec<*mut f32> = y_bat.iter_mut().map(|v| v.as_mut_ptr()).collect();
+                            let mut y_bat: Vec<Vec<f32>> =
+                                (0..b).map(|_| vec![0.0f32; out_dim]).collect();
+                            let y_ptrs: Vec<*mut f32> =
+                                y_bat.iter_mut().map(|v| v.as_mut_ptr()).collect();
                             unsafe {
                                 int8_matvec_range_batched(
-                                    b, &y_ptrs, &xi_ptrs, &xs, w.as_ptr(), ws.as_ptr(),
+                                    b,
+                                    &y_ptrs,
+                                    &xi_ptrs,
+                                    &xs,
+                                    w.as_ptr(),
+                                    ws.as_ptr(),
                                     if use_bias { Some(&bias_ptrs) } else { None },
-                                    in_dim, s, e,
+                                    in_dim,
+                                    s,
+                                    e,
                                 );
                             }
                             for j in 0..b {
@@ -2568,24 +3551,43 @@ mod tests {
                     let (w, ws) = gen_w(&mut rng, 2 * n_rows, in_dim);
                     let (xi, xs) = gen_inputs(&mut rng, b, in_dim);
                     for &(s, e) in &[(0usize, n_rows), (0, n_rows / 2), (n_rows / 3, n_rows)] {
-                        if s >= e { continue; }
+                        if s >= e {
+                            continue;
+                        }
                         let xi_ptrs: Vec<*const i8> = xi.iter().map(|v| v.as_ptr()).collect();
-                        let mut ff_ref: Vec<Vec<f32>> = (0..b).map(|_| vec![0.0f32; n_rows]).collect();
+                        let mut ff_ref: Vec<Vec<f32>> =
+                            (0..b).map(|_| vec![0.0f32; n_rows]).collect();
                         let mut scratch = vec![0.0f32; 2 * n_rows];
                         for j in 0..b {
                             unsafe {
                                 int8_swiglu_range(
-                                    ff_ref[j].as_mut_ptr(), xi[j].as_ptr(), xs[j],
-                                    w.as_ptr(), ws.as_ptr(), in_dim, s, e,
+                                    ff_ref[j].as_mut_ptr(),
+                                    xi[j].as_ptr(),
+                                    xs[j],
+                                    w.as_ptr(),
+                                    ws.as_ptr(),
+                                    in_dim,
+                                    s,
+                                    e,
                                     &mut scratch,
                                 );
                             }
                         }
-                        let mut ff_bat: Vec<Vec<f32>> = (0..b).map(|_| vec![0.0f32; n_rows]).collect();
-                        let ff_ptrs: Vec<*mut f32> = ff_bat.iter_mut().map(|v| v.as_mut_ptr()).collect();
+                        let mut ff_bat: Vec<Vec<f32>> =
+                            (0..b).map(|_| vec![0.0f32; n_rows]).collect();
+                        let ff_ptrs: Vec<*mut f32> =
+                            ff_bat.iter_mut().map(|v| v.as_mut_ptr()).collect();
                         unsafe {
                             int8_swiglu_range_batched(
-                                b, &ff_ptrs, &xi_ptrs, &xs, w.as_ptr(), ws.as_ptr(), in_dim, s, e,
+                                b,
+                                &ff_ptrs,
+                                &xi_ptrs,
+                                &xs,
+                                w.as_ptr(),
+                                ws.as_ptr(),
+                                in_dim,
+                                s,
+                                e,
                             );
                         }
                         for j in 0..b {
@@ -2610,18 +3612,37 @@ mod tests {
                 let (wv, wvs) = gen_w(&mut rng, kv_dim, in_dim);
                 let (xi, xs) = gen_inputs(&mut rng, b, in_dim);
                 let xi_ptrs: Vec<*const i8> = xi.iter().map(|v| v.as_ptr()).collect();
-                for &(s, e) in &[(0usize, total), (0, q_dim + 3), (q_dim, k_end(q_dim, kv_dim) + 2), (k_end(q_dim, kv_dim), total)] {
-                    if s >= e { continue; }
+                for &(s, e) in &[
+                    (0usize, total),
+                    (0, q_dim + 3),
+                    (q_dim, k_end(q_dim, kv_dim) + 2),
+                    (k_end(q_dim, kv_dim), total),
+                ] {
+                    if s >= e {
+                        continue;
+                    }
                     let mut q_ref: Vec<Vec<f32>> = (0..b).map(|_| vec![0.0f32; q_dim]).collect();
                     let mut k_ref: Vec<Vec<f32>> = (0..b).map(|_| vec![0.0f32; kv_dim]).collect();
                     let mut v_ref: Vec<Vec<f32>> = (0..b).map(|_| vec![0.0f32; kv_dim]).collect();
                     for j in 0..b {
                         unsafe {
                             int8_qkv_range(
-                                q_ref[j].as_mut_ptr(), k_ref[j].as_mut_ptr(), v_ref[j].as_mut_ptr(),
-                                xi[j].as_ptr(), xs[j],
-                                wq.as_ptr(), wqs.as_ptr(), wk.as_ptr(), wks.as_ptr(),
-                                wv.as_ptr(), wvs.as_ptr(), in_dim, q_dim, kv_dim, s, e,
+                                q_ref[j].as_mut_ptr(),
+                                k_ref[j].as_mut_ptr(),
+                                v_ref[j].as_mut_ptr(),
+                                xi[j].as_ptr(),
+                                xs[j],
+                                wq.as_ptr(),
+                                wqs.as_ptr(),
+                                wk.as_ptr(),
+                                wks.as_ptr(),
+                                wv.as_ptr(),
+                                wvs.as_ptr(),
+                                in_dim,
+                                q_dim,
+                                kv_dim,
+                                s,
+                                e,
                             );
                         }
                     }
@@ -2633,22 +3654,47 @@ mod tests {
                     let vp: Vec<*mut f32> = v_bat.iter_mut().map(|v| v.as_mut_ptr()).collect();
                     unsafe {
                         int8_qkv_range_batched(
-                            b, &qp, &kp, &vp, &xi_ptrs, &xs,
-                            wq.as_ptr(), wqs.as_ptr(), wk.as_ptr(), wks.as_ptr(),
-                            wv.as_ptr(), wvs.as_ptr(), in_dim, q_dim, kv_dim, s, e,
+                            b,
+                            &qp,
+                            &kp,
+                            &vp,
+                            &xi_ptrs,
+                            &xs,
+                            wq.as_ptr(),
+                            wqs.as_ptr(),
+                            wk.as_ptr(),
+                            wks.as_ptr(),
+                            wv.as_ptr(),
+                            wvs.as_ptr(),
+                            in_dim,
+                            q_dim,
+                            kv_dim,
+                            s,
+                            e,
                         );
                     }
                     for j in 0..b {
-                        assert_eq!(q_ref[j], q_bat[j], "qkv q mismatch qd={q_dim} kvd={kv_dim} b={b} range={s}..{e} sess={j}");
-                        assert_eq!(k_ref[j], k_bat[j], "qkv k mismatch qd={q_dim} kvd={kv_dim} b={b} range={s}..{e} sess={j}");
-                        assert_eq!(v_ref[j], v_bat[j], "qkv v mismatch qd={q_dim} kvd={kv_dim} b={b} range={s}..{e} sess={j}");
+                        assert_eq!(
+                            q_ref[j], q_bat[j],
+                            "qkv q mismatch qd={q_dim} kvd={kv_dim} b={b} range={s}..{e} sess={j}"
+                        );
+                        assert_eq!(
+                            k_ref[j], k_bat[j],
+                            "qkv k mismatch qd={q_dim} kvd={kv_dim} b={b} range={s}..{e} sess={j}"
+                        );
+                        assert_eq!(
+                            v_ref[j], v_bat[j],
+                            "qkv v mismatch qd={q_dim} kvd={kv_dim} b={b} range={s}..{e} sess={j}"
+                        );
                     }
                 }
             }
         }
     }
 
-    fn k_end(q_dim: usize, kv_dim: usize) -> usize { q_dim + kv_dim }
+    fn k_end(q_dim: usize, kv_dim: usize) -> usize {
+        q_dim + kv_dim
+    }
 
     #[test]
     fn batched_argmax_matches_single() {
@@ -2667,7 +3713,15 @@ mod tests {
                     let mut ref_best = vec![0usize; b];
                     for j in 0..b {
                         let (best, _) = unsafe {
-                            neon::argmax_int8_range(xi[j].as_ptr(), xs[j], w.as_ptr(), &ws, in_dim, 0, out_dim)
+                            neon::argmax_int8_range(
+                                xi[j].as_ptr(),
+                                xs[j],
+                                w.as_ptr(),
+                                &ws,
+                                in_dim,
+                                0,
+                                out_dim,
+                            )
                         };
                         ref_best[j] = best;
                     }
@@ -2676,9 +3730,23 @@ mod tests {
                     let mut best = vec![0usize; b];
                     let mut best_val = vec![-1e30f32; b];
                     unsafe {
-                        neon::argmax_int8_batched(b, &mut best, &mut best_val, &xi_ptrs, &xs, w.as_ptr(), &ws, in_dim, 0, out_dim);
+                        neon::argmax_int8_batched(
+                            b,
+                            &mut best,
+                            &mut best_val,
+                            &xi_ptrs,
+                            &xs,
+                            w.as_ptr(),
+                            &ws,
+                            in_dim,
+                            0,
+                            out_dim,
+                        );
                     }
-                    assert_eq!(ref_best, best, "argmax core mismatch in_dim={in_dim} out_dim={out_dim} b={b}");
+                    assert_eq!(
+                        ref_best, best,
+                        "argmax core mismatch in_dim={in_dim} out_dim={out_dim} b={b}"
+                    );
                 }
             }
         }
@@ -2698,12 +3766,16 @@ mod tests {
                 let xs_f: Vec<Vec<f32>> = (0..b)
                     .map(|_| (0..in_dim).map(|_| rng.f32_pm1() * 3.0).collect())
                     .collect();
-                let refs: Vec<usize> = xs_f.iter()
+                let refs: Vec<usize> = xs_f
+                    .iter()
                     .map(|x| argmax_matvec_int8(x, &w, &ws, in_dim, out_dim))
                     .collect();
                 let xs_ref: Vec<&[f32]> = xs_f.iter().map(|v| v.as_slice()).collect();
                 let bat = argmax_matvec_int8_batched(&xs_ref, &w, &ws, in_dim, out_dim);
-                assert_eq!(refs, bat, "argmax toplevel mismatch out_dim={out_dim} b={b}");
+                assert_eq!(
+                    refs, bat,
+                    "argmax toplevel mismatch out_dim={out_dim} b={b}"
+                );
             }
         }
         set_threads(saved);
@@ -2736,17 +3808,36 @@ mod tests {
         for p in 0..seq_len {
             unsafe {
                 int8_matvec_range(
-                    y_ref[p * out_dim..].as_mut_ptr(), xi[p].as_ptr(), xs[p],
-                    w.as_ptr(), ws.as_ptr(), None, in_dim, 0, out_dim,
+                    y_ref[p * out_dim..].as_mut_ptr(),
+                    xi[p].as_ptr(),
+                    xs[p],
+                    w.as_ptr(),
+                    ws.as_ptr(),
+                    None,
+                    in_dim,
+                    0,
+                    out_dim,
                 );
             }
         }
         // Prefill GEMM.
         let mut y = vec![0.0f32; seq_len * out_dim];
         unsafe {
-            int8_prefill_matvec(&mut y, &xq, &xs, w.as_ptr(), ws.as_ptr(), in_dim, out_dim, seq_len);
+            int8_prefill_matvec(
+                &mut y,
+                &xq,
+                &xs,
+                w.as_ptr(),
+                ws.as_ptr(),
+                in_dim,
+                out_dim,
+                seq_len,
+            );
         }
-        assert_eq!(y, y_ref, "prefill matvec mismatch seq={seq_len} in={in_dim} out={out_dim}");
+        assert_eq!(
+            y, y_ref,
+            "prefill matvec mismatch seq={seq_len} in={in_dim} out={out_dim}"
+        );
     }
 
     /// The pool-parallel dispatch just calls `matvec_int8_prefill_rows` over a
@@ -2767,20 +3858,39 @@ mod tests {
         let mut y_split = vec![0.0f32; seq_len * out_dim];
         unsafe {
             neon::matvec_int8_prefill_rows(
-                y_full.as_mut_ptr(), xq.as_ptr(), xs.as_ptr(), w.as_ptr(), ws.as_ptr(),
-                in_dim, out_dim, seq_len, 0, out_dim,
+                y_full.as_mut_ptr(),
+                xq.as_ptr(),
+                xs.as_ptr(),
+                w.as_ptr(),
+                ws.as_ptr(),
+                in_dim,
+                out_dim,
+                seq_len,
+                0,
+                out_dim,
             );
             let mut start = 0;
             while start < out_dim {
                 let end = (start + 64).min(out_dim);
                 neon::matvec_int8_prefill_rows(
-                    y_split.as_mut_ptr(), xq.as_ptr(), xs.as_ptr(), w.as_ptr(), ws.as_ptr(),
-                    in_dim, out_dim, seq_len, start, end,
+                    y_split.as_mut_ptr(),
+                    xq.as_ptr(),
+                    xs.as_ptr(),
+                    w.as_ptr(),
+                    ws.as_ptr(),
+                    in_dim,
+                    out_dim,
+                    seq_len,
+                    start,
+                    end,
                 );
                 start = end;
             }
         }
-        assert_eq!(y_full, y_split, "prefill matvec split seq={seq_len} in={in_dim} out={out_dim}");
+        assert_eq!(
+            y_full, y_split,
+            "prefill matvec split seq={seq_len} in={in_dim} out={out_dim}"
+        );
     }
 
     #[cfg(all(feature = "int8-prefill", not(feature = "blas")))]
@@ -2797,9 +3907,12 @@ mod tests {
             }
         }
         // Row-split equivalence (models the dynamic 64-row pool partition).
-        for &(seq_len, in_dim, out_dim) in
-            &[(64usize, 1024usize, 2048usize), (48, 1024, 1024), (96, 3072, 1024), (5, 64, 200)]
-        {
+        for &(seq_len, in_dim, out_dim) in &[
+            (64usize, 1024usize, 2048usize),
+            (48, 1024, 1024),
+            (96, 3072, 1024),
+            (5, 64, 200),
+        ] {
             prefill_matvec_split_check(seq_len, in_dim, out_dim, 0xD00D_5EED ^ (seq_len as u64));
         }
     }
@@ -2819,17 +3932,35 @@ mod tests {
         for p in 0..seq_len {
             unsafe {
                 int8_swiglu_range(
-                    ff_ref[p * n_rows..].as_mut_ptr(), xi[p].as_ptr(), xs[p],
-                    w.as_ptr(), ws.as_ptr(), in_dim, 0, n_rows,
+                    ff_ref[p * n_rows..].as_mut_ptr(),
+                    xi[p].as_ptr(),
+                    xs[p],
+                    w.as_ptr(),
+                    ws.as_ptr(),
+                    in_dim,
+                    0,
+                    n_rows,
                     &mut scratch,
                 );
             }
         }
         let mut ff = vec![0.0f32; seq_len * n_rows];
         unsafe {
-            int8_prefill_swiglu(&mut ff, &xq, &xs, w.as_ptr(), ws.as_ptr(), in_dim, n_rows, seq_len);
+            int8_prefill_swiglu(
+                &mut ff,
+                &xq,
+                &xs,
+                w.as_ptr(),
+                ws.as_ptr(),
+                in_dim,
+                n_rows,
+                seq_len,
+            );
         }
-        assert_eq!(ff, ff_ref, "prefill swiglu mismatch seq={seq_len} in={in_dim} n_rows={n_rows}");
+        assert_eq!(
+            ff, ff_ref,
+            "prefill swiglu mismatch seq={seq_len} in={in_dim} n_rows={n_rows}"
+        );
     }
 
     /// Row-split equivalence for the fused swiglu prefill (256-row pool blocks).
@@ -2846,20 +3977,39 @@ mod tests {
         let mut ff_split = vec![0.0f32; seq_len * n_rows];
         unsafe {
             neon::swiglu_int8_prefill_rows(
-                ff_full.as_mut_ptr(), xq.as_ptr(), xs.as_ptr(), w.as_ptr(), ws.as_ptr(),
-                in_dim, n_rows, seq_len, 0, n_rows,
+                ff_full.as_mut_ptr(),
+                xq.as_ptr(),
+                xs.as_ptr(),
+                w.as_ptr(),
+                ws.as_ptr(),
+                in_dim,
+                n_rows,
+                seq_len,
+                0,
+                n_rows,
             );
             let mut start = 0;
             while start < n_rows {
                 let end = (start + 256).min(n_rows);
                 neon::swiglu_int8_prefill_rows(
-                    ff_split.as_mut_ptr(), xq.as_ptr(), xs.as_ptr(), w.as_ptr(), ws.as_ptr(),
-                    in_dim, n_rows, seq_len, start, end,
+                    ff_split.as_mut_ptr(),
+                    xq.as_ptr(),
+                    xs.as_ptr(),
+                    w.as_ptr(),
+                    ws.as_ptr(),
+                    in_dim,
+                    n_rows,
+                    seq_len,
+                    start,
+                    end,
                 );
                 start = end;
             }
         }
-        assert_eq!(ff_full, ff_split, "prefill swiglu split seq={seq_len} in={in_dim} n_rows={n_rows}");
+        assert_eq!(
+            ff_full, ff_split,
+            "prefill swiglu split seq={seq_len} in={in_dim} n_rows={n_rows}"
+        );
     }
 
     #[cfg(all(feature = "int8-prefill", not(feature = "blas")))]
@@ -2874,9 +4024,11 @@ mod tests {
                 }
             }
         }
-        for &(seq_len, in_dim, n_rows) in
-            &[(64usize, 1024usize, 3072usize), (48, 1024, 512), (5, 64, 300)]
-        {
+        for &(seq_len, in_dim, n_rows) in &[
+            (64usize, 1024usize, 3072usize),
+            (48, 1024, 512),
+            (5, 64, 300),
+        ] {
             prefill_swiglu_split_check(seq_len, in_dim, n_rows, 0xBEEF_F00D ^ (seq_len as u64));
         }
     }
@@ -2901,7 +4053,12 @@ mod tests {
 
     #[cfg(all(feature = "int8-encoder", not(feature = "blas")))]
     fn encoder_matvec_check(
-        seq_len: usize, in_dim: usize, out_dim: usize, with_bias: bool, accumulate: bool, seed: u64,
+        seq_len: usize,
+        in_dim: usize,
+        out_dim: usize,
+        with_bias: bool,
+        accumulate: bool,
+        seed: u64,
     ) {
         let mut rng = Rng::new(seed);
         let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
@@ -2915,7 +4072,9 @@ mod tests {
         }
         // Prior Y contents (nonzero so the accumulate path is actually exercised).
         let mut y_init = vec![0.0f32; seq_len * out_dim];
-        for v in y_init.iter_mut() { *v = rng.f32_pm1() * 4.0; }
+        for v in y_init.iter_mut() {
+            *v = rng.f32_pm1() * 4.0;
+        }
 
         // Reference: single-vector matvec_int8 per position, then f32 combine.
         let mut y_ref = y_init.clone();
@@ -2923,20 +4082,38 @@ mod tests {
             let mut row = vec![0.0f32; out_dim];
             unsafe {
                 neon::matvec_int8(
-                    &mut row, xi[p].as_ptr(), xs[p], w.as_ptr(), &ws, bias_opt, in_dim, out_dim,
+                    &mut row,
+                    xi[p].as_ptr(),
+                    xs[p],
+                    w.as_ptr(),
+                    &ws,
+                    bias_opt,
+                    in_dim,
+                    out_dim,
                 );
             }
             for o in 0..out_dim {
-                if accumulate { y_ref[p * out_dim + o] += row[o]; }
-                else { y_ref[p * out_dim + o] = row[o]; }
+                if accumulate {
+                    y_ref[p * out_dim + o] += row[o];
+                } else {
+                    y_ref[p * out_dim + o] = row[o];
+                }
             }
         }
         // Batched encoder GEMM.
         let mut y = y_init.clone();
         unsafe {
             int8_encoder_matvec(
-                &mut y, &xq, &xs, w.as_ptr(), ws.as_ptr(), bias_opt,
-                in_dim, out_dim, seq_len, accumulate,
+                &mut y,
+                &xq,
+                &xs,
+                w.as_ptr(),
+                ws.as_ptr(),
+                bias_opt,
+                in_dim,
+                out_dim,
+                seq_len,
+                accumulate,
             );
         }
         assert_eq!(
@@ -2950,7 +4127,11 @@ mod tests {
     /// as the full-range pass (models the dynamic 64-row pool partition).
     #[cfg(all(feature = "int8-encoder", not(feature = "blas")))]
     fn encoder_matvec_split_check(
-        seq_len: usize, in_dim: usize, out_dim: usize, accumulate: bool, seed: u64,
+        seq_len: usize,
+        in_dim: usize,
+        out_dim: usize,
+        accumulate: bool,
+        seed: u64,
     ) {
         let mut rng = Rng::new(seed);
         let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
@@ -2961,20 +4142,42 @@ mod tests {
             xq[p * in_dim..(p + 1) * in_dim].copy_from_slice(&xi[p]);
         }
         let mut y_init = vec![0.0f32; seq_len * out_dim];
-        for v in y_init.iter_mut() { *v = rng.f32_pm1() * 4.0; }
+        for v in y_init.iter_mut() {
+            *v = rng.f32_pm1() * 4.0;
+        }
         let mut y_full = y_init.clone();
         let mut y_split = y_init.clone();
         unsafe {
             neon::matvec_int8_encoder_rows(
-                y_full.as_mut_ptr(), xq.as_ptr(), xs.as_ptr(), w.as_ptr(), ws.as_ptr(), bias.as_ptr(),
-                in_dim, out_dim, seq_len, 0, out_dim, accumulate,
+                y_full.as_mut_ptr(),
+                xq.as_ptr(),
+                xs.as_ptr(),
+                w.as_ptr(),
+                ws.as_ptr(),
+                bias.as_ptr(),
+                in_dim,
+                out_dim,
+                seq_len,
+                0,
+                out_dim,
+                accumulate,
             );
             let mut start = 0;
             while start < out_dim {
                 let end = (start + 64).min(out_dim);
                 neon::matvec_int8_encoder_rows(
-                    y_split.as_mut_ptr(), xq.as_ptr(), xs.as_ptr(), w.as_ptr(), ws.as_ptr(), bias.as_ptr(),
-                    in_dim, out_dim, seq_len, start, end, accumulate,
+                    y_split.as_mut_ptr(),
+                    xq.as_ptr(),
+                    xs.as_ptr(),
+                    w.as_ptr(),
+                    ws.as_ptr(),
+                    bias.as_ptr(),
+                    in_dim,
+                    out_dim,
+                    seq_len,
+                    start,
+                    end,
+                    accumulate,
                 );
                 start = end;
             }
@@ -2997,7 +4200,9 @@ mod tests {
                     for &with_bias in &[false, true] {
                         for &accumulate in &[false, true] {
                             seed = seed.wrapping_add(0x9E37_79B9);
-                            encoder_matvec_check(seq_len, in_dim, out_dim, with_bias, accumulate, seed);
+                            encoder_matvec_check(
+                                seq_len, in_dim, out_dim, with_bias, accumulate, seed,
+                            );
                         }
                     }
                 }
@@ -3015,7 +4220,13 @@ mod tests {
             (5, 64, 200),
         ] {
             for &accumulate in &[false, true] {
-                encoder_matvec_split_check(seq_len, in_dim, out_dim, accumulate, 0xC0DE_5EED ^ (seq_len as u64));
+                encoder_matvec_split_check(
+                    seq_len,
+                    in_dim,
+                    out_dim,
+                    accumulate,
+                    0xC0DE_5EED ^ (seq_len as u64),
+                );
             }
         }
     }

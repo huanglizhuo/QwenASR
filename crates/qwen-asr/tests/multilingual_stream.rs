@@ -267,9 +267,7 @@ fn multilingual_code_switch_language_correctness() {
     eprintln!("run-sequence  expect={expect_runs:?}");
     eprintln!("run-sequence  OFF={off_runs:?}  (English runs={off_en}, LCS={off_lcs}/{n})");
     eprintln!("run-sequence  ON ={on_runs:?}  (English runs={on_en}, LCS={on_lcs}/{n})");
-    eprintln!(
-        "English utterances rendered in English — OFF: {off_en}/3   ON: {on_en}/3\n"
-    );
+    eprintln!("English utterances rendered in English — OFF: {off_en}/3   ON: {on_en}/3\n");
 
     // Headline metric: LCS of the transcript's language-run sequence against the
     // expected alternating pattern. The app's current default renders the whole

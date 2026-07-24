@@ -40,15 +40,10 @@ fn build_gate_up_fused(
 
 /// Quantize a BF16 weight matrix into INT8 and store the (large) INT8 buffer
 /// in superpage-aligned memory.
-fn quantize_to_superpage(
-    w_bf16: *const u16,
-    out_dim: usize,
-    in_dim: usize,
-) -> (Vec<i8>, Vec<f32>) {
+fn quantize_to_superpage(w_bf16: *const u16, out_dim: usize, in_dim: usize) -> (Vec<i8>, Vec<f32>) {
     // Safety: callers pass tensor pointers from the mmap'd model file, which
     // cover at least out_dim * in_dim BF16 values and outlive this call.
-    let (int8, scales) =
-        unsafe { kernels::quantize_bf16_weights_to_int8(w_bf16, out_dim, in_dim) };
+    let (int8, scales) = unsafe { kernels::quantize_bf16_weights_to_int8(w_bf16, out_dim, in_dim) };
     let mut sp = superpage_vec::<i8>(int8.len());
     sp.copy_from_slice(&int8);
     (sp, scales)
@@ -171,13 +166,36 @@ fn load_dec_layer(
 
     // Non-aligner: build interleaved bf16 fusion + INT8 quant for fast decode.
     // Aligner: leave them empty (saves ~700 MB across the model).
-    let (gate_up_fused_bf16, wq_int8, wq_int8_scales, wk_int8, wk_int8_scales,
-         wv_int8, wv_int8_scales, wo_int8, wo_int8_scales,
-         gate_up_int8, gate_up_int8_scales, down_int8, down_int8_scales) = if is_aligner {
-        (Vec::new(),
-         WeightBuf::empty(), WeightBuf::empty(), WeightBuf::empty(), WeightBuf::empty(),
-         WeightBuf::empty(), WeightBuf::empty(), WeightBuf::empty(), WeightBuf::empty(),
-         WeightBuf::empty(), WeightBuf::empty(), WeightBuf::empty(), WeightBuf::empty())
+    let (
+        gate_up_fused_bf16,
+        wq_int8,
+        wq_int8_scales,
+        wk_int8,
+        wk_int8_scales,
+        wv_int8,
+        wv_int8_scales,
+        wo_int8,
+        wo_int8_scales,
+        gate_up_int8,
+        gate_up_int8_scales,
+        down_int8,
+        down_int8_scales,
+    ) = if is_aligner {
+        (
+            Vec::new(),
+            WeightBuf::empty(),
+            WeightBuf::empty(),
+            WeightBuf::empty(),
+            WeightBuf::empty(),
+            WeightBuf::empty(),
+            WeightBuf::empty(),
+            WeightBuf::empty(),
+            WeightBuf::empty(),
+            WeightBuf::empty(),
+            WeightBuf::empty(),
+            WeightBuf::empty(),
+            WeightBuf::empty(),
+        )
     } else if let Some(sc) = sidecar {
         // Warm path: borrow every INT8 buffer IN PLACE from the mmap'd sidecar.
         // No quantization, no gate_up fusion on aarch64 (where the fused bf16 is
@@ -190,9 +208,21 @@ fn load_dec_layer(
 
         let b = |j: usize| sc.i8_buf(layout.layer_buf(i, j));
         let s = |j: usize| sc.f32_buf(layout.layer_buf(i, j));
-        (gate_up_fused_kept,
-         b(0), s(1), b(2), s(3), b(4), s(5), b(6), s(7),
-         b(8), s(9), b(10), s(11))
+        (
+            gate_up_fused_kept,
+            b(0),
+            s(1),
+            b(2),
+            s(3),
+            b(4),
+            s(5),
+            b(6),
+            s(7),
+            b(8),
+            s(9),
+            b(10),
+            s(11),
+        )
     } else {
         // Cold path: quantize into owned superpage Vecs (as before). The fused
         // gate_up buffer is the INT8 quantization source; on aarch64 it is
@@ -219,10 +249,21 @@ fn load_dec_layer(
         #[cfg(not(target_arch = "aarch64"))]
         let gate_up_fused_kept = gate_up_fused;
 
-        (gate_up_fused_kept,
-         wq_int8.into(), wq_int8_scales.into(), wk_int8.into(), wk_int8_scales.into(),
-         wv_int8.into(), wv_int8_scales.into(), wo_int8.into(), wo_int8_scales.into(),
-         gate_up_int8.into(), gate_up_int8_scales.into(), down_int8.into(), down_int8_scales.into())
+        (
+            gate_up_fused_kept,
+            wq_int8.into(),
+            wq_int8_scales.into(),
+            wk_int8.into(),
+            wk_int8_scales.into(),
+            wv_int8.into(),
+            wv_int8_scales.into(),
+            wo_int8.into(),
+            wo_int8_scales.into(),
+            gate_up_int8.into(),
+            gate_up_int8_scales.into(),
+            down_int8.into(),
+            down_int8_scales.into(),
+        )
     };
 
     Some(DecLayer {
@@ -726,18 +767,30 @@ pub fn decoder_prefill(
     // Guard against aligner configs, whose INT8 weight buffers are empty.
     // Desktop/BLAS builds never compile this branch — prefill stays on AMX f32
     // (see R12-F2).
-    #[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "int8-prefill",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     let use_int8 = kernels::int8_prefill_enabled()
         && decoder.layers.first().map_or(false, |l| {
             !l.wq_int8.is_empty() && !l.gate_up_int8.is_empty() && !l.down_int8.is_empty()
         });
-    #[cfg(not(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64")))]
+    #[cfg(not(all(
+        feature = "int8-prefill",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    )))]
     let use_int8 = false;
 
     // Per-position INT8 activation scratch, reused across all layers (largest
     // in_dim is `intermediate` for the down projection). Only allocated for the
     // INT8 prefill path.
-    #[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "int8-prefill",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     let (mut xq_buf, mut xq_scales) = if use_int8 {
         let m = intermediate.max(q_dim).max(dim);
         (vec![0i8; seq_len * m], vec![0.0f32; seq_len])
@@ -761,39 +814,79 @@ pub fn decoder_prefill(
         let v = &mut bufs.pref_v[..seq_len * kv_dim];
 
         if use_int8 {
-            #[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
+            #[cfg(all(
+                feature = "int8-prefill",
+                not(feature = "blas"),
+                target_arch = "aarch64"
+            ))]
             unsafe {
                 kernels::quantize_rows_into(
-                    &mut xq_buf[..seq_len * dim], &mut xq_scales[..seq_len],
-                    x_norm, seq_len, dim,
+                    &mut xq_buf[..seq_len * dim],
+                    &mut xq_scales[..seq_len],
+                    x_norm,
+                    seq_len,
+                    dim,
                 );
                 let xq = &xq_buf[..seq_len * dim];
                 let xs = &xq_scales[..seq_len];
                 kernels::int8_prefill_matvec(
-                    q, xq, xs, layer.wq_int8.as_ptr(), layer.wq_int8_scales.as_ptr(),
-                    dim, q_dim, seq_len,
+                    q,
+                    xq,
+                    xs,
+                    layer.wq_int8.as_ptr(),
+                    layer.wq_int8_scales.as_ptr(),
+                    dim,
+                    q_dim,
+                    seq_len,
                 );
                 kernels::int8_prefill_matvec(
-                    k, xq, xs, layer.wk_int8.as_ptr(), layer.wk_int8_scales.as_ptr(),
-                    dim, kv_dim, seq_len,
+                    k,
+                    xq,
+                    xs,
+                    layer.wk_int8.as_ptr(),
+                    layer.wk_int8_scales.as_ptr(),
+                    dim,
+                    kv_dim,
+                    seq_len,
                 );
                 kernels::int8_prefill_matvec(
-                    v, xq, xs, layer.wv_int8.as_ptr(), layer.wv_int8_scales.as_ptr(),
-                    dim, kv_dim, seq_len,
+                    v,
+                    xq,
+                    xs,
+                    layer.wv_int8.as_ptr(),
+                    layer.wv_int8_scales.as_ptr(),
+                    dim,
+                    kv_dim,
+                    seq_len,
                 );
             }
         } else {
             unsafe {
                 kernels::linear_nobias_bf16_scratch(
-                    q, x_norm, layer.wq_weight_bf16, seq_len, dim, q_dim,
+                    q,
+                    x_norm,
+                    layer.wq_weight_bf16,
+                    seq_len,
+                    dim,
+                    q_dim,
                     &mut bufs.bf16_scratch,
                 );
                 kernels::linear_nobias_bf16_scratch(
-                    k, x_norm, layer.wk_weight_bf16, seq_len, dim, kv_dim,
+                    k,
+                    x_norm,
+                    layer.wk_weight_bf16,
+                    seq_len,
+                    dim,
+                    kv_dim,
                     &mut bufs.bf16_scratch,
                 );
                 kernels::linear_nobias_bf16_scratch(
-                    v, x_norm, layer.wv_weight_bf16, seq_len, dim, kv_dim,
+                    v,
+                    x_norm,
+                    layer.wv_weight_bf16,
+                    seq_len,
+                    dim,
+                    kv_dim,
                     &mut bufs.bf16_scratch,
                 );
             }
@@ -842,22 +935,39 @@ pub fn decoder_prefill(
 
         let proj_out = &mut bufs.pref_proj_out[..seq_len * dim];
         if use_int8 {
-            #[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
+            #[cfg(all(
+                feature = "int8-prefill",
+                not(feature = "blas"),
+                target_arch = "aarch64"
+            ))]
             unsafe {
                 kernels::quantize_rows_into(
-                    &mut xq_buf[..seq_len * q_dim], &mut xq_scales[..seq_len],
-                    attn_out, seq_len, q_dim,
+                    &mut xq_buf[..seq_len * q_dim],
+                    &mut xq_scales[..seq_len],
+                    attn_out,
+                    seq_len,
+                    q_dim,
                 );
                 kernels::int8_prefill_matvec(
-                    proj_out, &xq_buf[..seq_len * q_dim], &xq_scales[..seq_len],
-                    layer.wo_int8.as_ptr(), layer.wo_int8_scales.as_ptr(),
-                    q_dim, dim, seq_len,
+                    proj_out,
+                    &xq_buf[..seq_len * q_dim],
+                    &xq_scales[..seq_len],
+                    layer.wo_int8.as_ptr(),
+                    layer.wo_int8_scales.as_ptr(),
+                    q_dim,
+                    dim,
+                    seq_len,
                 );
             }
         } else {
             unsafe {
                 kernels::linear_nobias_bf16_scratch(
-                    proj_out, attn_out, layer.wo_weight_bf16, seq_len, q_dim, dim,
+                    proj_out,
+                    attn_out,
+                    layer.wo_weight_bf16,
+                    seq_len,
+                    q_dim,
+                    dim,
                     &mut bufs.bf16_scratch,
                 );
             }
@@ -882,29 +992,51 @@ pub fn decoder_prefill(
         if use_int8 {
             // Fused INT8 gate_up + SwiGLU into `gate` directly (matches the
             // single-token `int8_swiglu_range` path — no separate up buffer).
-            #[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
+            #[cfg(all(
+                feature = "int8-prefill",
+                not(feature = "blas"),
+                target_arch = "aarch64"
+            ))]
             unsafe {
                 kernels::quantize_rows_into(
-                    &mut xq_buf[..seq_len * dim], &mut xq_scales[..seq_len],
-                    x_norm2, seq_len, dim,
+                    &mut xq_buf[..seq_len * dim],
+                    &mut xq_scales[..seq_len],
+                    x_norm2,
+                    seq_len,
+                    dim,
                 );
                 kernels::int8_prefill_swiglu(
-                    gate, &xq_buf[..seq_len * dim], &xq_scales[..seq_len],
-                    layer.gate_up_int8.as_ptr(), layer.gate_up_int8_scales.as_ptr(),
-                    dim, intermediate, seq_len,
+                    gate,
+                    &xq_buf[..seq_len * dim],
+                    &xq_scales[..seq_len],
+                    layer.gate_up_int8.as_ptr(),
+                    layer.gate_up_int8_scales.as_ptr(),
+                    dim,
+                    intermediate,
+                    seq_len,
                 );
             }
         } else {
             unsafe {
                 kernels::linear_nobias_bf16_scratch(
-                    gate, x_norm2, layer.gate_weight_bf16, seq_len, dim, intermediate,
+                    gate,
+                    x_norm2,
+                    layer.gate_weight_bf16,
+                    seq_len,
+                    dim,
+                    intermediate,
                     &mut bufs.bf16_scratch,
                 );
             }
             let up = &mut bufs.pref_up[..seq_len * intermediate];
             unsafe {
                 kernels::linear_nobias_bf16_scratch(
-                    up, x_norm2, layer.up_weight_bf16, seq_len, dim, intermediate,
+                    up,
+                    x_norm2,
+                    layer.up_weight_bf16,
+                    seq_len,
+                    dim,
+                    intermediate,
                     &mut bufs.bf16_scratch,
                 );
             }
@@ -914,22 +1046,39 @@ pub fn decoder_prefill(
 
         let ffn_out = &mut bufs.pref_ffn_out[..seq_len * dim];
         if use_int8 {
-            #[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
+            #[cfg(all(
+                feature = "int8-prefill",
+                not(feature = "blas"),
+                target_arch = "aarch64"
+            ))]
             unsafe {
                 kernels::quantize_rows_into(
-                    &mut xq_buf[..seq_len * intermediate], &mut xq_scales[..seq_len],
-                    gate, seq_len, intermediate,
+                    &mut xq_buf[..seq_len * intermediate],
+                    &mut xq_scales[..seq_len],
+                    gate,
+                    seq_len,
+                    intermediate,
                 );
                 kernels::int8_prefill_matvec(
-                    ffn_out, &xq_buf[..seq_len * intermediate], &xq_scales[..seq_len],
-                    layer.down_int8.as_ptr(), layer.down_int8_scales.as_ptr(),
-                    intermediate, dim, seq_len,
+                    ffn_out,
+                    &xq_buf[..seq_len * intermediate],
+                    &xq_scales[..seq_len],
+                    layer.down_int8.as_ptr(),
+                    layer.down_int8_scales.as_ptr(),
+                    intermediate,
+                    dim,
+                    seq_len,
                 );
             }
         } else {
             unsafe {
                 kernels::linear_nobias_bf16_scratch(
-                    ffn_out, gate, layer.down_weight_bf16, seq_len, intermediate, dim,
+                    ffn_out,
+                    gate,
+                    layer.down_weight_bf16,
+                    seq_len,
+                    intermediate,
+                    dim,
                     &mut bufs.bf16_scratch,
                 );
             }
@@ -1044,10 +1193,14 @@ pub fn decoder_forward(
                 // Stage: pre-attention norm + input quantization (tid 0).
                 if tid == 0 {
                     let x = unsafe { std::slice::from_raw_parts(x_ptr as *const f32, dim) };
-                    let x_norm = unsafe { std::slice::from_raw_parts_mut(x_norm_ptr as *mut f32, dim) };
+                    let x_norm =
+                        unsafe { std::slice::from_raw_parts_mut(x_norm_ptr as *mut f32, dim) };
                     kernels::rms_norm(x_norm, x, &layer.input_norm, 1, dim, eps);
-                    let x_int8 = unsafe { std::slice::from_raw_parts_mut(x_int8_ptr as *mut i8, dim) };
-                    unsafe { *(scales_ptr as *mut f32) = kernels::quantize_into(x_int8, x_norm); }
+                    let x_int8 =
+                        unsafe { std::slice::from_raw_parts_mut(x_int8_ptr as *mut i8, dim) };
+                    unsafe {
+                        *(scales_ptr as *mut f32) = kernels::quantize_into(x_int8, x_norm);
+                    }
                 }
                 barrier.wait();
 
@@ -1057,12 +1210,22 @@ pub fn decoder_forward(
                     let x_scale = unsafe { *(scales_ptr as *const f32) };
                     unsafe {
                         kernels::int8_qkv_range(
-                            q_ptr as *mut f32, k_ptr as *mut f32, v_ptr as *mut f32,
-                            x_int8_ptr as *const i8, x_scale,
-                            layer.wq_int8.as_ptr(), layer.wq_int8_scales.as_ptr(),
-                            layer.wk_int8.as_ptr(), layer.wk_int8_scales.as_ptr(),
-                            layer.wv_int8.as_ptr(), layer.wv_int8_scales.as_ptr(),
-                            dim, q_dim, kv_dim, s, e,
+                            q_ptr as *mut f32,
+                            k_ptr as *mut f32,
+                            v_ptr as *mut f32,
+                            x_int8_ptr as *const i8,
+                            x_scale,
+                            layer.wq_int8.as_ptr(),
+                            layer.wq_int8_scales.as_ptr(),
+                            layer.wk_int8.as_ptr(),
+                            layer.wk_int8_scales.as_ptr(),
+                            layer.wv_int8.as_ptr(),
+                            layer.wv_int8_scales.as_ptr(),
+                            dim,
+                            q_dim,
+                            kv_dim,
+                            s,
+                            e,
                         );
                     }
                 }
@@ -1073,7 +1236,14 @@ pub fn decoder_forward(
                     let q = unsafe { std::slice::from_raw_parts_mut(q_ptr as *mut f32, q_dim) };
                     let k = unsafe { std::slice::from_raw_parts_mut(k_ptr as *mut f32, kv_dim) };
                     kernels::rms_norm_per_head(q, &layer.q_norm_weight, 1, n_heads, head_dim, eps);
-                    kernels::rms_norm_per_head(k, &layer.k_norm_weight, 1, n_kv_heads, head_dim, eps);
+                    kernels::rms_norm_per_head(
+                        k,
+                        &layer.k_norm_weight,
+                        1,
+                        n_kv_heads,
+                        head_dim,
+                        eps,
+                    );
                     kernels::apply_rope_neox(q, rope_cos, rope_sin, 1, n_heads, head_dim);
                     kernels::apply_rope_neox(k, rope_cos, rope_sin, 1, n_kv_heads, head_dim);
 
@@ -1084,9 +1254,15 @@ pub fn decoder_forward(
                         let src = h * head_dim;
                         unsafe {
                             std::ptr::copy_nonoverlapping(
-                                k.as_ptr().add(src), (kv_k_ptr as *mut f32).add(dst), head_dim);
+                                k.as_ptr().add(src),
+                                (kv_k_ptr as *mut f32).add(dst),
+                                head_dim,
+                            );
                             std::ptr::copy_nonoverlapping(
-                                v.as_ptr().add(src), (kv_v_ptr as *mut f32).add(dst), head_dim);
+                                v.as_ptr().add(src),
+                                (kv_v_ptr as *mut f32).add(dst),
+                                head_dim,
+                            );
                         }
                     }
                 }
@@ -1094,20 +1270,38 @@ pub fn decoder_forward(
 
                 // Stage: causal attention, split by KV-head group (GQA-paired).
                 if let Some((h0, h1)) = kernels::attn_head_range(tid, nt, 1, n_heads, n_kv_heads) {
-                    let attn_out = unsafe { std::slice::from_raw_parts_mut(attn_out_ptr as *mut f32, q_dim) };
+                    let attn_out =
+                        unsafe { std::slice::from_raw_parts_mut(attn_out_ptr as *mut f32, q_dim) };
                     let q = unsafe { std::slice::from_raw_parts(q_ptr as *const f32, q_dim) };
                     kernels::causal_attention_heads(
-                        attn_out, q, k_base, v_base, kv_head_stride,
-                        1, total_seq, n_heads, n_kv_heads, head_dim, scale, pos, h0, h1,
+                        attn_out,
+                        q,
+                        k_base,
+                        v_base,
+                        kv_head_stride,
+                        1,
+                        total_seq,
+                        n_heads,
+                        n_kv_heads,
+                        head_dim,
+                        scale,
+                        pos,
+                        h0,
+                        h1,
                     );
                 }
                 barrier.wait();
 
                 // Stage: quantize attention output for the O-projection (tid 0).
                 if tid == 0 {
-                    let attn_out = unsafe { std::slice::from_raw_parts(attn_out_ptr as *const f32, q_dim) };
-                    let attn_int8 = unsafe { std::slice::from_raw_parts_mut(attn_int8_ptr as *mut i8, q_dim) };
-                    unsafe { *(scales_ptr as *mut f32).add(1) = kernels::quantize_into(attn_int8, attn_out); }
+                    let attn_out =
+                        unsafe { std::slice::from_raw_parts(attn_out_ptr as *const f32, q_dim) };
+                    let attn_int8 =
+                        unsafe { std::slice::from_raw_parts_mut(attn_int8_ptr as *mut i8, q_dim) };
+                    unsafe {
+                        *(scales_ptr as *mut f32).add(1) =
+                            kernels::quantize_into(attn_int8, attn_out);
+                    }
                 }
                 barrier.wait();
 
@@ -1118,9 +1312,15 @@ pub fn decoder_forward(
                     let x_scale = unsafe { *(scales_ptr as *const f32).add(1) };
                     unsafe {
                         kernels::int8_matvec_range(
-                            x_ptr as *mut f32, attn_int8_ptr as *const i8, x_scale,
-                            layer.wo_int8.as_ptr(), layer.wo_int8_scales.as_ptr(),
-                            Some(x_ptr as *const f32), q_dim, s, e,
+                            x_ptr as *mut f32,
+                            attn_int8_ptr as *const i8,
+                            x_scale,
+                            layer.wo_int8.as_ptr(),
+                            layer.wo_int8_scales.as_ptr(),
+                            Some(x_ptr as *const f32),
+                            q_dim,
+                            s,
+                            e,
                         );
                     }
                 }
@@ -1129,10 +1329,14 @@ pub fn decoder_forward(
                 // Stage: post-attention norm + input quantization (tid 0).
                 if tid == 0 {
                     let x = unsafe { std::slice::from_raw_parts(x_ptr as *const f32, dim) };
-                    let x_norm = unsafe { std::slice::from_raw_parts_mut(x_norm_ptr as *mut f32, dim) };
+                    let x_norm =
+                        unsafe { std::slice::from_raw_parts_mut(x_norm_ptr as *mut f32, dim) };
                     kernels::rms_norm(x_norm, x, &layer.post_attn_norm, 1, dim, eps);
-                    let x_int8 = unsafe { std::slice::from_raw_parts_mut(x_int8_ptr as *mut i8, dim) };
-                    unsafe { *(scales_ptr as *mut f32).add(2) = kernels::quantize_into(x_int8, x_norm); }
+                    let x_int8 =
+                        unsafe { std::slice::from_raw_parts_mut(x_int8_ptr as *mut i8, dim) };
+                    unsafe {
+                        *(scales_ptr as *mut f32).add(2) = kernels::quantize_into(x_int8, x_norm);
+                    }
                 }
                 barrier.wait();
 
@@ -1142,9 +1346,14 @@ pub fn decoder_forward(
                     let x_scale = unsafe { *(scales_ptr as *const f32).add(2) };
                     unsafe {
                         kernels::int8_swiglu_range(
-                            ffn_out_ptr as *mut f32, x_int8_ptr as *const i8, x_scale,
-                            layer.gate_up_int8.as_ptr(), layer.gate_up_int8_scales.as_ptr(),
-                            dim, s, e,
+                            ffn_out_ptr as *mut f32,
+                            x_int8_ptr as *const i8,
+                            x_scale,
+                            layer.gate_up_int8.as_ptr(),
+                            layer.gate_up_int8_scales.as_ptr(),
+                            dim,
+                            s,
+                            e,
                             &mut swiglu_scratch,
                         );
                     }
@@ -1153,9 +1362,16 @@ pub fn decoder_forward(
 
                 // Stage: quantize FFN activation for the down-projection (tid 0).
                 if tid == 0 {
-                    let ffn_out = unsafe { std::slice::from_raw_parts(ffn_out_ptr as *const f32, intermediate) };
-                    let ffn_int8 = unsafe { std::slice::from_raw_parts_mut(ffn_int8_ptr as *mut i8, intermediate) };
-                    unsafe { *(scales_ptr as *mut f32).add(3) = kernels::quantize_into(ffn_int8, ffn_out); }
+                    let ffn_out = unsafe {
+                        std::slice::from_raw_parts(ffn_out_ptr as *const f32, intermediate)
+                    };
+                    let ffn_int8 = unsafe {
+                        std::slice::from_raw_parts_mut(ffn_int8_ptr as *mut i8, intermediate)
+                    };
+                    unsafe {
+                        *(scales_ptr as *mut f32).add(3) =
+                            kernels::quantize_into(ffn_int8, ffn_out);
+                    }
                 }
                 barrier.wait();
 
@@ -1165,9 +1381,15 @@ pub fn decoder_forward(
                     let x_scale = unsafe { *(scales_ptr as *const f32).add(3) };
                     unsafe {
                         kernels::int8_matvec_range(
-                            x_ptr as *mut f32, ffn_int8_ptr as *const i8, x_scale,
-                            layer.down_int8.as_ptr(), layer.down_int8_scales.as_ptr(),
-                            Some(x_ptr as *const f32), intermediate, s, e,
+                            x_ptr as *mut f32,
+                            ffn_int8_ptr as *const i8,
+                            x_scale,
+                            layer.down_int8.as_ptr(),
+                            layer.down_int8_scales.as_ptr(),
+                            Some(x_ptr as *const f32),
+                            intermediate,
+                            s,
+                            e,
                         );
                     }
                 }
@@ -1184,12 +1406,16 @@ pub fn decoder_forward(
                 // Stage: final norm + copy-back + quantize (tid 0 serial glue).
                 if tid == 0 {
                     let x = unsafe { std::slice::from_raw_parts(x_ptr as *const f32, dim) };
-                    let x_norm = unsafe { std::slice::from_raw_parts_mut(x_norm_ptr as *mut f32, dim) };
+                    let x_norm =
+                        unsafe { std::slice::from_raw_parts_mut(x_norm_ptr as *mut f32, dim) };
                     kernels::rms_norm(x_norm, x, norm_w, 1, dim, eps);
                     let x_mut = unsafe { std::slice::from_raw_parts_mut(x_ptr as *mut f32, dim) };
                     x_mut.copy_from_slice(x_norm);
-                    let x_int8 = unsafe { std::slice::from_raw_parts_mut(x_int8_ptr as *mut i8, dim) };
-                    unsafe { *(scales_ptr as *mut f32) = kernels::quantize_into(x_int8, x_norm); }
+                    let x_int8 =
+                        unsafe { std::slice::from_raw_parts_mut(x_int8_ptr as *mut i8, dim) };
+                    unsafe {
+                        *(scales_ptr as *mut f32) = kernels::quantize_into(x_int8, x_norm);
+                    }
                 }
                 barrier.wait();
 
@@ -1206,9 +1432,13 @@ pub fn decoder_forward(
                         };
                         unsafe {
                             kernels::neon::argmax_int8_range(
-                                x_int8_ptr as *const i8, x_scale,
-                                lm_int8_ptr as *const i8, w_scales,
-                                dim, start, end,
+                                x_int8_ptr as *const i8,
+                                x_scale,
+                                lm_int8_ptr as *const i8,
+                                w_scales,
+                                dim,
+                                start,
+                                end,
                             )
                         }
                     } else {
@@ -1233,7 +1463,9 @@ pub fn decoder_forward(
                             bi = unsafe { *(best_idx_ptr as *const usize).add(i) };
                         }
                     }
-                    unsafe { *(fused_token_ptr as *mut i32) = bi as i32; }
+                    unsafe {
+                        *(fused_token_ptr as *mut i32) = bi as i32;
+                    }
                 }
             }
         });
@@ -1264,9 +1496,30 @@ pub fn decoder_forward(
         );
 
         unsafe {
-            kernels::linear_nobias_bf16(&mut bufs.q[..q_dim], &bufs.x_norm[..dim], layer.wq_weight_bf16, 1, dim, q_dim);
-            kernels::linear_nobias_bf16(&mut bufs.k[..kv_dim], &bufs.x_norm[..dim], layer.wk_weight_bf16, 1, dim, kv_dim);
-            kernels::linear_nobias_bf16(&mut bufs.v[..kv_dim], &bufs.x_norm[..dim], layer.wv_weight_bf16, 1, dim, kv_dim);
+            kernels::linear_nobias_bf16(
+                &mut bufs.q[..q_dim],
+                &bufs.x_norm[..dim],
+                layer.wq_weight_bf16,
+                1,
+                dim,
+                q_dim,
+            );
+            kernels::linear_nobias_bf16(
+                &mut bufs.k[..kv_dim],
+                &bufs.x_norm[..dim],
+                layer.wk_weight_bf16,
+                1,
+                dim,
+                kv_dim,
+            );
+            kernels::linear_nobias_bf16(
+                &mut bufs.v[..kv_dim],
+                &bufs.x_norm[..dim],
+                layer.wv_weight_bf16,
+                1,
+                dim,
+                kv_dim,
+            );
         }
 
         kernels::rms_norm_per_head(
@@ -1551,13 +1804,10 @@ pub fn decoder_forward_batched(
             while bi < b {
                 unsafe {
                     let x = std::slice::from_raw_parts(x_ptr[bi] as *const f32, dim);
-                    let x_norm =
-                        std::slice::from_raw_parts_mut(x_norm_ptr[bi] as *mut f32, dim);
+                    let x_norm = std::slice::from_raw_parts_mut(x_norm_ptr[bi] as *mut f32, dim);
                     kernels::rms_norm(x_norm, x, &layer.input_norm, 1, dim, eps);
-                    let x_int8 =
-                        std::slice::from_raw_parts_mut(x_int8_ptr[bi] as *mut i8, dim);
-                    *(scales_addr as *mut f32).add(4 * bi) =
-                        kernels::quantize_into(x_int8, x_norm);
+                    let x_int8 = std::slice::from_raw_parts_mut(x_int8_ptr[bi] as *mut i8, dim);
+                    *(scales_addr as *mut f32).add(4 * bi) = kernels::quantize_into(x_int8, x_norm);
                 }
                 bi += nt;
             }
@@ -1573,11 +1823,23 @@ pub fn decoder_forward_batched(
                 let xs = scales_at(0);
                 unsafe {
                     kernels::int8_qkv_range_batched(
-                        b, &qp[..b], &kp[..b], &vp[..b], &xi[..b], &xs[..b],
-                        layer.wq_int8.as_ptr(), layer.wq_int8_scales.as_ptr(),
-                        layer.wk_int8.as_ptr(), layer.wk_int8_scales.as_ptr(),
-                        layer.wv_int8.as_ptr(), layer.wv_int8_scales.as_ptr(),
-                        dim, q_dim, kv_dim, s, e,
+                        b,
+                        &qp[..b],
+                        &kp[..b],
+                        &vp[..b],
+                        &xi[..b],
+                        &xs[..b],
+                        layer.wq_int8.as_ptr(),
+                        layer.wq_int8_scales.as_ptr(),
+                        layer.wk_int8.as_ptr(),
+                        layer.wk_int8_scales.as_ptr(),
+                        layer.wv_int8.as_ptr(),
+                        layer.wv_int8_scales.as_ptr(),
+                        dim,
+                        q_dim,
+                        kv_dim,
+                        s,
+                        e,
                     );
                 }
             }
@@ -1590,7 +1852,14 @@ pub fn decoder_forward_batched(
                     let q = std::slice::from_raw_parts_mut(q_ptr[bi] as *mut f32, q_dim);
                     let k = std::slice::from_raw_parts_mut(k_ptr[bi] as *mut f32, kv_dim);
                     kernels::rms_norm_per_head(q, &layer.q_norm_weight, 1, n_heads, head_dim, eps);
-                    kernels::rms_norm_per_head(k, &layer.k_norm_weight, 1, n_kv_heads, head_dim, eps);
+                    kernels::rms_norm_per_head(
+                        k,
+                        &layer.k_norm_weight,
+                        1,
+                        n_kv_heads,
+                        head_dim,
+                        eps,
+                    );
                     let cos = std::slice::from_raw_parts(rope_cos_ptr[bi] as *const f32, head_dim);
                     let sin = std::slice::from_raw_parts(rope_sin_ptr[bi] as *const f32, head_dim);
                     kernels::apply_rope_neox(q, cos, sin, 1, n_heads, head_dim);
@@ -1603,9 +1872,15 @@ pub fn decoder_forward_batched(
                         let dst = layer_kv_off + h * kv_stride[bi] + pos[bi] * head_dim;
                         let src = h * head_dim;
                         std::ptr::copy_nonoverlapping(
-                            k.as_ptr().add(src), (kv_k_ptr[bi] as *mut f32).add(dst), head_dim);
+                            k.as_ptr().add(src),
+                            (kv_k_ptr[bi] as *mut f32).add(dst),
+                            head_dim,
+                        );
                         std::ptr::copy_nonoverlapping(
-                            v.as_ptr().add(src), (kv_v_ptr[bi] as *mut f32).add(dst), head_dim);
+                            v.as_ptr().add(src),
+                            (kv_v_ptr[bi] as *mut f32).add(dst),
+                            head_dim,
+                        );
                     }
                 }
                 bi += nt;
@@ -1630,9 +1905,20 @@ pub fn decoder_forward_batched(
                         let k_base = (kv_k_ptr[bi] as *const f32).add(layer_kv_off);
                         let v_base = (kv_v_ptr[bi] as *const f32).add(layer_kv_off);
                         kernels::causal_attention_heads(
-                            attn_out, q, k_base, v_base, kv_stride[bi],
-                            1, pos[bi] + 1, n_heads, n_kv_heads, head_dim, scale, pos[bi],
-                            g * hpk, (g + 1) * hpk,
+                            attn_out,
+                            q,
+                            k_base,
+                            v_base,
+                            kv_stride[bi],
+                            1,
+                            pos[bi] + 1,
+                            n_heads,
+                            n_kv_heads,
+                            head_dim,
+                            scale,
+                            pos[bi],
+                            g * hpk,
+                            (g + 1) * hpk,
                         );
                     }
                     item += nt;
@@ -1664,9 +1950,16 @@ pub fn decoder_forward_batched(
                 let xs = scales_at(1);
                 unsafe {
                     kernels::int8_matvec_range_batched(
-                        b, &yp[..b], &ai[..b], &xs[..b],
-                        layer.wo_int8.as_ptr(), layer.wo_int8_scales.as_ptr(),
-                        Some(&bp[..b]), q_dim, s, e,
+                        b,
+                        &yp[..b],
+                        &ai[..b],
+                        &xs[..b],
+                        layer.wo_int8.as_ptr(),
+                        layer.wo_int8_scales.as_ptr(),
+                        Some(&bp[..b]),
+                        q_dim,
+                        s,
+                        e,
                     );
                 }
             }
@@ -1677,11 +1970,9 @@ pub fn decoder_forward_batched(
             while bi < b {
                 unsafe {
                     let x = std::slice::from_raw_parts(x_ptr[bi] as *const f32, dim);
-                    let x_norm =
-                        std::slice::from_raw_parts_mut(x_norm_ptr[bi] as *mut f32, dim);
+                    let x_norm = std::slice::from_raw_parts_mut(x_norm_ptr[bi] as *mut f32, dim);
                     kernels::rms_norm(x_norm, x, &layer.post_attn_norm, 1, dim, eps);
-                    let x_int8 =
-                        std::slice::from_raw_parts_mut(x_int8_ptr[bi] as *mut i8, dim);
+                    let x_int8 = std::slice::from_raw_parts_mut(x_int8_ptr[bi] as *mut i8, dim);
                     *(scales_addr as *mut f32).add(4 * bi + 2) =
                         kernels::quantize_into(x_int8, x_norm);
                 }
@@ -1697,9 +1988,15 @@ pub fn decoder_forward_batched(
                 let xs = scales_at(2);
                 unsafe {
                     kernels::int8_swiglu_range_batched(
-                        b, &fp[..b], &xi[..b], &xs[..b],
-                        layer.gate_up_int8.as_ptr(), layer.gate_up_int8_scales.as_ptr(),
-                        dim, s, e,
+                        b,
+                        &fp[..b],
+                        &xi[..b],
+                        &xs[..b],
+                        layer.gate_up_int8.as_ptr(),
+                        layer.gate_up_int8_scales.as_ptr(),
+                        dim,
+                        s,
+                        e,
                     );
                 }
             }
@@ -1729,9 +2026,16 @@ pub fn decoder_forward_batched(
                 let xs = scales_at(3);
                 unsafe {
                     kernels::int8_matvec_range_batched(
-                        b, &yp[..b], &fi[..b], &xs[..b],
-                        layer.down_int8.as_ptr(), layer.down_int8_scales.as_ptr(),
-                        Some(&bp[..b]), intermediate, s, e,
+                        b,
+                        &yp[..b],
+                        &fi[..b],
+                        &xs[..b],
+                        layer.down_int8.as_ptr(),
+                        layer.down_int8_scales.as_ptr(),
+                        Some(&bp[..b]),
+                        intermediate,
+                        s,
+                        e,
                     );
                 }
             }
@@ -1878,7 +2182,12 @@ pub fn decoder_forward_verify(
 
     if k == 1 {
         out_argmax[0] = decoder_forward(
-            decoder, cfg, kv_cache, rope, &mut bufs[0], &input_embeds[..dim],
+            decoder,
+            cfg,
+            kv_cache,
+            rope,
+            &mut bufs[0],
+            &input_embeds[..dim],
         );
         return;
     }
@@ -1990,13 +2299,10 @@ pub fn decoder_forward_verify(
             while bi < k {
                 unsafe {
                     let x = std::slice::from_raw_parts(x_ptr[bi] as *const f32, dim);
-                    let x_norm =
-                        std::slice::from_raw_parts_mut(x_norm_ptr[bi] as *mut f32, dim);
+                    let x_norm = std::slice::from_raw_parts_mut(x_norm_ptr[bi] as *mut f32, dim);
                     kernels::rms_norm(x_norm, x, &layer.input_norm, 1, dim, eps);
-                    let x_int8 =
-                        std::slice::from_raw_parts_mut(x_int8_ptr[bi] as *mut i8, dim);
-                    *(scales_addr as *mut f32).add(4 * bi) =
-                        kernels::quantize_into(x_int8, x_norm);
+                    let x_int8 = std::slice::from_raw_parts_mut(x_int8_ptr[bi] as *mut i8, dim);
+                    *(scales_addr as *mut f32).add(4 * bi) = kernels::quantize_into(x_int8, x_norm);
                 }
                 bi += nt;
             }
@@ -2012,11 +2318,23 @@ pub fn decoder_forward_verify(
                 let xs = scales_at(0);
                 unsafe {
                     kernels::int8_qkv_range_batched(
-                        k, &qp[..k], &kp[..k], &vp[..k], &xi[..k], &xs[..k],
-                        layer.wq_int8.as_ptr(), layer.wq_int8_scales.as_ptr(),
-                        layer.wk_int8.as_ptr(), layer.wk_int8_scales.as_ptr(),
-                        layer.wv_int8.as_ptr(), layer.wv_int8_scales.as_ptr(),
-                        dim, q_dim, kv_dim, s, e,
+                        k,
+                        &qp[..k],
+                        &kp[..k],
+                        &vp[..k],
+                        &xi[..k],
+                        &xs[..k],
+                        layer.wq_int8.as_ptr(),
+                        layer.wq_int8_scales.as_ptr(),
+                        layer.wk_int8.as_ptr(),
+                        layer.wk_int8_scales.as_ptr(),
+                        layer.wv_int8.as_ptr(),
+                        layer.wv_int8_scales.as_ptr(),
+                        dim,
+                        q_dim,
+                        kv_dim,
+                        s,
+                        e,
                     );
                 }
             }
@@ -2030,7 +2348,14 @@ pub fn decoder_forward_verify(
                     let q = std::slice::from_raw_parts_mut(q_ptr[bi] as *mut f32, q_dim);
                     let kk = std::slice::from_raw_parts_mut(k_ptr[bi] as *mut f32, kv_dim);
                     kernels::rms_norm_per_head(q, &layer.q_norm_weight, 1, n_heads, head_dim, eps);
-                    kernels::rms_norm_per_head(kk, &layer.k_norm_weight, 1, n_kv_heads, head_dim, eps);
+                    kernels::rms_norm_per_head(
+                        kk,
+                        &layer.k_norm_weight,
+                        1,
+                        n_kv_heads,
+                        head_dim,
+                        eps,
+                    );
                     let cos = std::slice::from_raw_parts(rope_cos_ptr[bi] as *const f32, head_dim);
                     let sin = std::slice::from_raw_parts(rope_sin_ptr[bi] as *const f32, head_dim);
                     kernels::apply_rope_neox(q, cos, sin, 1, n_heads, head_dim);
@@ -2043,9 +2368,15 @@ pub fn decoder_forward_verify(
                         let dst = layer_kv_off + h * kv_stride[bi] + pos[bi] * head_dim;
                         let src = h * head_dim;
                         std::ptr::copy_nonoverlapping(
-                            kk.as_ptr().add(src), (kv_k_ptr[bi] as *mut f32).add(dst), head_dim);
+                            kk.as_ptr().add(src),
+                            (kv_k_ptr[bi] as *mut f32).add(dst),
+                            head_dim,
+                        );
                         std::ptr::copy_nonoverlapping(
-                            v.as_ptr().add(src), (kv_v_ptr[bi] as *mut f32).add(dst), head_dim);
+                            v.as_ptr().add(src),
+                            (kv_v_ptr[bi] as *mut f32).add(dst),
+                            head_dim,
+                        );
                     }
                 }
                 bi += nt;
@@ -2073,9 +2404,20 @@ pub fn decoder_forward_verify(
                         let k_base = (kv_k_ptr[bi] as *const f32).add(layer_kv_off);
                         let v_base = (kv_v_ptr[bi] as *const f32).add(layer_kv_off);
                         kernels::causal_attention_heads(
-                            attn_out, q, k_base, v_base, kv_stride[bi],
-                            1, pos[bi] + 1, n_heads, n_kv_heads, head_dim, scale, pos[bi],
-                            g * hpk, (g + 1) * hpk,
+                            attn_out,
+                            q,
+                            k_base,
+                            v_base,
+                            kv_stride[bi],
+                            1,
+                            pos[bi] + 1,
+                            n_heads,
+                            n_kv_heads,
+                            head_dim,
+                            scale,
+                            pos[bi],
+                            g * hpk,
+                            (g + 1) * hpk,
                         );
                     }
                     item += nt;
@@ -2107,9 +2449,16 @@ pub fn decoder_forward_verify(
                 let xs = scales_at(1);
                 unsafe {
                     kernels::int8_matvec_range_batched(
-                        k, &yp[..k], &ai[..k], &xs[..k],
-                        layer.wo_int8.as_ptr(), layer.wo_int8_scales.as_ptr(),
-                        Some(&bp[..k]), q_dim, s, e,
+                        k,
+                        &yp[..k],
+                        &ai[..k],
+                        &xs[..k],
+                        layer.wo_int8.as_ptr(),
+                        layer.wo_int8_scales.as_ptr(),
+                        Some(&bp[..k]),
+                        q_dim,
+                        s,
+                        e,
                     );
                 }
             }
@@ -2120,11 +2469,9 @@ pub fn decoder_forward_verify(
             while bi < k {
                 unsafe {
                     let x = std::slice::from_raw_parts(x_ptr[bi] as *const f32, dim);
-                    let x_norm =
-                        std::slice::from_raw_parts_mut(x_norm_ptr[bi] as *mut f32, dim);
+                    let x_norm = std::slice::from_raw_parts_mut(x_norm_ptr[bi] as *mut f32, dim);
                     kernels::rms_norm(x_norm, x, &layer.post_attn_norm, 1, dim, eps);
-                    let x_int8 =
-                        std::slice::from_raw_parts_mut(x_int8_ptr[bi] as *mut i8, dim);
+                    let x_int8 = std::slice::from_raw_parts_mut(x_int8_ptr[bi] as *mut i8, dim);
                     *(scales_addr as *mut f32).add(4 * bi + 2) =
                         kernels::quantize_into(x_int8, x_norm);
                 }
@@ -2140,9 +2487,15 @@ pub fn decoder_forward_verify(
                 let xs = scales_at(2);
                 unsafe {
                     kernels::int8_swiglu_range_batched(
-                        k, &fp[..k], &xi[..k], &xs[..k],
-                        layer.gate_up_int8.as_ptr(), layer.gate_up_int8_scales.as_ptr(),
-                        dim, s, e,
+                        k,
+                        &fp[..k],
+                        &xi[..k],
+                        &xs[..k],
+                        layer.gate_up_int8.as_ptr(),
+                        layer.gate_up_int8_scales.as_ptr(),
+                        dim,
+                        s,
+                        e,
                     );
                 }
             }
@@ -2172,9 +2525,16 @@ pub fn decoder_forward_verify(
                 let xs = scales_at(3);
                 unsafe {
                     kernels::int8_matvec_range_batched(
-                        k, &yp[..k], &fi[..k], &xs[..k],
-                        layer.down_int8.as_ptr(), layer.down_int8_scales.as_ptr(),
-                        Some(&bp[..k]), intermediate, s, e,
+                        k,
+                        &yp[..k],
+                        &fi[..k],
+                        &xs[..k],
+                        layer.down_int8.as_ptr(),
+                        layer.down_int8_scales.as_ptr(),
+                        Some(&bp[..k]),
+                        intermediate,
+                        s,
+                        e,
                     );
                 }
             }

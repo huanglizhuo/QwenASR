@@ -88,7 +88,9 @@ fn run_push_stream(samples: &[f32], verify: bool) -> String {
         cumulative.extend_from_slice(&samples[pos..end]);
         pos = end;
         let finalize = pos >= samples.len();
-        if let Some(delta) = transcribe::stream_push_audio(&mut ctx, &cumulative, &mut state, finalize) {
+        if let Some(delta) =
+            transcribe::stream_push_audio(&mut ctx, &cumulative, &mut state, finalize)
+        {
             out.push_str(&delta);
         }
     }
@@ -111,7 +113,10 @@ fn transcribe_stream_verify_on_off_identical() {
         on, off,
         "transcribe_stream: QWEN_ASR_VERIFY on/off transcripts differ\nON:  {on:?}\nOFF: {off:?}"
     );
-    eprintln!("transcribe_stream verify on/off identical ({} bytes)", on.len());
+    eprintln!(
+        "transcribe_stream verify on/off identical ({} bytes)",
+        on.len()
+    );
 }
 
 #[test]
@@ -130,7 +135,10 @@ fn stream_push_audio_verify_on_off_identical() {
         on, off,
         "stream_push_audio: QWEN_ASR_VERIFY on/off transcripts differ\nON:  {on:?}\nOFF: {off:?}"
     );
-    assert!(!on.is_empty(), "stream_push_audio produced empty transcript");
+    assert!(
+        !on.is_empty(),
+        "stream_push_audio produced empty transcript"
+    );
     eprintln!(
         "stream_push_audio verify on/off identical ({} bytes)",
         on.len()

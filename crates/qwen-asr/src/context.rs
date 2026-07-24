@@ -136,9 +136,17 @@ impl QwenModel {
     /// switch. Both `0` on desktop/BLAS/non-aarch64 by construction. Surfaced on
     /// device through `perf_stats()` since Rust stderr is not logged there.
     pub fn int8_status(&self) -> String {
-        #[cfg(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64"))]
+        #[cfg(all(
+            feature = "int8-prefill",
+            not(feature = "blas"),
+            target_arch = "aarch64"
+        ))]
         let prefill = kernels::int8_prefill_enabled() as u8;
-        #[cfg(not(all(feature = "int8-prefill", not(feature = "blas"), target_arch = "aarch64")))]
+        #[cfg(not(all(
+            feature = "int8-prefill",
+            not(feature = "blas"),
+            target_arch = "aarch64"
+        )))]
         let prefill = 0u8;
         let encoder = self.encoder.int8_encoder_active() as u8;
         format!("prefill={} encoder={}", prefill, encoder)

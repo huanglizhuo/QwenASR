@@ -37,14 +37,21 @@ fn test_encode_decode_roundtrip() {
         let tokens = tok.encode(text);
         assert!(tokens.is_some(), "Should encode: '{}'", text);
         let tokens = tokens.unwrap();
-        assert!(!tokens.is_empty(), "Encoding should produce tokens for: '{}'", text);
+        assert!(
+            !tokens.is_empty(),
+            "Encoding should produce tokens for: '{}'",
+            text
+        );
 
         let mut decoded = String::new();
         for &t in &tokens {
             decoded.push_str(tok.decode(t));
         }
-        assert_eq!(decoded, text,
-            "Round-trip failed for '{}': got '{}'", text, decoded);
+        assert_eq!(
+            decoded, text,
+            "Round-trip failed for '{}': got '{}'",
+            text, decoded
+        );
     }
 }
 
@@ -57,10 +64,16 @@ fn test_special_tokens_not_in_vocab() {
 
     // Special tokens (151643+) are NOT in vocab.json, decode returns ""
     let eos = tok.decode(151643);
-    assert!(eos.is_empty(), "EOS token should decode to empty (not in vocab.json)");
+    assert!(
+        eos.is_empty(),
+        "EOS token should decode to empty (not in vocab.json)"
+    );
 
     let im_start = tok.decode(151644);
-    assert!(im_start.is_empty(), "im_start should decode to empty (not in vocab.json)");
+    assert!(
+        im_start.is_empty(),
+        "im_start should decode to empty (not in vocab.json)"
+    );
 }
 
 #[test]
@@ -88,7 +101,10 @@ fn test_encode_known_phrase() {
     let tokens = tok.encode("language en");
     assert!(tokens.is_some(), "Should encode 'language en'");
     let tokens = tokens.unwrap();
-    assert!(tokens.len() >= 2, "'language en' should produce at least 2 tokens");
+    assert!(
+        tokens.len() >= 2,
+        "'language en' should produce at least 2 tokens"
+    );
 
     // Verify roundtrip
     let mut decoded = String::new();

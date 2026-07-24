@@ -32,17 +32,41 @@ pub struct EncLayer {
     // otherwise left empty and the f32 weights above are used. The f32 weights
     // stay resident for the runtime kill-switch fallback. Desktop/BLAS builds
     // never compile these fields.
-    #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "int8-encoder",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     pub wq_int8: (Vec<i8>, Vec<f32>),
-    #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "int8-encoder",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     pub wk_int8: (Vec<i8>, Vec<f32>),
-    #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "int8-encoder",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     pub wv_int8: (Vec<i8>, Vec<f32>),
-    #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "int8-encoder",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     pub wo_int8: (Vec<i8>, Vec<f32>),
-    #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "int8-encoder",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     pub fc1_int8: (Vec<i8>, Vec<f32>),
-    #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "int8-encoder",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     pub fc2_int8: (Vec<i8>, Vec<f32>),
 }
 
@@ -157,11 +181,23 @@ pub struct Encoder {
     // R13-Android stage 2: INT8 per-row quantized conv_out / proj1 / proj2
     // weights `(int8_data, per_row_scales)`. Populated at load only when the
     // `int8-encoder` feature is compiled AND `QWEN_ASR_INT8_ENCODER != 0`.
-    #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "int8-encoder",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     pub conv_out_int8: (Vec<i8>, Vec<f32>),
-    #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "int8-encoder",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     pub proj1_int8: (Vec<i8>, Vec<f32>),
-    #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "int8-encoder",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     pub proj2_int8: (Vec<i8>, Vec<f32>),
 }
 
@@ -210,9 +246,8 @@ fn load_bf16_as_f32(ms: &MultiSafetensors, name: &str) -> Option<Vec<f32>> {
     let mut off = 0usize;
     while off < n {
         let this = (n - off).min(scratch.len());
-        let bytes = unsafe {
-            std::slice::from_raw_parts_mut(scratch.as_mut_ptr() as *mut u8, this * 2)
-        };
+        let bytes =
+            unsafe { std::slice::from_raw_parts_mut(scratch.as_mut_ptr() as *mut u8, this * 2) };
         if !shard.read_tensor_bytes(meta, off * 2, bytes) {
             eprintln!("encoder: pread failed for {}", name);
             return None;
@@ -246,23 +281,51 @@ fn load_enc_layer(ms: &MultiSafetensors, i: usize) -> Option<EncLayer> {
         fc2_bias: load_f32(ms, &format!("{}.fc2.bias", lp))?,
         ffn_norm_weight: load_f32(ms, &format!("{}.final_layer_norm.weight", lp))?,
         ffn_norm_bias: load_f32(ms, &format!("{}.final_layer_norm.bias", lp))?,
-        #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+        #[cfg(all(
+            feature = "int8-encoder",
+            not(feature = "blas"),
+            target_arch = "aarch64"
+        ))]
         wq_int8: (Vec::new(), Vec::new()),
-        #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+        #[cfg(all(
+            feature = "int8-encoder",
+            not(feature = "blas"),
+            target_arch = "aarch64"
+        ))]
         wk_int8: (Vec::new(), Vec::new()),
-        #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+        #[cfg(all(
+            feature = "int8-encoder",
+            not(feature = "blas"),
+            target_arch = "aarch64"
+        ))]
         wv_int8: (Vec::new(), Vec::new()),
-        #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+        #[cfg(all(
+            feature = "int8-encoder",
+            not(feature = "blas"),
+            target_arch = "aarch64"
+        ))]
         wo_int8: (Vec::new(), Vec::new()),
-        #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+        #[cfg(all(
+            feature = "int8-encoder",
+            not(feature = "blas"),
+            target_arch = "aarch64"
+        ))]
         fc1_int8: (Vec::new(), Vec::new()),
-        #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+        #[cfg(all(
+            feature = "int8-encoder",
+            not(feature = "blas"),
+            target_arch = "aarch64"
+        ))]
         fc2_int8: (Vec::new(), Vec::new()),
     };
     // R13-Android stage 2: quantize the attention/FFN weight GEMMs to INT8
     // per-row at load, only when the feature is compiled AND the runtime switch
     // is on. `out_dim` is the bias length; `in_dim` is the remaining stride.
-    #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+    #[cfg(all(
+        feature = "int8-encoder",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     if kernels::int8_encoder_enabled() {
         let q = |w: &[f32], out_dim: usize| {
             kernels::quantize_f32_weights_to_int8(w, out_dim, w.len() / out_dim)
@@ -281,12 +344,23 @@ fn load_enc_layer(ms: &MultiSafetensors, i: usize) -> Option<EncLayer> {
 /// R13-Android stage 2: quantize `x` per-row and run the INT8 encoder GEMM
 /// `y = x @ Wᵀ (+ bias)`, optionally accumulating in place. `xq`/`xs` are reused
 /// scratch buffers grown on demand. Only compiled on the no-BLAS aarch64 build.
-#[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "int8-encoder",
+    not(feature = "blas"),
+    target_arch = "aarch64"
+))]
 #[allow(clippy::too_many_arguments)]
 unsafe fn enc_int8_linear(
-    y: &mut [f32], x: &[f32], w: &(Vec<i8>, Vec<f32>), bias: Option<&[f32]>,
-    seq_len: usize, in_dim: usize, out_dim: usize, accumulate: bool,
-    xq: &mut Vec<i8>, xs: &mut Vec<f32>,
+    y: &mut [f32],
+    x: &[f32],
+    w: &(Vec<i8>, Vec<f32>),
+    bias: Option<&[f32]>,
+    seq_len: usize,
+    in_dim: usize,
+    out_dim: usize,
+    accumulate: bool,
+    xq: &mut Vec<i8>,
+    xs: &mut Vec<f32>,
 ) {
     if xq.len() < seq_len * in_dim {
         xq.resize(seq_len * in_dim, 0);
@@ -294,10 +368,24 @@ unsafe fn enc_int8_linear(
     if xs.len() < seq_len {
         xs.resize(seq_len, 0.0);
     }
-    kernels::quantize_rows_into(&mut xq[..seq_len * in_dim], &mut xs[..seq_len], x, seq_len, in_dim);
+    kernels::quantize_rows_into(
+        &mut xq[..seq_len * in_dim],
+        &mut xs[..seq_len],
+        x,
+        seq_len,
+        in_dim,
+    );
     kernels::int8_encoder_matvec(
-        y, &xq[..seq_len * in_dim], &xs[..seq_len],
-        w.0.as_ptr(), w.1.as_ptr(), bias, in_dim, out_dim, seq_len, accumulate,
+        y,
+        &xq[..seq_len * in_dim],
+        &xs[..seq_len],
+        w.0.as_ptr(),
+        w.1.as_ptr(),
+        bias,
+        in_dim,
+        out_dim,
+        seq_len,
+        accumulate,
     );
 }
 
@@ -309,7 +397,11 @@ impl Encoder {
     /// it is the ground-truth "encoder INT8 active" signal (not merely the env
     /// switch). Always `false` on desktop/BLAS/non-aarch64 builds by construction.
     pub fn int8_encoder_active(&self) -> bool {
-        #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+        #[cfg(all(
+            feature = "int8-encoder",
+            not(feature = "blas"),
+            target_arch = "aarch64"
+        ))]
         {
             return !self.conv_out_int8.0.is_empty();
         }
@@ -369,16 +461,36 @@ impl Encoder {
         // R13-Android stage 2: quantize conv_out / proj1 / proj2 GEMM weights to
         // INT8 per-row at load, only when compiled AND the runtime switch is on.
         // conv_out has no bias, so its out_dim is d_model (in_dim = 480*h3).
-        #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+        #[cfg(all(
+            feature = "int8-encoder",
+            not(feature = "blas"),
+            target_arch = "aarch64"
+        ))]
         let (conv_out_int8, proj1_int8, proj2_int8) = if kernels::int8_encoder_enabled() {
             let d = cfg.enc_d_model;
             (
-                kernels::quantize_f32_weights_to_int8(&conv_out_weight, d, conv_out_weight.len() / d),
-                kernels::quantize_f32_weights_to_int8(&proj1_weight, proj1_bias.len(), proj1_weight.len() / proj1_bias.len()),
-                kernels::quantize_f32_weights_to_int8(&proj2_weight, proj2_bias.len(), proj2_weight.len() / proj2_bias.len()),
+                kernels::quantize_f32_weights_to_int8(
+                    &conv_out_weight,
+                    d,
+                    conv_out_weight.len() / d,
+                ),
+                kernels::quantize_f32_weights_to_int8(
+                    &proj1_weight,
+                    proj1_bias.len(),
+                    proj1_weight.len() / proj1_bias.len(),
+                ),
+                kernels::quantize_f32_weights_to_int8(
+                    &proj2_weight,
+                    proj2_bias.len(),
+                    proj2_weight.len() / proj2_bias.len(),
+                ),
             )
         } else {
-            ((Vec::new(), Vec::new()), (Vec::new(), Vec::new()), (Vec::new(), Vec::new()))
+            (
+                (Vec::new(), Vec::new()),
+                (Vec::new(), Vec::new()),
+                (Vec::new(), Vec::new()),
+            )
         };
 
         Some(Encoder {
@@ -396,11 +508,23 @@ impl Encoder {
             proj1_bias,
             proj2_weight,
             proj2_bias,
-            #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+            #[cfg(all(
+                feature = "int8-encoder",
+                not(feature = "blas"),
+                target_arch = "aarch64"
+            ))]
             conv_out_int8,
-            #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+            #[cfg(all(
+                feature = "int8-encoder",
+                not(feature = "blas"),
+                target_arch = "aarch64"
+            ))]
             proj1_int8,
-            #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+            #[cfg(all(
+                feature = "int8-encoder",
+                not(feature = "blas"),
+                target_arch = "aarch64"
+            ))]
             proj2_int8,
         })
     }
@@ -428,16 +552,31 @@ impl Encoder {
         // Desktop/BLAS builds never compile this branch (stays on the f32
         // `linear`/`linear_accumulate` path). Activation×activation attention
         // GEMMs stay f32 either way.
-        #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+        #[cfg(all(
+            feature = "int8-encoder",
+            not(feature = "blas"),
+            target_arch = "aarch64"
+        ))]
         let use_int8 = kernels::int8_encoder_enabled()
-            && self.layers.first().map_or(false, |l| !l.wq_int8.0.is_empty())
+            && self
+                .layers
+                .first()
+                .map_or(false, |l| !l.wq_int8.0.is_empty())
             && !self.conv_out_int8.0.is_empty();
-        #[cfg(not(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64")))]
+        #[cfg(not(all(
+            feature = "int8-encoder",
+            not(feature = "blas"),
+            target_arch = "aarch64"
+        )))]
         let use_int8 = false;
 
         // Reused per-position INT8 activation scratch (grown on demand). Only
         // allocated for the INT8 encoder path.
-        #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+        #[cfg(all(
+            feature = "int8-encoder",
+            not(feature = "blas"),
+            target_arch = "aarch64"
+        ))]
         let (mut xq_buf, mut xs_buf): (Vec<i8>, Vec<f32>) = (Vec::new(), Vec::new());
 
         // Determine tokens per full chunk
@@ -575,8 +714,12 @@ impl Encoder {
                 kernels::parallel_for_dynamic(CONV_HIDDEN, move |ch| {
                     // SAFETY: items write disjoint dst columns and read only
                     // their own [ch*h3*w3, (ch+1)*h3*w3) span of c3.
-                    let c3 = unsafe { std::slice::from_raw_parts(c3_ptr as *const f32, CONV_HIDDEN * h3 * w3) };
-                    let reshaped = unsafe { std::slice::from_raw_parts_mut(dst_ptr as *mut f32, w3 * conv_proj_dim) };
+                    let c3 = unsafe {
+                        std::slice::from_raw_parts(c3_ptr as *const f32, CONV_HIDDEN * h3 * w3)
+                    };
+                    let reshaped = unsafe {
+                        std::slice::from_raw_parts_mut(dst_ptr as *mut f32, w3 * conv_proj_dim)
+                    };
                     for f in 0..h3 {
                         let src_off = ch * h3 * w3 + f * w3;
                         let dst_col = ch * h3 + f;
@@ -600,11 +743,23 @@ impl Encoder {
             // Project: [w3, 7680] -> [w3, d_model]
             let projected = &mut bufs.x[token_offset * d_model..(token_offset + w3) * d_model];
             if use_int8 {
-                #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+                #[cfg(all(
+                    feature = "int8-encoder",
+                    not(feature = "blas"),
+                    target_arch = "aarch64"
+                ))]
                 unsafe {
                     enc_int8_linear(
-                        projected, reshaped, &self.conv_out_int8, None,
-                        w3, conv_proj_dim, d_model, false, &mut xq_buf, &mut xs_buf,
+                        projected,
+                        reshaped,
+                        &self.conv_out_int8,
+                        None,
+                        w3,
+                        conv_proj_dim,
+                        d_model,
+                        false,
+                        &mut xq_buf,
+                        &mut xs_buf,
                     );
                 }
             } else {
@@ -657,19 +812,47 @@ impl Encoder {
             );
 
             if use_int8 {
-                #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+                #[cfg(all(
+                    feature = "int8-encoder",
+                    not(feature = "blas"),
+                    target_arch = "aarch64"
+                ))]
                 unsafe {
                     enc_int8_linear(
-                        &mut bufs.q[..td], &bufs.x_norm[..td], &layer.wq_int8, Some(&layer.wq_bias),
-                        total_tokens, d_model, d_model, false, &mut xq_buf, &mut xs_buf,
+                        &mut bufs.q[..td],
+                        &bufs.x_norm[..td],
+                        &layer.wq_int8,
+                        Some(&layer.wq_bias),
+                        total_tokens,
+                        d_model,
+                        d_model,
+                        false,
+                        &mut xq_buf,
+                        &mut xs_buf,
                     );
                     enc_int8_linear(
-                        &mut bufs.k[..td], &bufs.x_norm[..td], &layer.wk_int8, Some(&layer.wk_bias),
-                        total_tokens, d_model, d_model, false, &mut xq_buf, &mut xs_buf,
+                        &mut bufs.k[..td],
+                        &bufs.x_norm[..td],
+                        &layer.wk_int8,
+                        Some(&layer.wk_bias),
+                        total_tokens,
+                        d_model,
+                        d_model,
+                        false,
+                        &mut xq_buf,
+                        &mut xs_buf,
                     );
                     enc_int8_linear(
-                        &mut bufs.v[..td], &bufs.x_norm[..td], &layer.wv_int8, Some(&layer.wv_bias),
-                        total_tokens, d_model, d_model, false, &mut xq_buf, &mut xs_buf,
+                        &mut bufs.v[..td],
+                        &bufs.x_norm[..td],
+                        &layer.wv_int8,
+                        Some(&layer.wv_bias),
+                        total_tokens,
+                        d_model,
+                        d_model,
+                        false,
+                        &mut xq_buf,
+                        &mut xs_buf,
                     );
                 }
             } else {
@@ -717,11 +900,23 @@ impl Encoder {
 
             // Fused: x += wo_bias + attn_out @ wo_weight.T
             if use_int8 {
-                #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+                #[cfg(all(
+                    feature = "int8-encoder",
+                    not(feature = "blas"),
+                    target_arch = "aarch64"
+                ))]
                 unsafe {
                     enc_int8_linear(
-                        &mut bufs.x[..td], &bufs.attn_out[..td], &layer.wo_int8, Some(&layer.wo_bias),
-                        total_tokens, d_model, d_model, true, &mut xq_buf, &mut xs_buf,
+                        &mut bufs.x[..td],
+                        &bufs.attn_out[..td],
+                        &layer.wo_int8,
+                        Some(&layer.wo_bias),
+                        total_tokens,
+                        d_model,
+                        d_model,
+                        true,
+                        &mut xq_buf,
+                        &mut xs_buf,
                     );
                 }
             } else {
@@ -748,11 +943,23 @@ impl Encoder {
             );
 
             if use_int8 {
-                #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+                #[cfg(all(
+                    feature = "int8-encoder",
+                    not(feature = "blas"),
+                    target_arch = "aarch64"
+                ))]
                 unsafe {
                     enc_int8_linear(
-                        &mut bufs.ffn_mid[..tf], &bufs.x_norm[..td], &layer.fc1_int8, Some(&layer.fc1_bias),
-                        total_tokens, d_model, ffn_dim, false, &mut xq_buf, &mut xs_buf,
+                        &mut bufs.ffn_mid[..tf],
+                        &bufs.x_norm[..td],
+                        &layer.fc1_int8,
+                        Some(&layer.fc1_bias),
+                        total_tokens,
+                        d_model,
+                        ffn_dim,
+                        false,
+                        &mut xq_buf,
+                        &mut xs_buf,
                     );
                 }
             } else {
@@ -769,11 +976,23 @@ impl Encoder {
             kernels::gelu(&mut bufs.ffn_mid[..tf], tf);
             // Fused: x += fc2_bias + ffn_mid @ fc2_weight.T
             if use_int8 {
-                #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+                #[cfg(all(
+                    feature = "int8-encoder",
+                    not(feature = "blas"),
+                    target_arch = "aarch64"
+                ))]
                 unsafe {
                     enc_int8_linear(
-                        &mut bufs.x[..td], &bufs.ffn_mid[..tf], &layer.fc2_int8, Some(&layer.fc2_bias),
-                        total_tokens, ffn_dim, d_model, true, &mut xq_buf, &mut xs_buf,
+                        &mut bufs.x[..td],
+                        &bufs.ffn_mid[..tf],
+                        &layer.fc2_int8,
+                        Some(&layer.fc2_bias),
+                        total_tokens,
+                        ffn_dim,
+                        d_model,
+                        true,
+                        &mut xq_buf,
+                        &mut xs_buf,
                     );
                 }
             } else {
@@ -803,11 +1022,23 @@ impl Encoder {
 
         // Projection: proj1 (GELU) -> proj2 (reuse activation buffers)
         if use_int8 {
-            #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+            #[cfg(all(
+                feature = "int8-encoder",
+                not(feature = "blas"),
+                target_arch = "aarch64"
+            ))]
             unsafe {
                 enc_int8_linear(
-                    &mut bufs.q[..td], &bufs.x[..td], &self.proj1_int8, Some(&self.proj1_bias),
-                    total_tokens, d_model, d_model, false, &mut xq_buf, &mut xs_buf,
+                    &mut bufs.q[..td],
+                    &bufs.x[..td],
+                    &self.proj1_int8,
+                    Some(&self.proj1_bias),
+                    total_tokens,
+                    d_model,
+                    d_model,
+                    false,
+                    &mut xq_buf,
+                    &mut xs_buf,
                 );
             }
         } else {
@@ -825,11 +1056,23 @@ impl Encoder {
 
         let mut enc_output = vec![0.0f32; total_tokens * output_dim];
         if use_int8 {
-            #[cfg(all(feature = "int8-encoder", not(feature = "blas"), target_arch = "aarch64"))]
+            #[cfg(all(
+                feature = "int8-encoder",
+                not(feature = "blas"),
+                target_arch = "aarch64"
+            ))]
             unsafe {
                 enc_int8_linear(
-                    &mut enc_output, &bufs.q[..td], &self.proj2_int8, Some(&self.proj2_bias),
-                    total_tokens, d_model, output_dim, false, &mut xq_buf, &mut xs_buf,
+                    &mut enc_output,
+                    &bufs.q[..td],
+                    &self.proj2_int8,
+                    Some(&self.proj2_bias),
+                    total_tokens,
+                    d_model,
+                    output_dim,
+                    false,
+                    &mut xq_buf,
+                    &mut xs_buf,
                 );
             }
         } else {

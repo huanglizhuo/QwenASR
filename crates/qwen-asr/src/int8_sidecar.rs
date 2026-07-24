@@ -59,7 +59,10 @@ pub enum WeightBuf<T: Copy> {
     Owned(Vec<T>),
     /// Points into a `SidecarMmap` that outlives this buffer (kept alive in the
     /// same `Decoder`). Never freed here.
-    Mapped { ptr: *const T, len: usize },
+    Mapped {
+        ptr: *const T,
+        len: usize,
+    },
 }
 
 impl<T: Copy> WeightBuf<T> {
@@ -82,9 +85,7 @@ impl<T: Copy> std::ops::Deref for WeightBuf<T> {
             WeightBuf::Owned(v) => v.as_slice(),
             // Safety: `ptr`/`len` describe a live, immutable range inside the
             // owning `SidecarMmap`, which outlives every `WeightBuf::Mapped`.
-            WeightBuf::Mapped { ptr, len } => unsafe {
-                std::slice::from_raw_parts(*ptr, *len)
-            },
+            WeightBuf::Mapped { ptr, len } => unsafe { std::slice::from_raw_parts(*ptr, *len) },
         }
     }
 }

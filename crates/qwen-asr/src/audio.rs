@@ -344,8 +344,8 @@ pub fn mel_spectrogram(samples: &[f32]) -> Option<(Vec<f32>, usize)> {
         let window = HANN_WINDOW.get_or_init(|| {
             let mut w = vec![0.0f32; WINDOW_SIZE];
             for (i, w_val) in w.iter_mut().enumerate().take(WINDOW_SIZE) {
-                *w_val =
-                    0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / WINDOW_SIZE as f32).cos());
+                *w_val = 0.5
+                    * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / WINDOW_SIZE as f32).cos());
             }
             w
         });

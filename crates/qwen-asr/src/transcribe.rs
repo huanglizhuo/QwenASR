@@ -529,7 +529,13 @@ fn decode_segment_core(
     let tok_emb = weights.decoder.tok_embeddings_bf16;
 
     let pre = prefill_segment_core(
-        weights, kv_cache, rope_cache, dec_bufs, enc_bufs, samples, past_tokens,
+        weights,
+        kv_cache,
+        rope_cache,
+        dec_bufs,
+        enc_bufs,
+        samples,
+        past_tokens,
     )?;
 
     // Autoregressive decode (the first token comes from the last prefill
@@ -754,7 +760,8 @@ fn decode_segment_core(
 /// segment paths so both update `ctx` identically.
 fn apply_seg_core(ctx: &mut QwenCtx, core: &SegCore) {
     if ctx.force_language.is_none() {
-        if let Some(language) = parse_language_header(&String::from_utf8_lossy(&core.header_bytes)) {
+        if let Some(language) = parse_language_header(&String::from_utf8_lossy(&core.header_bytes))
+        {
             ctx.detected_language = Some(language);
         }
     }
@@ -909,13 +916,18 @@ pub fn transcribe_segmented(ctx: &mut QwenCtx, samples: &[f32]) -> Option<Vec<Tr
     }
 
     let mut segments: Vec<TranscriptSegment> = Vec::new();
-    transcribe_splits(ctx, samples, &tokenizer, &mut |_, seg_start, seg_end, text| {
-        segments.push(TranscriptSegment {
-            start_ms: samples_to_ms(seg_start),
-            end_ms: samples_to_ms(seg_end),
-            text,
-        });
-    });
+    transcribe_splits(
+        ctx,
+        samples,
+        &tokenizer,
+        &mut |_, seg_start, seg_end, text| {
+            segments.push(TranscriptSegment {
+                start_ms: samples_to_ms(seg_start),
+                end_ms: samples_to_ms(seg_end),
+                text,
+            });
+        },
+    );
 
     Some(segments)
 }
@@ -1045,78 +1057,83 @@ pub fn transcribe_full(
     let mut all_cues: Vec<Cue> = Vec::new();
     let mut text = String::new();
 
-    transcribe_splits(ctx, samples, &tokenizer, &mut |ctx, seg_start, seg_end, seg_text| {
-        let start_ms = samples_to_ms(seg_start);
-        let end_ms = samples_to_ms(seg_end);
+    transcribe_splits(
+        ctx,
+        samples,
+        &tokenizer,
+        &mut |ctx, seg_start, seg_end, seg_text| {
+            let start_ms = samples_to_ms(seg_start);
+            let end_ms = samples_to_ms(seg_end);
 
-        if !text.is_empty() {
-            let prev = *text.as_bytes().last().unwrap_or(&0);
-            let next = *seg_text.as_bytes().first().unwrap_or(&0);
-            if should_insert_boundary_space(prev, next) {
-                text.push(' ');
-            }
-        }
-        text.push_str(&seg_text);
-
-        let language = ctx
-            .force_language
-            .as_deref()
-            .or(ctx.detected_language.as_deref())
-            .unwrap_or("English")
-            .to_string();
-
-        let mut words = Vec::new();
-        let mut cue_words = Vec::new();
-        if let Some(aligner_ctx) = aligner.as_deref_mut() {
-            if let Some(aligned) = align::forced_align(
-                aligner_ctx,
-                &samples[seg_start..seg_end],
-                &seg_text,
-                &language,
-            ) {
-                for word in aligned {
-                    let word_start = start_ms + word.start_ms.max(0.0).round() as u64;
-                    let word_end = start_ms + word.end_ms.max(0.0).round() as u64;
-                    cue_words.push(align::AlignResult {
-                        text: word.text.clone(),
-                        start_ms: word_start as f32,
-                        end_ms: word_end as f32,
-                    });
-                    words.push(WordTimestamp {
-                        word: word.text,
-                        start_ms: word_start,
-                        end_ms: word_end,
-                    });
+            if !text.is_empty() {
+                let prev = *text.as_bytes().last().unwrap_or(&0);
+                let next = *seg_text.as_bytes().first().unwrap_or(&0);
+                if should_insert_boundary_space(prev, next) {
+                    text.push(' ');
                 }
             }
-        }
+            text.push_str(&seg_text);
 
-        // Compute this segment's cues exactly once; the on_segment callback
-        // (incremental SRT/VTT writing) and the final `vtt` field both see
-        // the same cue list, keeping streamed and one-shot output identical.
-        let seg_cues = if cue_words.is_empty() {
-            vec![segment_to_cue(&TranscriptSegment {
+            let language = ctx
+                .force_language
+                .as_deref()
+                .or(ctx.detected_language.as_deref())
+                .unwrap_or("English")
+                .to_string();
+
+            let mut words = Vec::new();
+            let mut cue_words = Vec::new();
+            if let Some(aligner_ctx) = aligner.as_deref_mut() {
+                if let Some(aligned) = align::forced_align(
+                    aligner_ctx,
+                    &samples[seg_start..seg_end],
+                    &seg_text,
+                    &language,
+                ) {
+                    for word in aligned {
+                        let word_start = start_ms + word.start_ms.max(0.0).round() as u64;
+                        let word_end = start_ms + word.end_ms.max(0.0).round() as u64;
+                        cue_words.push(align::AlignResult {
+                            text: word.text.clone(),
+                            start_ms: word_start as f32,
+                            end_ms: word_end as f32,
+                        });
+                        words.push(WordTimestamp {
+                            word: word.text,
+                            start_ms: word_start,
+                            end_ms: word_end,
+                        });
+                    }
+                }
+            }
+
+            // Compute this segment's cues exactly once; the on_segment callback
+            // (incremental SRT/VTT writing) and the final `vtt` field both see
+            // the same cue list, keeping streamed and one-shot output identical.
+            let seg_cues = if cue_words.is_empty() {
+                vec![segment_to_cue(&TranscriptSegment {
+                    start_ms,
+                    end_ms,
+                    text: seg_text.clone(),
+                })]
+            } else {
+                group_words_to_cues(&cue_words, audio_end_ms)
+            };
+
+            let segment = SegmentResult {
                 start_ms,
                 end_ms,
-                text: seg_text.clone(),
-            })]
-        } else {
-            group_words_to_cues(&cue_words, audio_end_ms)
-        };
+                text: seg_text,
+                words,
+            };
 
-        let segment = SegmentResult {
-            start_ms,
-            end_ms,
-            text: seg_text,
-            words,
-        };
-
-        if let Some(callback) = on_segment.as_deref_mut() {
-            callback(&segment, &seg_cues);
-        }
-        all_cues.extend(seg_cues);
-        segments.push(segment);
-    });
+            if let Some(callback) = on_segment.as_deref_mut() {
+                callback(&segment, &seg_cues);
+            }
+            all_cues.extend(seg_cues);
+            segments.push(segment);
+        },
+    );
 
     let language = ctx
         .force_language
@@ -1761,7 +1778,9 @@ fn collect_splits_lockstep(
                 } else {
                     rx.try_recv().ok()
                 };
-                let Some((seg_idx, session, pre)) = msg else { break };
+                let Some((seg_idx, session, pre)) = msg else {
+                    break;
+                };
                 outstanding -= 1;
                 match pre {
                     Some(pre) => ready.push_back(LiveSeg {
@@ -1815,7 +1834,12 @@ fn collect_splits_lockstep(
                     })
                     .collect();
                 let b = batch.len();
-                decoder::decoder_forward_batched(weights.decoder, &cfg, &mut batch, &mut tokens[..b]);
+                decoder::decoder_forward_batched(
+                    weights.decoder,
+                    &cfg,
+                    &mut batch,
+                    &mut tokens[..b],
+                );
             }
             decode_ms_total += elapsed_ms(step_t0);
 
@@ -2024,10 +2048,7 @@ fn stream_decode_tail(
                 // prev_tail[cursor]); drafts predict the following positions.
                 let cursor = chunk_tokens.len();
                 let ndraft = if drafts_live {
-                    prev_tail
-                        .len()
-                        .saturating_sub(cursor + 1)
-                        .min(K_MAX - 1)
+                    prev_tail.len().saturating_sub(cursor + 1).min(K_MAX - 1)
                 } else {
                     0
                 };
@@ -2162,10 +2183,7 @@ fn stream_decode_tail(
     }
 
     let mut lcp = 0usize;
-    while lcp < prev_tail.len()
-        && lcp < chunk_tokens.len()
-        && prev_tail[lcp] == chunk_tokens[lcp]
-    {
+    while lcp < prev_tail.len() && lcp < chunk_tokens.len() && prev_tail[lcp] == chunk_tokens[lcp] {
         lcp += 1;
     }
     stats.committed = chunk_tokens.len();
@@ -2267,7 +2285,8 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
             let (mel, mel_frames) =
                 audio::mel_spectrogram(&audio_samples[ws..ws + enc_window_samples])?;
             let (win_enc, win_seq) =
-                ctx.model.encoder
+                ctx.model
+                    .encoder
                     .forward(&cfg, &mel, mel_frames, Some(&mut ctx.enc_bufs))?;
             let row_keys = prefill_embed_keys(&win_enc, win_seq, dim);
             enc_cached_seq_total += win_seq;
@@ -2288,7 +2307,8 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
                 audio::mel_spectrogram(&audio_samples[full_end..audio_cursor])
             {
                 if let Some((enc, seq)) =
-                    ctx.model.encoder
+                    ctx.model
+                        .encoder
                         .forward(&cfg, &mel, mel_frames, Some(&mut ctx.enc_bufs))
                 {
                     partial_seq = seq;
@@ -2845,7 +2865,8 @@ pub fn stream_push_audio(
             let ws = (state.enc_cache_base_windows + state.enc_cache.len()) * enc_window_samples;
             let (mel, mel_frames) = audio::mel_spectrogram(&samples[ws..ws + enc_window_samples])?;
             let (win_enc, win_seq) =
-                ctx.model.encoder
+                ctx.model
+                    .encoder
                     .forward(&cfg, &mel, mel_frames, Some(&mut ctx.enc_bufs))?;
             let row_keys = prefill_embed_keys(&win_enc, win_seq, dim);
             state.enc_cached_seq_total += win_seq;
@@ -2873,7 +2894,8 @@ pub fn stream_push_audio(
                 audio::mel_spectrogram(&samples[full_end..state.audio_cursor])
             {
                 if let Some((enc, seq)) =
-                    ctx.model.encoder
+                    ctx.model
+                        .encoder
                         .forward(&cfg, &mel, mel_frames, Some(&mut ctx.enc_bufs))
                 {
                     partial_seq = seq;

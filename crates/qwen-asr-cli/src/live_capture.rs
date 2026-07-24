@@ -145,13 +145,7 @@ fn get_input_channel_count(device_id: AudioDeviceID) -> u32 {
 
     let mut data_size: u32 = 0;
     let status = unsafe {
-        AudioObjectGetPropertyDataSize(
-            device_id,
-            &property_address,
-            0,
-            ptr::null(),
-            &mut data_size,
-        )
+        AudioObjectGetPropertyDataSize(device_id, &property_address, 0, ptr::null(), &mut data_size)
     };
     if status != 0 || data_size == 0 {
         return 0;
@@ -240,7 +234,11 @@ pub fn print_devices() {
 
     eprintln!("Audio input devices:\n");
     for d in &devices {
-        let marker = if Some(d.id) == default_id { " (default)" } else { "" };
+        let marker = if Some(d.id) == default_id {
+            " (default)"
+        } else {
+            ""
+        };
         eprintln!("  {:30} {} ch{}", d.name, d.input_channels, marker);
     }
     eprintln!();
@@ -384,7 +382,9 @@ pub fn start_capture(
     let stream_format = AudioStreamBasicDescription {
         mSampleRate: sample_rate,
         mFormatID: kAudioFormatLinearPCM,
-        mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked | kAudioFormatFlagIsNonInterleaved,
+        mFormatFlags: kAudioFormatFlagIsFloat
+            | kAudioFormatFlagIsPacked
+            | kAudioFormatFlagIsNonInterleaved,
         mBytesPerPacket: 4,
         mFramesPerPacket: 1,
         mBytesPerFrame: 4,
@@ -410,10 +410,7 @@ pub fn start_capture(
     // Create channel and state
     let (tx, rx) = mpsc::channel::<Vec<f32>>();
 
-    let state = Box::new(CaptureCallbackState {
-        tx,
-        audio_unit,
-    });
+    let state = Box::new(CaptureCallbackState { tx, audio_unit });
 
     // Set input callback
     let callback_struct = AURenderCallbackStruct {

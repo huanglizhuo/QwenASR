@@ -9,9 +9,8 @@ fn init_gpt2_mapping() -> ([i32; 256], [i32; 512]) {
 
     let mut n = 0i32;
     for b in 0..256i32 {
-        let is_normal = (33..=126).contains(&b)
-            || (161..=172).contains(&b)
-            || (174..=255).contains(&b);
+        let is_normal =
+            (33..=126).contains(&b) || (161..=172).contains(&b) || (174..=255).contains(&b);
 
         if is_normal {
             byte_to_unicode[b as usize] = b;
@@ -35,10 +34,7 @@ fn utf8_encode_cp(cp: u32) -> Vec<u8> {
     if cp < 0x80 {
         vec![cp as u8]
     } else if cp < 0x800 {
-        vec![
-            (0xC0 | (cp >> 6)) as u8,
-            (0x80 | (cp & 0x3F)) as u8,
-        ]
+        vec![(0xC0 | (cp >> 6)) as u8, (0x80 | (cp & 0x3F)) as u8]
     } else {
         vec![
             (0xE0 | (cp >> 12)) as u8,
@@ -89,11 +85,17 @@ fn text_to_bpe_unicode(text: &str, byte_to_unicode: &[i32; 256]) -> String {
 }
 
 fn utf8_char_len(c: u8) -> usize {
-    if c & 0x80 == 0 { 1 }
-    else if c & 0xE0 == 0xC0 { 2 }
-    else if c & 0xF0 == 0xE0 { 3 }
-    else if c & 0xF8 == 0xF0 { 4 }
-    else { 1 }
+    if c & 0x80 == 0 {
+        1
+    } else if c & 0xE0 == 0xC0 {
+        2
+    } else if c & 0xF0 == 0xE0 {
+        3
+    } else if c & 0xF8 == 0xF0 {
+        4
+    } else {
+        1
+    }
 }
 
 fn split_utf8_symbols(s: &str) -> Vec<String> {
@@ -469,10 +471,14 @@ mod tests {
         let decoded_b = decode_gpt2_token_bytes(&token_b, &utb);
 
         // Each part alone is NOT valid UTF-8
-        assert!(String::from_utf8(decoded_a.clone()).is_err(),
-            "Part 1 alone should NOT be valid UTF-8");
-        assert!(String::from_utf8(decoded_b.clone()).is_err(),
-            "Part 2 alone should NOT be valid UTF-8");
+        assert!(
+            String::from_utf8(decoded_a.clone()).is_err(),
+            "Part 1 alone should NOT be valid UTF-8"
+        );
+        assert!(
+            String::from_utf8(decoded_b.clone()).is_err(),
+            "Part 2 alone should NOT be valid UTF-8"
+        );
 
         // But concatenated they form valid UTF-8 for "地"
         let mut combined = decoded_a;
@@ -490,10 +496,8 @@ mod tests {
         let part1: &[u8] = &[0xC3];
         let part2: &[u8] = &[0xA9];
 
-        let decoded_1 = decode_gpt2_token_bytes(
-            &bytes_to_gpt2_token(part1, &btu), &utb);
-        let decoded_2 = decode_gpt2_token_bytes(
-            &bytes_to_gpt2_token(part2, &btu), &utb);
+        let decoded_1 = decode_gpt2_token_bytes(&bytes_to_gpt2_token(part1, &btu), &utb);
+        let decoded_2 = decode_gpt2_token_bytes(&bytes_to_gpt2_token(part2, &btu), &utb);
 
         assert!(String::from_utf8(decoded_1.clone()).is_err());
         assert!(String::from_utf8(decoded_2.clone()).is_err());
@@ -512,10 +516,8 @@ mod tests {
         let part1: &[u8] = &[0xF0, 0x9F];
         let part2: &[u8] = &[0xA6, 0x80];
 
-        let decoded_1 = decode_gpt2_token_bytes(
-            &bytes_to_gpt2_token(part1, &btu), &utb);
-        let decoded_2 = decode_gpt2_token_bytes(
-            &bytes_to_gpt2_token(part2, &btu), &utb);
+        let decoded_1 = decode_gpt2_token_bytes(&bytes_to_gpt2_token(part1, &btu), &utb);
+        let decoded_2 = decode_gpt2_token_bytes(&bytes_to_gpt2_token(part2, &btu), &utb);
 
         assert!(String::from_utf8(decoded_1.clone()).is_err());
         assert!(String::from_utf8(decoded_2.clone()).is_err());
@@ -560,11 +562,7 @@ mod tests {
 
         // "地址" = [E5 9C B0] [E5 9D 80]
         // Split: token_a=[E5,9C], token_b=[B0,E5], token_c=[9D,80]
-        let splits: &[&[u8]] = &[
-            &[0xE5, 0x9C],
-            &[0xB0, 0xE5],
-            &[0x9D, 0x80],
-        ];
+        let splits: &[&[u8]] = &[&[0xE5, 0x9C], &[0xB0, 0xE5], &[0x9D, 0x80]];
 
         // Old approach: decode each token to String independently (lossy)
         let mut lossy_result = String::new();
@@ -574,8 +572,11 @@ mod tests {
             lossy_result.push_str(&String::from_utf8_lossy(&decoded));
         }
         // Lossy approach produces replacement characters
-        assert!(lossy_result.contains('\u{FFFD}'),
-            "Lossy per-token decode SHOULD produce U+FFFD, got: {:?}", lossy_result);
+        assert!(
+            lossy_result.contains('\u{FFFD}'),
+            "Lossy per-token decode SHOULD produce U+FFFD, got: {:?}",
+            lossy_result
+        );
         assert_ne!(lossy_result, "地址");
 
         // New approach: accumulate bytes, convert once
@@ -601,13 +602,19 @@ mod tests {
         // Every byte value 0..255 must survive a round-trip
         for b in 0u8..=255 {
             let cp = btu[b as usize];
-            assert!(cp >= 0 && cp < 512,
-                "byte {:#04x} mapped to out-of-range codepoint {}", b, cp);
+            assert!(
+                cp >= 0 && cp < 512,
+                "byte {:#04x} mapped to out-of-range codepoint {}",
+                b,
+                cp
+            );
 
             let recovered = utb[cp as usize];
-            assert_eq!(recovered, b as i32,
+            assert_eq!(
+                recovered, b as i32,
                 "byte {:#04x} → cp {} → byte {:#04x} (expected {:#04x})",
-                b, cp, recovered, b);
+                b, cp, recovered, b
+            );
         }
     }
 
@@ -619,8 +626,12 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for b in 0..256 {
             let cp = btu[b];
-            assert!(seen.insert(cp),
-                "byte {} and another byte both map to codepoint {}", b, cp);
+            assert!(
+                seen.insert(cp),
+                "byte {} and another byte both map to codepoint {}",
+                b,
+                cp
+            );
         }
         assert_eq!(seen.len(), 256);
     }

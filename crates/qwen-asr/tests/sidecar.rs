@@ -94,7 +94,11 @@ fn sidecar_roundtrip_and_invalidation() {
         c.decoder._int8_sidecar.is_none(),
         "corrupted magic must trigger a rebuild, never a stale mmap read"
     );
-    assert_eq!(snapshot(&c), snap_a, "rebuild must reproduce identical weights");
+    assert_eq!(
+        snapshot(&c),
+        snap_a,
+        "rebuild must reproduce identical weights"
+    );
 
     // The rebuild rewrote a valid sidecar -> warm mmap works again.
     let d = QwenModel::load(dir).expect("re-warm load");

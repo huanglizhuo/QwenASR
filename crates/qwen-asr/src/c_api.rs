@@ -253,12 +253,7 @@ pub unsafe extern "C" fn qwen_asr_stream_push(
     }
 
     // Call the Rust streaming API with the full accumulated buffer
-    match transcribe::stream_push_audio(
-        &mut eng.ctx,
-        &s.audio_buf,
-        &mut s.state,
-        finalize != 0,
-    ) {
+    match transcribe::stream_push_audio(&mut eng.ctx, &s.audio_buf, &mut s.state, finalize != 0) {
         Some(delta) if !delta.is_empty() => match CString::new(delta) {
             Ok(cs) => cs.into_raw(),
             Err(_) => std::ptr::null_mut(),
@@ -305,7 +300,10 @@ pub unsafe extern "C" fn qwen_asr_stream_set_rollback(engine: *mut QwenAsrEngine
 
 /// Configure unfixed chunks count before emitting (default 2).
 #[no_mangle]
-pub unsafe extern "C" fn qwen_asr_stream_set_unfixed_chunks(engine: *mut QwenAsrEngine, chunks: i32) {
+pub unsafe extern "C" fn qwen_asr_stream_set_unfixed_chunks(
+    engine: *mut QwenAsrEngine,
+    chunks: i32,
+) {
     if !engine.is_null() && chunks >= 0 {
         (*engine).ctx.stream_unfixed_chunks = chunks;
     }
@@ -313,7 +311,10 @@ pub unsafe extern "C" fn qwen_asr_stream_set_unfixed_chunks(engine: *mut QwenAsr
 
 /// Configure max new tokens per chunk (default 32).
 #[no_mangle]
-pub unsafe extern "C" fn qwen_asr_stream_set_max_new_tokens(engine: *mut QwenAsrEngine, tokens: i32) {
+pub unsafe extern "C" fn qwen_asr_stream_set_max_new_tokens(
+    engine: *mut QwenAsrEngine,
+    tokens: i32,
+) {
     if !engine.is_null() && tokens > 0 {
         (*engine).ctx.stream_max_new_tokens = tokens;
     }

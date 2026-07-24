@@ -77,9 +77,8 @@ fn pool_worker(pool: Arc<ThreadPool>, tid: usize) {
 
         // Read dispatch data from atomics (ordered by gen_atomic Acquire)
         let fn_ptr = pool.fn_ptr_atomic.load(Ordering::Relaxed) as *const ();
-        let fn_call: fn(*const (), usize, usize) = unsafe {
-            core::mem::transmute(pool.fn_call_atomic.load(Ordering::Relaxed))
-        };
+        let fn_call: fn(*const (), usize, usize) =
+            unsafe { core::mem::transmute(pool.fn_call_atomic.load(Ordering::Relaxed)) };
         let n_threads = pool.n_threads_atomic.load(Ordering::Relaxed);
 
         fn_call(fn_ptr, tid, n_threads);
@@ -154,7 +153,10 @@ pub fn get_num_cpus() -> usize {
 
 #[cfg(target_os = "macos")]
 fn sysctl_uint(name: &[u8]) -> Option<usize> {
-    debug_assert!(name.last() == Some(&0), "sysctl name must be NUL-terminated");
+    debug_assert!(
+        name.last() == Some(&0),
+        "sysctl name must be NUL-terminated"
+    );
     let mut out: i32 = 0;
     let mut size = std::mem::size_of::<i32>();
     let rc = unsafe {
@@ -242,8 +244,10 @@ pub(crate) fn parallel_for<F: Fn(usize, usize) + Send + Sync>(f: F) {
 
     // Publish dispatch data via atomics (Relaxed OK: gen_atomic Release provides ordering)
     pool.done_atomic.store(0, Ordering::Relaxed);
-    pool.fn_ptr_atomic.store(&f as *const F as *const () as usize, Ordering::Relaxed);
-    pool.fn_call_atomic.store(trampoline::<F> as usize, Ordering::Relaxed);
+    pool.fn_ptr_atomic
+        .store(&f as *const F as *const () as usize, Ordering::Relaxed);
+    pool.fn_call_atomic
+        .store(trampoline::<F> as usize, Ordering::Relaxed);
     pool.n_threads_atomic.store(n_threads, Ordering::Relaxed);
     // Release: ensures all stores above are visible to workers that Acquire gen_atomic
     pool.gen_atomic.fetch_add(1, Ordering::Release);

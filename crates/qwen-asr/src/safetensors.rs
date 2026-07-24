@@ -92,13 +92,17 @@ impl SafetensorsFile {
 
         let mut stat_buf = unsafe { std::mem::zeroed::<stat>() };
         if unsafe { fstat(fd, &mut stat_buf) } < 0 {
-            unsafe { close(fd); }
+            unsafe {
+                close(fd);
+            }
             return None;
         }
 
         let file_size = stat_buf.st_size as usize;
         if file_size < 8 {
-            unsafe { close(fd); }
+            unsafe {
+                close(fd);
+            }
             return None;
         }
 
@@ -118,7 +122,9 @@ impl SafetensorsFile {
         let raw_fd = fd;
 
         if data == libc::MAP_FAILED {
-            unsafe { close(fd); }
+            unsafe {
+                close(fd);
+            }
             return None;
         }
         let data = data as *mut u8;
@@ -133,7 +139,10 @@ impl SafetensorsFile {
         };
 
         if header_size > file_size - 8 {
-            unsafe { munmap(data as *mut _, file_size); close(fd); }
+            unsafe {
+                munmap(data as *mut _, file_size);
+                close(fd);
+            }
             return None;
         }
 
@@ -153,7 +162,10 @@ impl SafetensorsFile {
         let tensors = match parse_header(header_json) {
             Some(t) => t,
             None => {
-                unsafe { munmap(data as *mut _, file_size); close(fd); }
+                unsafe {
+                    munmap(data as *mut _, file_size);
+                    close(fd);
+                }
                 return None;
             }
         };
@@ -225,11 +237,7 @@ impl SafetensorsFile {
             Dtype::F32 => {
                 let mut out = vec![0.0f32; n];
                 unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        ptr as *const f32,
-                        out.as_mut_ptr(),
-                        n,
-                    );
+                    std::ptr::copy_nonoverlapping(ptr as *const f32, out.as_mut_ptr(), n);
                 }
                 Some(out)
             }
@@ -309,11 +317,7 @@ fn prefault_with_skip(data: *const u8, file_size: usize, skip: &[bool]) {
                 let off = s * ps;
                 let end = (page * ps).min(file_size);
                 unsafe {
-                    libc::madvise(
-                        (base_addr + off) as *mut _,
-                        end - off,
-                        libc::MADV_WILLNEED,
-                    );
+                    libc::madvise((base_addr + off) as *mut _, end - off, libc::MADV_WILLNEED);
                 }
                 run_start = None;
             }
@@ -404,7 +408,10 @@ impl MultiSafetensors {
         }
 
         if shard_names.is_empty() {
-            eprintln!("multi_safetensors_open: no safetensors files in {}", model_dir);
+            eprintln!(
+                "multi_safetensors_open: no safetensors files in {}",
+                model_dir
+            );
             return None;
         }
 
@@ -761,7 +768,11 @@ fn skip_json_value(bytes: &[u8], pos: &mut usize) {
         }
         _ => {
             // Number, bool, null
-            while *pos < bytes.len() && bytes[*pos] != b',' && bytes[*pos] != b'}' && bytes[*pos] != b']' {
+            while *pos < bytes.len()
+                && bytes[*pos] != b','
+                && bytes[*pos] != b'}'
+                && bytes[*pos] != b']'
+            {
                 *pos += 1;
             }
         }
