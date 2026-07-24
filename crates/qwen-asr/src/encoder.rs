@@ -87,10 +87,16 @@ pub struct EncoderBuffers {
     pub conv_cols: Vec<f32>,
     pub window_starts: Vec<i32>,
     pub cap_tokens: usize,
+    /// High-water chunk width the stem buffers (`chunk_mel`, `c1..c3`,
+    /// `reshaped`, `pe`) are currently sized for. Grow-only: callers always
+    /// slice out the exact per-chunk length, so excess capacity is harmless
+    /// and a shrink would only force a zero-filling regrow on the next
+    /// full-width chunk.
+    pub stem_w: usize,
     /// Width (w3) of the sinusoidal PE table currently held in `pe`.
     /// 0 = invalid/uncomputed. `pe` is only written by `sinusoidal_pe` and
-    /// only resized by `ensure_stem` to the current chunk's `w3 * d_model`,
-    /// so `pe_w3 == w3` guarantees `pe[..w3 * d_model]` holds valid data.
+    /// only grown by `ensure_stem`, so `pe_w3 == w3` guarantees
+    /// `pe[..w3 * d_model]` holds valid data.
     pub pe_w3: usize,
 }
 
@@ -119,6 +125,7 @@ impl EncoderBuffers {
             conv_cols: Vec::new(),
             window_starts: Vec::new(),
             cap_tokens: 0,
+            stem_w: 0,
             pe_w3: 0,
         }
     }
@@ -146,6 +153,14 @@ impl EncoderBuffers {
     }
 
     pub fn ensure_stem(&mut self, chunk_w: usize, d_model: usize) {
+        // Grow-only: every stem buffer is fully overwritten before any read
+        // (mel copy, conv2d, reshape) and callers slice the exact per-chunk
+        // length, so keep the high-water allocation instead of shrinking for
+        // a narrow trailing chunk and zero-filling a regrow on the next
+        // full-width one.
+        if chunk_w <= self.stem_w {
+            return;
+        }
         let h1 = (128 + 2 - 3) / 2 + 1;
         let w1 = (chunk_w + 2 - 3) / 2 + 1;
         let h2 = (h1 + 2 - 3) / 2 + 1;
@@ -160,6 +175,7 @@ impl EncoderBuffers {
         self.c3.resize(CONV_HIDDEN * h3 * w3, 0.0);
         self.reshaped.resize(w3 * conv_proj_dim, 0.0);
         self.pe.resize(w3 * d_model, 0.0);
+        self.stem_w = chunk_w;
     }
 }
 

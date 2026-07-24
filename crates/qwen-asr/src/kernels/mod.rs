@@ -247,11 +247,11 @@ mod pool;
 
 pub(crate) use pool::parallel_for;
 pub(crate) use pool::parallel_for_dynamic;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub(crate) use pool::parallel_region;
 pub(crate) use pool::set_thread_override;
 pub use pool::{get_default_threads, get_num_cpus, get_num_threads, set_threads};
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub(crate) use pool::{range_for, MAX_THREADS};
 
 // ========================================================================
@@ -1587,13 +1587,55 @@ pub fn linear_nobias_bf16_swiglu(
     });
 }
 
+/// Arch-dispatched INT8 matvec core (NEON SDOT on aarch64, AVX2 on x86_64).
+/// Both backends implement the same exact integer dot + float epilogue, so
+/// callers get identical semantics on either arch.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+#[inline]
+#[allow(clippy::too_many_arguments)] // hot kernel entry point; params mirror the SIMD call
+unsafe fn matvec_int8_simd(
+    y: &mut [f32],
+    x_int8: *const i8,
+    x_scale: f32,
+    w_int8: *const i8,
+    w_scales: &[f32],
+    bias: Option<&[f32]>,
+    in_dim: usize,
+    out_dim: usize,
+) {
+    #[cfg(target_arch = "aarch64")]
+    neon::matvec_int8(y, x_int8, x_scale, w_int8, w_scales, bias, in_dim, out_dim);
+    #[cfg(target_arch = "x86_64")]
+    avx::matvec_int8(y, x_int8, x_scale, w_int8, w_scales, bias, in_dim, out_dim);
+}
+
+/// Arch-dispatched single-range INT8 argmax core (see `neon::argmax_int8_range`
+/// / `avx::argmax_int8_range`). Used by the fused decode region's lm_head
+/// epilogue; both backends share the index-stable strict-`>` tie-break.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+#[inline]
+pub(crate) unsafe fn int8_argmax_range(
+    x_int8: *const i8,
+    x_scale: f32,
+    w_int8: *const i8,
+    w_scales: &[f32],
+    in_dim: usize,
+    start: usize,
+    end: usize,
+) -> (usize, f32) {
+    #[cfg(target_arch = "aarch64")]
+    return neon::argmax_int8_range(x_int8, x_scale, w_int8, w_scales, in_dim, start, end);
+    #[cfg(target_arch = "x86_64")]
+    return avx::argmax_int8_range(x_int8, x_scale, w_int8, w_scales, in_dim, start, end);
+}
+
 /// Compute output rows `[start, end)` of an INT8 matvec (`y = W @ x`, optional
 /// fused bias) using the pre-quantized input `x_int8`. Slice entry point of the
 /// fused decode region (R5-B): each worker calls it with its own row range.
 /// `y_ptr`/`bias_ptr` may alias (fused residual add), in which case each thread
 /// owns a disjoint row range so reads-before-writes are per-row and safe.
 /// No-op when `start >= end`.
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 #[allow(clippy::too_many_arguments)] // hot kernel entry point; params mirror the SIMD call
 pub(crate) unsafe fn int8_matvec_range(
@@ -1615,7 +1657,7 @@ pub(crate) unsafe fn int8_matvec_range(
     let w_local = w_int8.add(start * in_dim);
     let w_scales_local = std::slice::from_raw_parts(w_scales.add(start), n);
     let bias_local = bias_ptr.map(|p| std::slice::from_raw_parts(p.add(start), n));
-    neon::matvec_int8(
+    matvec_int8_simd(
         y_local,
         x_int8,
         x_scale,
@@ -1630,7 +1672,7 @@ pub(crate) unsafe fn int8_matvec_range(
 /// Compute the `[start, end)` slice (over the concatenated `q|k|v` output rows,
 /// total `q_dim + 2*kv_dim`) of the fused INT8 QKV projection. Slice entry
 /// point of the fused decode region (R5-B).
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn int8_qkv_range(
@@ -1665,7 +1707,7 @@ pub(crate) unsafe fn int8_qkv_range(
         if s < e {
             let y = std::slice::from_raw_parts_mut(q_ptr.add(s), e - s);
             let sc = std::slice::from_raw_parts(wq_scales.add(s), e - s);
-            neon::matvec_int8(
+            matvec_int8_simd(
                 y,
                 x_int8,
                 x_scale,
@@ -1684,7 +1726,7 @@ pub(crate) unsafe fn int8_qkv_range(
         if s < e {
             let y = std::slice::from_raw_parts_mut(k_ptr.add(s), e - s);
             let sc = std::slice::from_raw_parts(wk_scales.add(s), e - s);
-            neon::matvec_int8(
+            matvec_int8_simd(
                 y,
                 x_int8,
                 x_scale,
@@ -1703,7 +1745,7 @@ pub(crate) unsafe fn int8_qkv_range(
         if s < e {
             let y = std::slice::from_raw_parts_mut(v_ptr.add(s), e - s);
             let sc = std::slice::from_raw_parts(wv_scales.add(s), e - s);
-            neon::matvec_int8(
+            matvec_int8_simd(
                 y,
                 x_int8,
                 x_scale,
@@ -1724,7 +1766,7 @@ pub(crate) unsafe fn int8_qkv_range(
 /// (allocated once per thread per decode step) because this kernel runs 28×
 /// per decoded token inside the fused region — a per-call `vec!` would put
 /// `28 × nt` heap allocations on the critical path of every token.
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 #[allow(clippy::too_many_arguments)] // hot kernel entry point; params mirror the SIMD call
 pub(crate) unsafe fn int8_swiglu_range(
@@ -1748,7 +1790,7 @@ pub(crate) unsafe fn int8_swiglu_range(
     // every element, so this only keeps the proven behavior identical.
     let gate_up_local = &mut scratch[..2 * n_rows];
     gate_up_local.fill(0.0);
-    neon::matvec_int8(
+    matvec_int8_simd(
         gate_up_local,
         x_int8,
         x_scale,
@@ -1779,12 +1821,12 @@ pub(crate) unsafe fn int8_swiglu_range(
 // ========================================================================
 
 /// Max lockstep batch size (per-session pointer arrays are stack-allocated).
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", all(test, target_arch = "x86_64")))]
 pub(crate) const MAX_BATCH: usize = 8;
 
 /// Batched analogue of [`int8_matvec_range`]: rows `[start, end)` for all `b`
 /// sessions. `y[bi]`/`x_int8[bi]`/`bias[bi]` are per-session base pointers.
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", all(test, target_arch = "x86_64")))]
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn int8_matvec_range_batched(
@@ -1815,6 +1857,12 @@ pub(crate) unsafe fn int8_matvec_range_batched(
     }
     let w_local = w_int8.add(start * in_dim);
     let w_scales_local = std::slice::from_raw_parts(w_scales.add(start), n);
+    let bias_arg = if bias.is_some() {
+        Some(&bias_off[..b])
+    } else {
+        None
+    };
+    #[cfg(target_arch = "aarch64")]
     neon::matvec_int8_batched(
         b,
         &y_off[..b],
@@ -1822,11 +1870,19 @@ pub(crate) unsafe fn int8_matvec_range_batched(
         &x_scale[..b],
         w_local,
         w_scales_local,
-        if bias.is_some() {
-            Some(&bias_off[..b])
-        } else {
-            None
-        },
+        bias_arg,
+        in_dim,
+        n,
+    );
+    #[cfg(target_arch = "x86_64")]
+    avx::matvec_int8_batched(
+        b,
+        &y_off[..b],
+        &x_int8[..b],
+        &x_scale[..b],
+        w_local,
+        w_scales_local,
+        bias_arg,
         in_dim,
         n,
     );
@@ -1834,7 +1890,7 @@ pub(crate) unsafe fn int8_matvec_range_batched(
 
 /// Batched analogue of [`int8_qkv_range`]: the `[start, end)` slice over the
 /// concatenated `q|k|v` rows, for all `b` sessions.
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", all(test, target_arch = "x86_64")))]
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn int8_qkv_range_batched(
@@ -1890,7 +1946,7 @@ pub(crate) unsafe fn int8_qkv_range_batched(
 
 /// Batched analogue of [`int8_swiglu_range`]: intermediate rows `[start, end)`
 /// for all `b` sessions.
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", all(test, target_arch = "x86_64")))]
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn int8_swiglu_range_batched(
@@ -1914,7 +1970,19 @@ pub(crate) unsafe fn int8_swiglu_range_batched(
     }
     let w_local = w_int8.add(2 * start * in_dim);
     let w_scales_local = std::slice::from_raw_parts(w_scales.add(2 * start), 2 * n_rows);
+    #[cfg(target_arch = "aarch64")]
     neon::swiglu_int8_batched(
+        b,
+        &ffn_off[..b],
+        &x_int8[..b],
+        &x_scale[..b],
+        w_local,
+        w_scales_local,
+        in_dim,
+        n_rows,
+    );
+    #[cfg(target_arch = "x86_64")]
+    avx::swiglu_int8_batched(
         b,
         &ffn_off[..b],
         &x_int8[..b],
@@ -1989,7 +2057,15 @@ pub fn conv2d_with_cols(
     let w_out = (w_in + 2 * padding - kw) / stride + 1;
     let patch_size = c_in * kh * kw;
     let spatial_out = h_out * w_out;
-    cols.resize(patch_size * spatial_out, 0.0);
+    // Grow-only sizing: im2col rewrites every element of
+    // cols[..patch_size * spatial_out] before the GEMM reads it, so shrinking
+    // here would only force a zero-filling regrow (hundreds of MB for the
+    // encoder stem) on the next larger call for memory about to be
+    // overwritten anyway. `conv2d_impl` re-slices to the exact length.
+    let need = patch_size * spatial_out;
+    if cols.len() < need {
+        cols.resize(need, 0.0);
+    }
     conv2d_impl(
         out, input, weight, bias, cols, c_in, c_out, h_in, w_in, kh, kw, stride, padding,
     );
@@ -3090,7 +3166,7 @@ pub fn with_quantized_int8<R>(x: &[f32], f: impl FnOnce(&[i8], f32) -> R) -> R {
     })
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 thread_local! {
     /// Per-thread pool of quantization buffers for
     /// [`with_quantized_int8_batch`]. The batched INT8 lm_head argmax scores
@@ -3105,7 +3181,7 @@ thread_local! {
 /// pass (buffers, scales) to `f`. Bit-identical to mapping
 /// [`quantize_f32_to_int8`] over `xs` — same absmax scaling math, only the
 /// destination buffers are reused instead of freshly allocated per token.
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub fn with_quantized_int8_batch<R>(xs: &[&[f32]], f: impl FnOnce(&[Vec<i8>], &[f32]) -> R) -> R {
     QUANT_BATCH_TLS.with(|c| {
         let mut bufs = c.borrow_mut();
@@ -3152,7 +3228,11 @@ pub unsafe fn quantize_bf16_weights_to_int8(
     unsafe {
         neon::quantize_bf16_to_int8(w_bf16, out_dim, in_dim)
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        avx::quantize_bf16_to_int8(w_bf16, out_dim, in_dim)
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     {
         let mut int8_data = vec![0i8; out_dim * in_dim];
         let mut scales = vec![0.0f32; out_dim];
@@ -3187,11 +3267,11 @@ pub fn argmax_matvec_int8(
 ) -> usize {
     with_quantized_int8(x, |x_int8, x_scale| {
         let n_threads = get_num_threads();
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
         {
             if n_threads <= 1 {
                 let (best, _) = unsafe {
-                    neon::argmax_int8_range(
+                    int8_argmax_range(
                         x_int8.as_ptr(),
                         x_scale,
                         w_int8.as_ptr(),
@@ -3228,7 +3308,7 @@ pub fn argmax_matvec_int8(
                 let w_scales_local =
                     unsafe { std::slice::from_raw_parts(w_scales_ptr as *const f32, out_dim) };
                 let (best, best_val) = unsafe {
-                    neon::argmax_int8_range(
+                    int8_argmax_range(
                         x_int8_ptr as *const i8,
                         x_scale,
                         w_int8_ptr as *const i8,
@@ -3255,15 +3335,56 @@ pub fn argmax_matvec_int8(
             best
         }
 
-        #[cfg(not(target_arch = "aarch64"))]
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
         {
-            // Fallback: use f32 computation
-            let _ = (
-                x, w_int8, w_scales, in_dim, out_dim, n_threads, x_int8, x_scale,
-            );
-            unimplemented!("INT8 argmax only implemented for aarch64")
+            // Scalar fallback for arches without a SIMD INT8 kernel: exact integer
+            // dot with the same float combine and strict-> tie-break as the SIMD
+            // kernels' 1-row path.
+            let _ = n_threads;
+            let mut best = 0usize;
+            let mut best_val = -1e30f32;
+            for o in 0..out_dim {
+                let w_row = &w_int8[o * in_dim..(o + 1) * in_dim];
+                let mut sum = 0i32;
+                for k in 0..in_dim {
+                    sum += x_int8[k] as i32 * w_row[k] as i32;
+                }
+                let val = sum as f32 * x_scale * w_scales[o];
+                if val > best_val {
+                    best_val = val;
+                    best = o;
+                }
+            }
+            best
         }
     })
+}
+
+/// Arch-dispatched batched INT8 argmax core (see `neon::argmax_int8_batched` /
+/// `avx::argmax_int8_batched`); both backends share the strict-`>` tie-break.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+#[inline]
+#[allow(clippy::too_many_arguments)]
+unsafe fn argmax_int8_batched_simd(
+    b: usize,
+    best: &mut [usize],
+    best_val: &mut [f32],
+    x_int8: &[*const i8],
+    x_scale: &[f32],
+    w_int8: *const i8,
+    w_scales: &[f32],
+    in_dim: usize,
+    start: usize,
+    end: usize,
+) {
+    #[cfg(target_arch = "aarch64")]
+    neon::argmax_int8_batched(
+        b, best, best_val, x_int8, x_scale, w_int8, w_scales, in_dim, start, end,
+    );
+    #[cfg(target_arch = "x86_64")]
+    avx::argmax_int8_batched(
+        b, best, best_val, x_int8, x_scale, w_int8, w_scales, in_dim, start, end,
+    );
 }
 
 /// Batched INT8 lm_head argmax (R12-E2): stream the (~155 MB) lm_head weights
@@ -3273,7 +3394,7 @@ pub fn argmax_matvec_int8(
 /// case, in_dim = dec_hidden = 1024) — the amortization lever for the lockstep
 /// decode's per-token vocabulary scoring. Row partitioning + strict-`>` reduce
 /// give the same index-stable tie-break as the single-session kernel.
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub fn argmax_matvec_int8_batched(
     xs: &[&[f32]],
     w_int8: &[i8],
@@ -3290,7 +3411,7 @@ pub fn argmax_matvec_int8_batched(
             let mut best = vec![0usize; b];
             let mut best_val = vec![-1e30f32; b];
             unsafe {
-                neon::argmax_int8_batched(
+                argmax_int8_batched_simd(
                     b,
                     &mut best,
                     &mut best_val,
@@ -3333,7 +3454,7 @@ pub fn argmax_matvec_int8_batched(
             let w_scales =
                 unsafe { std::slice::from_raw_parts(w_scales_ptr as *const f32, out_dim) };
             unsafe {
-                neon::argmax_int8_batched(
+                argmax_int8_batched_simd(
                     b,
                     best,
                     best_val,
@@ -3420,9 +3541,16 @@ pub fn argmax_matvec_bf16(x: &[f32], w_bf16: *const u16, in_dim: usize, out_dim:
 // argument for lockstep decode: per-session token sequences cannot depend on
 // batch composition if the kernels are exact.
 // ========================================================================
-#[cfg(all(test, target_arch = "aarch64"))]
+#[cfg(all(test, any(target_arch = "aarch64", target_arch = "x86_64")))]
 mod tests {
     use super::*;
+
+    // Arch alias so the exactness tests run against whichever SIMD INT8
+    // backend this build dispatches to (NEON on aarch64, AVX2 on x86_64).
+    #[cfg(target_arch = "x86_64")]
+    use super::avx as simd;
+    #[cfg(target_arch = "aarch64")]
+    use super::neon as simd;
 
     // Deterministic LCG helpers so tests are reproducible without deps.
     struct Rng(u64);
@@ -3709,11 +3837,11 @@ mod tests {
                     let (xi, xs) = gen_inputs(&mut rng, b, in_dim);
                     let xi_ptrs: Vec<*const i8> = xi.iter().map(|v| v.as_ptr()).collect();
 
-                    // Reference: neon single-session argmax over the full range.
+                    // Reference: SIMD single-session argmax over the full range.
                     let mut ref_best = vec![0usize; b];
                     for j in 0..b {
                         let (best, _) = unsafe {
-                            neon::argmax_int8_range(
+                            simd::argmax_int8_range(
                                 xi[j].as_ptr(),
                                 xs[j],
                                 w.as_ptr(),
@@ -3726,11 +3854,11 @@ mod tests {
                         ref_best[j] = best;
                     }
 
-                    // Batched neon core (single range).
+                    // Batched SIMD core (single range).
                     let mut best = vec![0usize; b];
                     let mut best_val = vec![-1e30f32; b];
                     unsafe {
-                        neon::argmax_int8_batched(
+                        simd::argmax_int8_batched(
                             b,
                             &mut best,
                             &mut best_val,
@@ -3782,6 +3910,173 @@ mod tests {
     }
 
     // ====================================================================
+    // Scalar-reference correctness of the SIMD INT8 decode kernels.
+    //
+    // The batched-vs-single exactness tests above only prove the SIMD kernels
+    // are self-consistent; these pin them against an independent scalar
+    // reference reproducing the kernels' float epilogues term for term, so a
+    // systematic error in the SIMD integer dot cannot slip through. Exact f32
+    // equality is achievable (and required): the integer dot is
+    // order-independent and the epilogue expressions match by construction.
+    // ====================================================================
+
+    /// SIMD block width of the running arch's INT8 kernels: the integer dot
+    /// covers the largest multiple of this, the remaining tail uses the
+    /// kernels' scalar per-element epilogue (mirrored by the reference).
+    #[cfg(target_arch = "aarch64")]
+    const INT8_SIMD_LANES: usize = 16;
+    #[cfg(target_arch = "x86_64")]
+    const INT8_SIMD_LANES: usize = 32;
+
+    /// Scalar reference for one row of `matvec_int8`: integer dot over the
+    /// SIMD-covered prefix (exact regardless of grouping), then the same
+    /// per-element f32 tail expression the kernels use.
+    fn ref_matvec_row(x: &[i8], x_scale: f32, w: &[i8], w_scale: f32, in_dim: usize) -> f32 {
+        let tail_start = in_dim - in_dim % INT8_SIMD_LANES;
+        let mut sum = 0i32;
+        for k in 0..tail_start {
+            sum += x[k] as i32 * w[k] as i32;
+        }
+        let mut v = sum as f32 * x_scale * w_scale;
+        for k in tail_start..in_dim {
+            v += x[k] as f32 * w[k] as f32 * x_scale * w_scale;
+        }
+        v
+    }
+
+    #[test]
+    fn int8_matvec_matches_scalar_reference() {
+        let mut rng = Rng::new(0xDEAD_BEEF);
+        for &in_dim in &[32usize, 64, 1024, 16, 17, 33, 48, 100] {
+            for &out_dim in &[1usize, 2, 3, 7, 31] {
+                for use_bias in [false, true] {
+                    let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
+                    let x: Vec<f32> = (0..in_dim).map(|_| rng.f32_pm1() * 3.0).collect();
+                    let (xi, xs) = quantize_f32_to_int8(&x);
+                    let bias: Vec<f32> = (0..out_dim).map(|_| rng.f32_pm1()).collect();
+                    let mut y = vec![0.0f32; out_dim];
+                    unsafe {
+                        int8_matvec_range(
+                            y.as_mut_ptr(),
+                            xi.as_ptr(),
+                            xs,
+                            w.as_ptr(),
+                            ws.as_ptr(),
+                            if use_bias { Some(bias.as_ptr()) } else { None },
+                            in_dim,
+                            0,
+                            out_dim,
+                        );
+                    }
+                    for o in 0..out_dim {
+                        let w_row = &w[o * in_dim..(o + 1) * in_dim];
+                        let mut want = ref_matvec_row(&xi, xs, w_row, ws[o], in_dim);
+                        if use_bias {
+                            want += bias[o];
+                        }
+                        assert_eq!(y[o], want,
+                            "matvec vs scalar ref mismatch in_dim={in_dim} out_dim={out_dim} row={o} bias={use_bias}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn int8_argmax_matches_scalar_reference() {
+        // Tail-free in_dim (multiple of both arches' SIMD width): every row
+        // path reduces to `(sum as f32) * x_scale * w_scale`, so both the
+        // winning index and its value must match the scalar reference exactly.
+        let mut rng = Rng::new(0xABBA_5EED);
+        for &in_dim in &[32usize, 64, 1024] {
+            for &out_dim in &[1usize, 2, 5, 17, 128] {
+                let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
+                let x: Vec<f32> = (0..in_dim).map(|_| rng.f32_pm1() * 3.0).collect();
+                let (xi, xs) = quantize_f32_to_int8(&x);
+                let (best, best_val) = unsafe {
+                    simd::argmax_int8_range(xi.as_ptr(), xs, w.as_ptr(), &ws, in_dim, 0, out_dim)
+                };
+                let mut want_best = 0usize;
+                let mut want_val = -1e30f32;
+                for o in 0..out_dim {
+                    let w_row = &w[o * in_dim..(o + 1) * in_dim];
+                    let v = ref_matvec_row(&xi, xs, w_row, ws[o], in_dim);
+                    if v > want_val {
+                        want_val = v;
+                        want_best = o;
+                    }
+                }
+                assert_eq!(
+                    best, want_best,
+                    "argmax index mismatch in_dim={in_dim} out_dim={out_dim}"
+                );
+                assert_eq!(
+                    best_val, want_val,
+                    "argmax value mismatch in_dim={in_dim} out_dim={out_dim}"
+                );
+            }
+        }
+    }
+
+    /// Scalar reference for [`quantize_bf16_weights_to_int8`]: absmax scaling
+    /// with truncate-toward-zero over the SIMD-covered prefix (both arches
+    /// vectorize down to 8-element blocks; `_mm256_cvttps_epi32` and
+    /// `vcvtq_s32_f32`/fcvtzs both truncate, and Rust `as` truncates +
+    /// saturates like `vqmovn`) and the kernels' `.round()` expression for
+    /// the sub-8 scalar tail.
+    fn ref_quantize_bf16(w_bf16: &[u16], out_dim: usize, in_dim: usize) -> (Vec<i8>, Vec<f32>) {
+        let mut int8_data = vec![0i8; out_dim * in_dim];
+        let mut scales = vec![0.0f32; out_dim];
+        let tail_start = in_dim - in_dim % 8;
+        for row in 0..out_dim {
+            let w_row = &w_bf16[row * in_dim..(row + 1) * in_dim];
+            let mut max_abs = 0.0f32;
+            for &b in w_row {
+                let v = f32::from_bits((b as u32) << 16).abs();
+                if v > max_abs {
+                    max_abs = v;
+                }
+            }
+            let scale = if max_abs > 0.0 { max_abs / 127.0 } else { 1.0 };
+            let inv_scale = 127.0 / max_abs.max(1e-10);
+            scales[row] = scale;
+            for k in 0..tail_start {
+                let v = f32::from_bits((w_row[k] as u32) << 16);
+                int8_data[row * in_dim + k] = (v * inv_scale) as i8;
+            }
+            for k in tail_start..in_dim {
+                let v = f32::from_bits((w_row[k] as u32) << 16);
+                int8_data[row * in_dim + k] = (v * inv_scale).round().clamp(-127.0, 127.0) as i8;
+            }
+        }
+        (int8_data, scales)
+    }
+
+    #[test]
+    fn quantize_bf16_matches_scalar_reference() {
+        let mut rng = Rng::new(0xFACE_1234);
+        for &in_dim in &[8usize, 16, 32, 1024, 7, 9, 17, 33, 41] {
+            for &out_dim in &[1usize, 3, 16] {
+                // Random bf16 bit patterns from a plausible weight range
+                // (include exact half-way quantization cases via tiny values).
+                let w: Vec<u16> = (0..out_dim * in_dim)
+                    .map(|_| ((rng.f32_pm1() * 0.05).to_bits() >> 16) as u16)
+                    .collect();
+                let (q, sc) = unsafe { quantize_bf16_weights_to_int8(w.as_ptr(), out_dim, in_dim) };
+                let (want_q, want_sc) = ref_quantize_bf16(&w, out_dim, in_dim);
+                assert_eq!(
+                    sc, want_sc,
+                    "quantize scales mismatch in_dim={in_dim} out_dim={out_dim}"
+                );
+                assert_eq!(
+                    q, want_q,
+                    "quantize data mismatch in_dim={in_dim} out_dim={out_dim}"
+                );
+            }
+        }
+    }
+
+    // ====================================================================
     // R13-Android INT8 decoder-prefill exactness (no-BLAS build only).
     //
     // Each Y[position][out_row] of the multi-row prefill GEMM must be BIT-
@@ -3793,7 +4088,11 @@ mod tests {
     // single-threaded and pool-parallel dispatch paths.
     // ====================================================================
 
-    #[cfg(all(feature = "int8-prefill", not(feature = "blas")))]
+    #[cfg(all(
+        feature = "int8-prefill",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     fn prefill_matvec_check(seq_len: usize, in_dim: usize, out_dim: usize, seed: u64) {
         let mut rng = Rng::new(seed);
         let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
@@ -3845,7 +4144,11 @@ mod tests {
     /// the same `Y` as the full-range pass (so the dynamic 64-row split is exact).
     /// Runs on the caller thread only — the global pool is a singleton unsafe to
     /// dispatch concurrently from multiple test threads, so tests never invoke it.
-    #[cfg(all(feature = "int8-prefill", not(feature = "blas")))]
+    #[cfg(all(
+        feature = "int8-prefill",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     fn prefill_matvec_split_check(seq_len: usize, in_dim: usize, out_dim: usize, seed: u64) {
         let mut rng = Rng::new(seed);
         let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
@@ -3893,7 +4196,11 @@ mod tests {
         );
     }
 
-    #[cfg(all(feature = "int8-prefill", not(feature = "blas")))]
+    #[cfg(all(
+        feature = "int8-prefill",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     #[test]
     fn int8_prefill_matvec_matches_single() {
         // Serial full-range exactness vs int8_matvec_range, across odd sizes.
@@ -3917,7 +4224,11 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "int8-prefill", not(feature = "blas")))]
+    #[cfg(all(
+        feature = "int8-prefill",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     fn prefill_swiglu_check(seq_len: usize, in_dim: usize, n_rows: usize, seed: u64) {
         let mut rng = Rng::new(seed);
         // gate_up: 2*n_rows interleaved gate/up weight rows.
@@ -3964,7 +4275,11 @@ mod tests {
     }
 
     /// Row-split equivalence for the fused swiglu prefill (256-row pool blocks).
-    #[cfg(all(feature = "int8-prefill", not(feature = "blas")))]
+    #[cfg(all(
+        feature = "int8-prefill",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     fn prefill_swiglu_split_check(seq_len: usize, in_dim: usize, n_rows: usize, seed: u64) {
         let mut rng = Rng::new(seed);
         let (w, ws) = gen_w(&mut rng, 2 * n_rows, in_dim);
@@ -4012,7 +4327,11 @@ mod tests {
         );
     }
 
-    #[cfg(all(feature = "int8-prefill", not(feature = "blas")))]
+    #[cfg(all(
+        feature = "int8-prefill",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     #[test]
     fn int8_prefill_swiglu_matches_single() {
         let mut seed = 0x5019_D00D_u64;
@@ -4046,12 +4365,20 @@ mod tests {
     // and across both the single-threaded and pool-row-split dispatch paths.
     // ====================================================================
 
-    #[cfg(all(feature = "int8-encoder", not(feature = "blas")))]
+    #[cfg(all(
+        feature = "int8-encoder",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     fn gen_bias(rng: &mut Rng, out_dim: usize) -> Vec<f32> {
         (0..out_dim).map(|_| rng.f32_pm1() * 0.5).collect()
     }
 
-    #[cfg(all(feature = "int8-encoder", not(feature = "blas")))]
+    #[cfg(all(
+        feature = "int8-encoder",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     fn encoder_matvec_check(
         seq_len: usize,
         in_dim: usize,
@@ -4125,7 +4452,11 @@ mod tests {
     /// Pool-parallel dispatch calls `matvec_int8_encoder_rows` over a partition
     /// of the `out_dim` columns; assert any disjoint split writes the same `Y`
     /// as the full-range pass (models the dynamic 64-row pool partition).
-    #[cfg(all(feature = "int8-encoder", not(feature = "blas")))]
+    #[cfg(all(
+        feature = "int8-encoder",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     fn encoder_matvec_split_check(
         seq_len: usize,
         in_dim: usize,
@@ -4188,7 +4519,11 @@ mod tests {
         );
     }
 
-    #[cfg(all(feature = "int8-encoder", not(feature = "blas")))]
+    #[cfg(all(
+        feature = "int8-encoder",
+        not(feature = "blas"),
+        target_arch = "aarch64"
+    ))]
     #[test]
     fn int8_encoder_matvec_matches_single() {
         // Serial full-range exactness vs matvec_int8, across odd sizes, bias

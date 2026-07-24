@@ -311,7 +311,7 @@ pub(crate) fn parallel_for_dynamic<F: Fn(usize) + Send + Sync>(n_items: usize, f
 
 /// Cache-line-padded wrapper to keep two atomics on separate cache lines and
 /// avoid false sharing between the arrival counter and the generation counter.
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[repr(align(64))]
 struct CachePadded<T>(T);
 
@@ -321,14 +321,14 @@ struct CachePadded<T>(T);
 /// (Acquire). Reusable across many stages within one region. Correct for
 /// `nt == 1` (immediate no-op) and for participants whose stage slice was empty
 /// (they still call `wait` the same number of times as everyone else).
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub(crate) struct RegionBarrier {
     arrived: CachePadded<AtomicUsize>,
     generation: CachePadded<AtomicUsize>,
     nt: usize,
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 impl RegionBarrier {
     #[inline]
     fn new(nt: usize) -> Self {
@@ -367,7 +367,7 @@ impl RegionBarrier {
 /// The closure receives a shared [`RegionBarrier`] plus `(tid, nt)` and uses
 /// `barrier.wait()` to synchronize between dependent stages — so a multi-stage
 /// pipeline runs under one dispatch/wake/join cycle instead of one per stage.
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub(crate) fn parallel_region<F: Fn(&RegionBarrier, usize, usize) + Send + Sync>(f: F) {
     let n_threads = get_num_threads();
     let barrier = RegionBarrier::new(n_threads);
@@ -378,7 +378,7 @@ pub(crate) fn parallel_region<F: Fn(&RegionBarrier, usize, usize) + Send + Sync>
 
 /// Even split of `total` items across `nt` workers; returns this worker's
 /// `[start, end)` range (possibly empty).
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 pub(crate) fn range_for(tid: usize, nt: usize, total: usize) -> (usize, usize) {
     let chunk = total.div_ceil(nt);

@@ -17,7 +17,8 @@ fn f32_bytes(s: &[f32]) -> &[u8] {
 }
 
 /// Interleave gate+up rows into the fused buffer used as the INT8 quantization
-/// source (and, on non-aarch64, the runtime bf16 SwiGLU decode weight).
+/// source (and, on arches without INT8 decode kernels, the runtime bf16
+/// SwiGLU decode weight).
 fn build_gate_up_fused(
     gate_bf16: *const u16,
     up_bf16: *const u16,
@@ -61,16 +62,18 @@ pub struct DecLayer {
     pub gate_weight_bf16: *const u16,
     pub up_weight_bf16: *const u16,
     pub down_weight_bf16: *const u16,
-    /// Owned interleaved bf16 fusion of gate+up. Only the non-aarch64 decode
-    /// path consumes it at runtime (`linear_nobias_bf16_swiglu`); on aarch64 the
-    /// single-token decode path uses `gate_up_int8` instead, so the fused buffer
-    /// is used only transiently at load time as the INT8 quantization source and
+    /// Owned interleaved bf16 fusion of gate+up. Only the non-SIMD-arch decode
+    /// path consumes it at runtime (`linear_nobias_bf16_swiglu`); on
+    /// aarch64/x86_64 the single-token decode path uses `gate_up_int8` instead,
+    /// so the fused buffer is used only transiently at load time as the INT8
+    /// quantization source and
     /// this field is left empty (R12-A) to save ~350 MB RSS. Also empty for the
     /// forced-aligner (aligner only ever runs prefill, which streams gate/up
     /// separately).
     pub gate_up_fused_bf16: Vec<u16>,
     /// INT8 quantized attention weights + per-row scales — populated only for
-    /// non-aligner configs (used by aarch64 single-token decode). Empty for aligner.
+    /// non-aligner configs (used by aarch64/x86_64 single-token decode). Empty
+    /// for aligner.
     ///
     /// Each INT8/scale buffer is a [`WeightBuf`]: either an owned superpage `Vec`
     /// (freshly quantized this run) or a slice borrowed IN PLACE from the mmap'd
@@ -84,8 +87,9 @@ pub struct DecLayer {
     pub wv_int8_scales: WeightBuf<f32>,
     pub wo_int8: WeightBuf<i8>,
     pub wo_int8_scales: WeightBuf<f32>,
-    /// INT8 quantized FFN weights (per-row scales) for the aarch64 single-token
-    /// decode path — fused interleaved gate_up and down_proj. Quantized from the
+    /// INT8 quantized FFN weights (per-row scales) for the aarch64/x86_64
+    /// single-token decode path — fused interleaved gate_up and down_proj.
+    /// Quantized from the
     /// original BF16 weights. Empty for aligner.
     pub gate_up_int8: WeightBuf<i8>,
     pub gate_up_int8_scales: WeightBuf<f32>,
@@ -198,12 +202,13 @@ fn load_dec_layer(
         )
     } else if let Some(sc) = sidecar {
         // Warm path: borrow every INT8 buffer IN PLACE from the mmap'd sidecar.
-        // No quantization, no gate_up fusion on aarch64 (where the fused bf16 is
-        // unused at runtime — INT8 is the decode weight). Non-aarch64 still needs
-        // the fused bf16 for its SwiGLU decode path, so build it there.
-        #[cfg(target_arch = "aarch64")]
+        // No quantization, no gate_up fusion on aarch64/x86_64 (where the
+        // fused bf16 is unused at runtime — INT8 is the decode weight). Other
+        // arches still need the fused bf16 for their SwiGLU decode path, so
+        // build it there.
+        #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
         let gate_up_fused_kept: Vec<u16> = Vec::new();
-        #[cfg(not(target_arch = "aarch64"))]
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
         let gate_up_fused_kept: Vec<u16> = build_gate_up_fused(gate_bf16, up_bf16, inter, hidden);
 
         let b = |j: usize| sc.i8_buf(layout.layer_buf(i, j));
@@ -225,9 +230,9 @@ fn load_dec_layer(
         )
     } else {
         // Cold path: quantize into owned superpage Vecs (as before). The fused
-        // gate_up buffer is the INT8 quantization source; on aarch64 it is
-        // dropped afterward (INT8 is the decode weight), on other arches it is
-        // kept as the bf16 SwiGLU decode weight.
+        // gate_up buffer is the INT8 quantization source; on aarch64/x86_64 it
+        // is dropped afterward (INT8 is the decode weight), on other arches it
+        // is kept as the bf16 SwiGLU decode weight.
         let gate_up_fused = build_gate_up_fused(gate_bf16, up_bf16, inter, hidden);
 
         let (wq_int8, wq_int8_scales) = quantize_to_superpage(wq, q_dim, hidden);
@@ -241,12 +246,12 @@ fn load_dec_layer(
             quantize_to_superpage(gate_up_fused.as_ptr(), 2 * inter, hidden);
         let (down_int8, down_int8_scales) = quantize_to_superpage(down_bf16, hidden, inter);
 
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
         let gate_up_fused_kept = {
             drop(gate_up_fused);
             Vec::new()
         };
-        #[cfg(not(target_arch = "aarch64"))]
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
         let gate_up_fused_kept = gate_up_fused;
 
         (
@@ -1123,15 +1128,16 @@ pub fn decoder_forward(
 
     let scale = 1.0 / (head_dim as f32).sqrt();
 
-    // aarch64: run the whole 28-layer single-token loop inside ONE persistent
-    // parallel region. Workers stay resident across every stage of every layer,
-    // synchronized by spin barriers, instead of one thread-pool dispatch/join
-    // cycle per stage (~5 per layer). Row/head partitions are identical to the
-    // standalone threaded kernels, and each output element is written by
-    // exactly one thread, so results are bit-identical to the dispatch-per-stage
-    // path. Serial glue (norms, RoPE, KV write, activation quantization) runs on
-    // tid 0 between barriers — microsecond-scale work at dim 1024.
-    #[cfg(target_arch = "aarch64")]
+    // aarch64/x86_64: run the whole 28-layer single-token loop inside ONE
+    // persistent parallel region. Workers stay resident across every stage of
+    // every layer, synchronized by spin barriers, instead of one thread-pool
+    // dispatch/join cycle per stage (~5 per layer). Row/head partitions are
+    // identical to the standalone threaded kernels, and each output element is
+    // written by exactly one thread, so results are bit-identical to the
+    // dispatch-per-stage path. Serial glue (norms, RoPE, KV write, activation
+    // quantization) runs on tid 0 between barriers — microsecond-scale work at
+    // dim 1024.
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
     {
         let total_seq = pos + 1;
         let n_kv = kv_cache.n_kv_heads;
@@ -1431,7 +1437,7 @@ pub fn decoder_forward(
                             std::slice::from_raw_parts(lm_scales_ptr as *const f32, lm_out_dim)
                         };
                         unsafe {
-                            kernels::neon::argmax_int8_range(
+                            kernels::int8_argmax_range(
                                 x_int8_ptr as *const i8,
                                 x_scale,
                                 lm_int8_ptr as *const i8,
@@ -1483,8 +1489,8 @@ pub fn decoder_forward(
         }
     }
 
-    // Non-aarch64 (BF16) path: unchanged dispatch-per-stage layer loop.
-    #[cfg(not(target_arch = "aarch64"))]
+    // Non-SIMD-arch (BF16) path: unchanged dispatch-per-stage layer loop.
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     for (layer_idx, layer) in decoder.layers.iter().enumerate() {
         kernels::rms_norm(
             &mut bufs.x_norm[..dim],
@@ -2578,12 +2584,12 @@ pub fn decoder_forward_verify(
 }
 
 /// Score the vocabulary and return the argmax token id. Uses the INT8 lm_head
-/// on aarch64 when available, else the BF16 path. Bit-identical regardless of
-/// the effective thread count (the underlying matvec argmax is row-partitioned
+/// on aarch64/x86_64 when available, else the BF16 path. Bit-identical
+/// regardless of the effective thread count (the underlying matvec argmax is row-partitioned
 /// with index-stable tie-breaking).
 #[inline]
 fn lm_head_argmax(decoder: &Decoder, x: &[f32], dim: usize, lm_out_dim: usize) -> i32 {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
     if let (Some(ref int8_data), Some(ref scales)) =
         (&decoder.lm_head_int8, &decoder.lm_head_int8_scales)
     {

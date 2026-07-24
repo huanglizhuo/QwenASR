@@ -603,7 +603,7 @@ mod tests {
         for b in 0u8..=255 {
             let cp = btu[b as usize];
             assert!(
-                cp >= 0 && cp < 512,
+                (0..512).contains(&cp),
                 "byte {:#04x} mapped to out-of-range codepoint {}",
                 b,
                 cp
@@ -624,8 +624,7 @@ mod tests {
 
         // All 256 codepoints must be distinct
         let mut seen = std::collections::HashSet::new();
-        for b in 0..256 {
-            let cp = btu[b];
+        for (b, &cp) in btu.iter().enumerate() {
             assert!(
                 seen.insert(cp),
                 "byte {} and another byte both map to codepoint {}",

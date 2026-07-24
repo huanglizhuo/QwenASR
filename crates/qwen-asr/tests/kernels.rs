@@ -10,7 +10,16 @@ fn max_abs_err(a: &[f32], b: &[f32]) -> f32 {
 
 #[test]
 fn test_bf16_roundtrip() {
-    let values: Vec<f32> = vec![0.0, 1.0, -1.0, 3.14, -2.71, 100.5, 0.001, -0.001];
+    let values: Vec<f32> = vec![
+        0.0,
+        1.0,
+        -1.0,
+        std::f32::consts::PI,
+        -2.71,
+        100.5,
+        0.001,
+        -0.001,
+    ];
     for &v in &values {
         let bf16 = ((v.to_bits() + 0x8000) >> 16) as u16;
         let back = kernels::bf16_to_f32(bf16);
@@ -283,7 +292,7 @@ mod noblas_gemm {
 
     #[test]
     fn matmul_t_matches_reference() {
-        let mut rng = Rng::new(0xBEEF_9);
+        let mut rng = Rng::new(0x000B_EEF9);
         for &(m, k, n) in SHAPES {
             // matmul_t: A[m,k] @ B[n,k]^T -> C[m,n]; treat as ref_nt(x=A, w=B, no bias).
             let a = rng.vec(m * k);
@@ -298,7 +307,7 @@ mod noblas_gemm {
 
     #[test]
     fn linear_matches_reference() {
-        let mut rng = Rng::new(0xF00D_77);
+        let mut rng = Rng::new(0x00F0_0D77);
         for &(seq, k, out) in SHAPES {
             for use_bias in [false, true] {
                 let x = rng.vec(seq * k);
