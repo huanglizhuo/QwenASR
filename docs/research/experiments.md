@@ -7826,12 +7826,35 @@ doc entry.
 
 ## Speed Improvement Experiments — Round 14 (A-layer micro-opts + B1 offline speculative decode)
 
-Plan: `docs/research/r14-ab-speedups-plan.md`. Branch `r14-ab-speedups`.
+Plan (executed task-by-task with subagents; the standalone plan file was
+deleted after this ledger was recorded). Branch `r14-ab-speedups`, merged to
+`main` at `8e51abaf`.
 Scope: implement the review's A-layer (numerically neutral micro-opts) and B1
 (offline prompt-lookup speculative decode). Explicitly skipped per user
 decision: A3 (attention sequence partition — needs a WER gate) and A6 (x86
 kernels). Final bench: `bench/results/r14-final/`; WER unchanged in all modes
 (0.0270 / 0.0270 / 0.2973). Full suite: 77 passed / 0 failed.
+
+Plan invariants (all tasks): byte-identical output unless the task opts out
+(only A3 did); both build flavors (`blas` default and `--no-default-features`)
+stay green; the lockstep batched path must not regress; do not re-probe
+rejected directions (no INT4, no vocab shortlists, no layer-skip drafts, no
+early-stop/token-cap changes, no encoder fused-QKV GEMM, no desktop INT8
+prefill GEMM).
+
+Task ledger:
+
+| Task | Item | Status |
+|------|------|--------|
+| 1 | A1 — kill per-token heap allocations in decode kernels | landed `fccf84e9` |
+| 2 | A2 — move lm_head argmax inside the fused decode region | landed `8fa008dd` |
+| 3 | A3 — sequence-axis split for single-token attention | SKIPPED (numerics-changing, needs full WER gate) |
+| 4 | A4a — encoder sinusoidal-PE cache + `chunk_sizes` pre-size | landed `1504b5ea` |
+| 5 | A4b — mel spectrogram scratch reuse | landed `cea12781` (concurrent DFT GEMM variant micro-benched, no gain, reverted) |
+| 6 | A4c — vectorize encoder data-movement leftovers | landed `81df7507` |
+| 7 | A5 — parallel segment scheduling for timestamped paths | landed `32b41f8a` |
+| 8 | B1 — offline prompt-lookup speculative decode | landed `6519c23e` + alignment fix `fec0072c`, default OFF |
+| 9 | A6 — x86_64 AVX2 INT8 decode kernels | SKIPPED (stretch, not approved) |
 
 ### R14-A1: decode hot-path heap allocations — landed (`fccf84e9`)
 
