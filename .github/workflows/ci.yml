@@ -1,0 +1,89 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Clippy (default features)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Clippy (no default features)
+        run: cargo clippy --all-targets --no-default-features -- -D warnings
+
+  test:
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # The default `blas` feature links system OpenBLAS on Linux
+      # (crates/qwen-asr/build.rs), same as build-binaries.yml.
+      - name: Install OpenBLAS (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev
+
+      # Exercise the AVX2+FMA kernels (compile-time gated, same target-cpu as
+      # the released Linux binaries in build-binaries.yml). x86-64-v3 is not a
+      # valid target CPU on aarch64, so this is Linux-only.
+      - name: Set target-cpu (Linux)
+        if: runner.os == 'Linux'
+        run: echo "RUSTFLAGS=-C target-cpu=x86-64-v3" >> "$GITHUB_ENV"
+
+      - name: Build (default features)
+        run: cargo build --release
+
+      - name: Test (default features)
+        # Model-dependent tests self-skip: the 1.2GB model is not in CI.
+        # Tests resolve fixtures via QWEN_ASR_TEST_MODEL_DIR /
+        # QWEN_ASR_TEST_SAMPLES_DIR, falling back to repo-local
+        # qwen3-asr-0.6b/ and bench/samples/ (the latter is committed).
+        run: cargo test --release
+
+      - name: Build (no default features)
+        run: cargo build --release --no-default-features
+
+      - name: Test (no default features)
+        run: cargo test --release --no-default-features

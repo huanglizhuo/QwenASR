@@ -20,20 +20,12 @@ use std::sync::Mutex;
 // model-loading integration tests (each test file owns its own static mutex).
 static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
-fn resolve(rel: &str) -> Option<String> {
-    for prefix in ["", "../../"] {
-        let p = format!("{prefix}{rel}");
-        if std::path::Path::new(&p).exists() {
-            return Some(p);
-        }
-    }
-    None
-}
+mod common;
 
 fn load_ctx() -> Option<QwenCtx> {
-    let model_dir = match resolve("qwen3-asr-0.6b") {
-        Some(d) if std::path::Path::new(&d).join("model.safetensors").exists() => d,
-        _ => {
+    let model_dir = match common::model_dir() {
+        Some(d) => d,
+        None => {
             eprintln!("Skipping offline-verify test: model not downloaded");
             return None;
         }
@@ -44,7 +36,7 @@ fn load_ctx() -> Option<QwenCtx> {
 }
 
 fn load_audio() -> Option<Vec<f32>> {
-    let wav = resolve("bench/samples/audio.wav")?;
+    let wav = common::sample("audio.wav")?;
     qwen_asr::audio::load_wav(&wav)
 }
 

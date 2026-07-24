@@ -28,16 +28,12 @@ use std::sync::Mutex;
 
 static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
-fn workspace_path(rel: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(rel)
-}
+mod common;
 
 const EXPECT_TOTAL: usize = 595_011;
 
 fn load_fixture() -> Option<Vec<f32>> {
-    let bytes = std::fs::read(workspace_path("bench/samples/mixed_zh_en.wav")).ok()?;
+    let bytes = std::fs::read(common::sample("mixed_zh_en.wav")?).ok()?;
     qwen_asr::audio::parse_wav_buffer(&bytes)
 }
 
@@ -84,12 +80,13 @@ fn count_drops(counts: &[usize]) -> usize {
 fn vad_segment_reset_triggers_extra_boundary_resets() {
     let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
 
-    let model_dir = workspace_path("qwen3-asr-0.6b");
-    if !model_dir.join("model.safetensors").exists() {
-        eprintln!("SKIP: model not downloaded at {}", model_dir.display());
-        return;
-    }
-    let model_dir = model_dir.to_str().unwrap();
+    let model_dir = match common::model_dir() {
+        Some(d) => d,
+        None => {
+            eprintln!("SKIP: model not downloaded");
+            return;
+        }
+    };
     let samples = match load_fixture() {
         Some(s) => s,
         None => {
@@ -110,7 +107,7 @@ fn vad_segment_reset_triggers_extra_boundary_resets() {
     kernels::set_threads(kernels::get_num_cpus());
 
     // ---- OFF: default path (both flags false) — baseline reanchor/degen resets.
-    let mut ctx = QwenCtx::load(model_dir).expect("load model");
+    let mut ctx = QwenCtx::load(&model_dir).expect("load model");
     ctx.multilingual = false;
     ctx.vad_segment_reset = false;
     let (off_counts, _off_text, off_stable_reset) = run_stream(&mut ctx, &samples);
@@ -118,7 +115,7 @@ fn vad_segment_reset_triggers_extra_boundary_resets() {
 
     // ---- ON: vad_segment_reset only (multilingual stays OFF — no language
     // re-detection engaged, pure discrete segmentation).
-    let mut ctx = QwenCtx::load(model_dir).expect("load model");
+    let mut ctx = QwenCtx::load(&model_dir).expect("load model");
     ctx.multilingual = false;
     ctx.set_vad_segment_reset(true);
     assert!(ctx.vad_segment_reset, "setter must enable the flag");

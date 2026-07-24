@@ -1,12 +1,16 @@
 use qwen_asr::tokenizer::QwenTokenizer;
 
+mod common;
+
 fn get_tokenizer() -> Option<QwenTokenizer> {
-    let path = "qwen3-asr-0.6b/vocab.json";
-    if !std::path::Path::new(path).exists() {
-        eprintln!("Skipping tokenizer test: model not downloaded");
-        return None;
-    }
-    QwenTokenizer::load(path)
+    let dir = match common::model_dir() {
+        Some(d) => d,
+        None => {
+            eprintln!("Skipping tokenizer test: model not downloaded");
+            return None;
+        }
+    };
+    QwenTokenizer::load(&format!("{dir}/vocab.json"))
 }
 
 #[test]

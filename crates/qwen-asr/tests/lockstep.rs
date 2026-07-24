@@ -16,30 +16,20 @@ use std::sync::Mutex;
 // model-loading integration tests.
 static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
-/// Resolve a path that exists either relative to the workspace root or to the
-/// crate dir (cargo runs test binaries with cwd = package dir).
-fn resolve(rel: &str) -> Option<String> {
-    for prefix in ["", "../../"] {
-        let p = format!("{prefix}{rel}");
-        if std::path::Path::new(&p).exists() {
-            return Some(p);
-        }
-    }
-    None
-}
+mod common;
 
 #[test]
 fn lockstep_multi_segment_matches_serial() {
     let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
 
-    let model_dir = match resolve("qwen3-asr-0.6b") {
-        Some(d) if std::path::Path::new(&d).join("model.safetensors").exists() => d,
-        _ => {
+    let model_dir = match common::model_dir() {
+        Some(d) => d,
+        None => {
             eprintln!("Skipping lockstep test: model not downloaded");
             return;
         }
     };
-    let wav = match resolve("bench/samples/audio.wav") {
+    let wav = match common::sample("audio.wav") {
         Some(w) => w,
         None => {
             eprintln!("Skipping lockstep test: bench audio not found");

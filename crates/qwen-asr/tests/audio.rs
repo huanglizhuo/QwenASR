@@ -1,13 +1,17 @@
 use qwen_asr::audio;
 
+mod common;
+
 #[test]
 fn test_load_wav() {
-    let path = "/tmp/qwen-asr-ref/samples/jfk.wav";
-    if !std::path::Path::new(path).exists() {
-        eprintln!("Skipping test: {} not found", path);
-        return;
-    }
-    let samples = audio::load_wav(path);
+    let path = match common::sample("jfk.wav") {
+        Some(p) => p,
+        None => {
+            eprintln!("Skipping test: jfk.wav sample not found");
+            return;
+        }
+    };
+    let samples = audio::load_wav(&path);
     assert!(samples.is_some(), "Should load JFK WAV successfully");
     let s = samples.unwrap();
     // JFK clip is ~11s at 16kHz
@@ -32,12 +36,14 @@ fn test_load_wav() {
 
 #[test]
 fn test_mel_spectrogram_shape() {
-    let path = "/tmp/qwen-asr-ref/samples/jfk.wav";
-    if !std::path::Path::new(path).exists() {
-        eprintln!("Skipping test: {} not found", path);
-        return;
-    }
-    let samples = audio::load_wav(path).unwrap();
+    let path = match common::sample("jfk.wav") {
+        Some(p) => p,
+        None => {
+            eprintln!("Skipping test: jfk.wav sample not found");
+            return;
+        }
+    };
+    let samples = audio::load_wav(&path).unwrap();
     let result = audio::mel_spectrogram(&samples);
     assert!(result.is_some(), "mel_spectrogram should succeed");
     let (mel, n_frames) = result.unwrap();

@@ -9,13 +9,15 @@ use qwen_asr::kernels;
 use std::os::unix::fs::FileExt;
 use std::sync::Arc;
 
-fn model_dir() -> Option<&'static str> {
-    let d = "qwen3-asr-0.6b";
-    if std::path::Path::new(d).join("model.safetensors").exists() {
-        Some(d)
-    } else {
-        eprintln!("Skipping sidecar test: model not downloaded at {}", d);
-        None
+mod common;
+
+fn model_dir() -> Option<String> {
+    match common::model_dir() {
+        Some(d) => Some(d),
+        None => {
+            eprintln!("Skipping sidecar test: model not downloaded");
+            None
+        }
     }
 }
 
@@ -61,7 +63,7 @@ fn sidecar_roundtrip_and_invalidation() {
     let _ = std::fs::remove_file(&sc);
 
     // Cold run: quantizes into owned Vecs and writes the sidecar.
-    let a = QwenModel::load(dir).expect("cold load");
+    let a = QwenModel::load(&dir).expect("cold load");
     assert!(
         a.decoder._int8_sidecar.is_none(),
         "cold run must own freshly-quantized Vecs, not mmap"
@@ -73,7 +75,7 @@ fn sidecar_roundtrip_and_invalidation() {
     let snap_a = snapshot(&a);
 
     // Warm run: mmaps the sidecar and borrows INT8 weights in place.
-    let b = QwenModel::load(dir).expect("warm load");
+    let b = QwenModel::load(&dir).expect("warm load");
     assert!(
         b.decoder._int8_sidecar.is_some(),
         "warm run must mmap the sidecar"
@@ -89,7 +91,7 @@ fn sidecar_roundtrip_and_invalidation() {
         let f = std::fs::OpenOptions::new().write(true).open(&sc).unwrap();
         f.write_all_at(&[0xffu8; 8], 0).unwrap();
     }
-    let c = QwenModel::load(dir).expect("corrupt-magic load");
+    let c = QwenModel::load(&dir).expect("corrupt-magic load");
     assert!(
         c.decoder._int8_sidecar.is_none(),
         "corrupted magic must trigger a rebuild, never a stale mmap read"
@@ -101,7 +103,7 @@ fn sidecar_roundtrip_and_invalidation() {
     );
 
     // The rebuild rewrote a valid sidecar -> warm mmap works again.
-    let d = QwenModel::load(dir).expect("re-warm load");
+    let d = QwenModel::load(&dir).expect("re-warm load");
     assert!(
         d.decoder._int8_sidecar.is_some(),
         "sidecar must be valid again after rebuild"
@@ -112,7 +114,7 @@ fn sidecar_roundtrip_and_invalidation() {
         let f = std::fs::OpenOptions::new().write(true).open(&sc).unwrap();
         f.write_all_at(&[0xaau8; 8], 16).unwrap();
     }
-    let e = QwenModel::load(dir).expect("identity-mismatch load");
+    let e = QwenModel::load(&dir).expect("identity-mismatch load");
     assert!(
         e.decoder._int8_sidecar.is_none(),
         "model-identity mismatch must trigger a rebuild"

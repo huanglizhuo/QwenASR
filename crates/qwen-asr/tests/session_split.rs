@@ -17,17 +17,7 @@ use std::sync::Mutex;
 // model-loading integration tests.
 static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
-/// Resolve a path that exists either relative to the workspace root or to the
-/// crate dir (cargo runs test binaries with cwd = package dir).
-fn resolve(rel: &str) -> Option<String> {
-    for prefix in ["", "../../"] {
-        let p = format!("{prefix}{rel}");
-        if std::path::Path::new(&p).exists() {
-            return Some(p);
-        }
-    }
-    None
-}
+mod common;
 
 fn load_wav(path: &str) -> Vec<f32> {
     audio::load_wav(path).expect("failed to load wav")
@@ -37,16 +27,16 @@ fn load_wav(path: &str) -> Vec<f32> {
 fn two_sessions_one_model_match_sequential() {
     let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
 
-    let model_dir = match resolve("qwen3-asr-0.6b") {
-        Some(d) if std::path::Path::new(&d).join("model.safetensors").exists() => d,
-        _ => {
+    let model_dir = match common::model_dir() {
+        Some(d) => d,
+        None => {
             eprintln!("Skipping session-split test: model not downloaded");
             return;
         }
     };
     let (wav_a, wav_b) = match (
-        resolve("bench/samples/audio.wav"),
-        resolve("bench/long/samples/long-2min.wav"),
+        common::sample("audio.wav"),
+        common::resolve("bench/long/samples/long-2min.wav"),
     ) {
         (Some(a), Some(b)) => (a, b),
         _ => {

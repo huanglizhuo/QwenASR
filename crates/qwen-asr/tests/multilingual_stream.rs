@@ -6,14 +6,14 @@
 //! English, separated by 1.8 s silence gaps) and checks per-utterance
 //! output-language correctness in two modes:
 //!
-//! * OFF  — the app's current shipping default (`want_language_detection =
-//!          false`, `multilingual = false`): a fixed `language English` preamble
-//!          is prefilled, so Chinese speech is *translated* to English and the
-//!          whole conversation collapses to one language.
-//! * ON   — multilingual mode (`multilingual = true`): at every silence
-//!          utterance boundary the language carry is dropped so the next
-//!          utterance re-detects its language from fresh audio, preserving the
-//!          code-switch (Chinese stays Chinese, English stays English).
+//! * OFF — the app's current shipping default (`want_language_detection =
+//!   false`, `multilingual = false`): a fixed `language English` preamble
+//!   is prefilled, so Chinese speech is *translated* to English and the
+//!   whole conversation collapses to one language.
+//! * ON — multilingual mode (`multilingual = true`): at every silence
+//!   utterance boundary the language carry is dropped so the next
+//!   utterance re-detects its language from fresh audio, preserving the
+//!   code-switch (Chinese stays Chinese, English stays English).
 //!
 //! Run with output:
 //!   cargo test --release --test multilingual_stream -- --nocapture
@@ -27,13 +27,7 @@ use std::sync::Mutex;
 
 static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
-// Resolve fixtures relative to the workspace root (CARGO_MANIFEST_DIR points at
-// crates/qwen-asr), independent of the test's CWD.
-fn workspace_path(rel: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(rel)
-}
+mod common;
 
 // Total sample count of the committed fixture (16 kHz mono). If a regenerated
 // fixture differs, the test skips rather than misreporting against stale
@@ -88,7 +82,7 @@ fn classify(text: &str) -> Lang {
 }
 
 fn load_fixture() -> Option<Vec<f32>> {
-    let bytes = std::fs::read(workspace_path("bench/samples/mixed_zh_en.wav")).ok()?;
+    let bytes = std::fs::read(common::sample("mixed_zh_en.wav")?).ok()?;
     qwen_asr::audio::parse_wav_buffer(&bytes)
 }
 
@@ -196,12 +190,13 @@ fn lcs(a: &[Lang], b: &[Lang]) -> usize {
 fn multilingual_code_switch_language_correctness() {
     let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
 
-    let model_dir = workspace_path("qwen3-asr-0.6b");
-    if !model_dir.join("model.safetensors").exists() {
-        eprintln!("SKIP: model not downloaded at {}", model_dir.display());
-        return;
-    }
-    let model_dir = model_dir.to_str().unwrap();
+    let model_dir = match common::model_dir() {
+        Some(d) => d,
+        None => {
+            eprintln!("SKIP: model not downloaded");
+            return;
+        }
+    };
     let samples = match load_fixture() {
         Some(s) => s,
         None => {
@@ -223,7 +218,7 @@ fn multilingual_code_switch_language_correctness() {
 
     // ---- OFF: the app's current shipping default (fixed English preamble,
     // no per-utterance re-detection) — the real before-state users see today.
-    let mut ctx = QwenCtx::load(model_dir).expect("load model");
+    let mut ctx = QwenCtx::load(&model_dir).expect("load model");
     ctx.want_language_detection = false;
     ctx.multilingual = false;
     let off_snaps = run_stream(&mut ctx, &samples);
@@ -231,7 +226,7 @@ fn multilingual_code_switch_language_correctness() {
     let (off_correct, off_langs) = score(&off_deltas);
 
     // ---- ON: multilingual per-utterance re-detection (the fix) ----
-    let mut ctx = QwenCtx::load(model_dir).expect("load model");
+    let mut ctx = QwenCtx::load(&model_dir).expect("load model");
     ctx.set_multilingual(true);
     let on_snaps = run_stream(&mut ctx, &samples);
     let on_deltas = deltas(&on_snaps);
@@ -240,11 +235,11 @@ fn multilingual_code_switch_language_correctness() {
     let n = EXPECT_LANG.len();
     eprintln!("\n=== Task 4: mixed-language per-utterance language correctness ===");
     eprintln!("utt  expect  OFF(default)  ON(multilingual)");
-    for i in 0..n {
+    for (i, &expect) in EXPECT_LANG.iter().enumerate() {
         eprintln!(
             "{:>3}  {:>6?}  {:>11?}  {:>16?}   OFF='{}' ON='{}'",
             i + 1,
-            EXPECT_LANG[i],
+            expect,
             off_langs.get(i).copied().unwrap_or(Lang::Empty),
             on_langs.get(i).copied().unwrap_or(Lang::Empty),
             off_deltas.get(i).map(|s| s.as_str()).unwrap_or("").trim(),

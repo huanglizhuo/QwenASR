@@ -5,33 +5,41 @@ use qwen_asr::transcribe;
 
 use std::sync::Mutex;
 
+mod common;
+
 // Global mutex to serialize regression tests — the thread pool is a global singleton
 // and doesn't support concurrent callers from different threads.
 static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
 fn setup_model() -> Option<QwenCtx> {
-    let model_dir = "qwen3-asr-0.6b";
-    if !std::path::Path::new(model_dir)
-        .join("model.safetensors")
-        .exists()
-    {
-        eprintln!(
-            "Skipping regression test: model not downloaded at {}",
-            model_dir
-        );
-        return None;
-    }
+    let model_dir = match common::model_dir() {
+        Some(d) => d,
+        None => {
+            eprintln!("Skipping regression test: model not found");
+            return None;
+        }
+    };
     kernels::set_verbose(0);
     kernels::set_threads(kernels::get_num_cpus());
-    QwenCtx::load(model_dir)
+    QwenCtx::load(&model_dir)
+}
+
+fn sample_wav(name: &str) -> Option<String> {
+    match common::sample(name) {
+        Some(w) => Some(w),
+        None => {
+            eprintln!("Skipping: sample {name} not found");
+            None
+        }
+    }
 }
 
 fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
     let mut dp = vec![vec![0usize; b.len() + 1]; a.len() + 1];
-    for i in 0..=a.len() {
-        dp[i][0] = i;
+    for (i, row) in dp.iter_mut().enumerate() {
+        row[0] = i;
     }
     for j in 0..=b.len() {
         dp[0][j] = j;
@@ -54,13 +62,12 @@ fn test_offline_jfk() {
         Some(c) => c,
         None => return,
     };
-    let wav = "/tmp/qwen-asr-ref/samples/jfk.wav";
-    if !std::path::Path::new(wav).exists() {
-        eprintln!("Skipping: {} not found", wav);
-        return;
-    }
+    let wav = match sample_wav("jfk.wav") {
+        Some(w) => w,
+        None => return,
+    };
 
-    let result = transcribe::transcribe(&mut ctx, wav);
+    let result = transcribe::transcribe(&mut ctx, &wav);
     assert!(result.is_some(), "Offline transcription should succeed");
     let text = result.unwrap();
 
@@ -82,13 +89,12 @@ fn test_offline_test_speech() {
         Some(c) => c,
         None => return,
     };
-    let wav = "/tmp/qwen-asr-ref/samples/test_speech.wav";
-    if !std::path::Path::new(wav).exists() {
-        eprintln!("Skipping: {} not found", wav);
-        return;
-    }
+    let wav = match sample_wav("test_speech.wav") {
+        Some(w) => w,
+        None => return,
+    };
 
-    let result = transcribe::transcribe(&mut ctx, wav);
+    let result = transcribe::transcribe(&mut ctx, &wav);
     assert!(result.is_some(), "Offline transcription should succeed");
     let text = result.unwrap();
 
@@ -112,15 +118,13 @@ fn test_segmented_mode() {
         Some(c) => c,
         None => return,
     };
-    let wav =
-        "/tmp/qwen-asr-ref/samples/night_of_the_living_dead_1968/45s_dont_be_afraid_of_me.wav";
-    if !std::path::Path::new(wav).exists() {
-        eprintln!("Skipping: {} not found", wav);
-        return;
-    }
+    let wav = match sample_wav("night_of_the_living_dead_1968/45s_dont_be_afraid_of_me.wav") {
+        Some(w) => w,
+        None => return,
+    };
 
     ctx.segment_sec = 30.0;
-    let result = transcribe::transcribe(&mut ctx, wav);
+    let result = transcribe::transcribe(&mut ctx, &wav);
     assert!(result.is_some(), "Segmented transcription should succeed");
     let text = result.unwrap();
 
@@ -146,13 +150,12 @@ fn test_streaming_mode() {
         None => return,
     };
 
-    let wav = "/tmp/qwen-asr-ref/samples/jfk.wav";
-    if !std::path::Path::new(wav).exists() {
-        eprintln!("Skipping: {} not found", wav);
-        return;
-    }
+    let wav = match sample_wav("jfk.wav") {
+        Some(w) => w,
+        None => return,
+    };
 
-    let samples = qwen_asr::audio::load_wav(wav);
+    let samples = qwen_asr::audio::load_wav(&wav);
     assert!(samples.is_some());
     let samples = samples.unwrap();
 
@@ -172,7 +175,10 @@ fn test_streaming_mode() {
 }
 
 fn load_audio_reference() -> String {
-    let path = "bench/samples/audio.txt";
+    let path = match common::sample("audio.txt") {
+        Some(p) => p,
+        None => return String::new(),
+    };
     std::fs::read_to_string(path)
         .unwrap_or_default()
         .trim()
@@ -186,18 +192,17 @@ fn test_offline_audio_wav() {
         Some(c) => c,
         None => return,
     };
-    let wav = "bench/samples/audio.wav";
-    if !std::path::Path::new(wav).exists() {
-        eprintln!("Skipping: {} not found", wav);
-        return;
-    }
+    let wav = match sample_wav("audio.wav") {
+        Some(w) => w,
+        None => return,
+    };
     let reference = load_audio_reference();
     if reference.is_empty() {
-        eprintln!("Skipping: bench/samples/audio.txt not found or empty");
+        eprintln!("Skipping: audio.txt sample not found or empty");
         return;
     }
 
-    let result = transcribe::transcribe(&mut ctx, wav);
+    let result = transcribe::transcribe(&mut ctx, &wav);
     assert!(result.is_some(), "Offline transcription should succeed");
     let text = result.unwrap();
 
@@ -218,19 +223,18 @@ fn test_segmented_audio_wav() {
         Some(c) => c,
         None => return,
     };
-    let wav = "bench/samples/audio.wav";
-    if !std::path::Path::new(wav).exists() {
-        eprintln!("Skipping: {} not found", wav);
-        return;
-    }
+    let wav = match sample_wav("audio.wav") {
+        Some(w) => w,
+        None => return,
+    };
     let reference = load_audio_reference();
     if reference.is_empty() {
-        eprintln!("Skipping: bench/samples/audio.txt not found or empty");
+        eprintln!("Skipping: audio.txt sample not found or empty");
         return;
     }
 
     ctx.segment_sec = 30.0;
-    let result = transcribe::transcribe(&mut ctx, wav);
+    let result = transcribe::transcribe(&mut ctx, &wav);
     assert!(result.is_some(), "Segmented transcription should succeed");
     let text = result.unwrap();
 
@@ -251,19 +255,18 @@ fn test_streaming_audio_wav() {
         Some(c) => c,
         None => return,
     };
-    let wav = "bench/samples/audio.wav";
-    if !std::path::Path::new(wav).exists() {
-        eprintln!("Skipping: {} not found", wav);
-        return;
-    }
+    let wav = match sample_wav("audio.wav") {
+        Some(w) => w,
+        None => return,
+    };
     let reference = load_audio_reference();
     if reference.is_empty() {
-        eprintln!("Skipping: bench/samples/audio.txt not found or empty");
+        eprintln!("Skipping: audio.txt sample not found or empty");
         return;
     }
 
-    let samples = qwen_asr::audio::load_wav(wav);
-    assert!(samples.is_some(), "Should load bench/samples/audio.wav");
+    let samples = qwen_asr::audio::load_wav(&wav);
+    assert!(samples.is_some(), "Should load audio.wav sample");
     let samples = samples.unwrap();
 
     let result = transcribe::transcribe_stream(&mut ctx, &samples);
@@ -281,20 +284,18 @@ fn test_streaming_audio_wav() {
 }
 
 fn setup_aligner_model() -> Option<QwenCtx> {
-    let model_dir = "qwen3-aligner-0.6b";
-    if !std::path::Path::new(model_dir)
-        .join("model.safetensors")
-        .exists()
+    let model_dir = match common::resolve("qwen3-aligner-0.6b")
+        .filter(|d| std::path::Path::new(d).join("model.safetensors").exists())
     {
-        eprintln!(
-            "Skipping alignment test: aligner model not downloaded at {}",
-            model_dir
-        );
-        return None;
-    }
+        Some(d) => d,
+        None => {
+            eprintln!("Skipping alignment test: aligner model not downloaded");
+            return None;
+        }
+    };
     kernels::set_verbose(0);
     kernels::set_threads(kernels::get_num_cpus());
-    QwenCtx::load(model_dir)
+    QwenCtx::load(&model_dir)
 }
 
 #[test]
@@ -305,13 +306,12 @@ fn test_forced_align() {
         None => return,
     };
 
-    let wav = "audio.wav";
-    if !std::path::Path::new(wav).exists() {
-        eprintln!("Skipping: {} not found", wav);
-        return;
-    }
+    let wav = match sample_wav("audio.wav") {
+        Some(w) => w,
+        None => return,
+    };
 
-    let samples = qwen_asr::audio::load_wav(wav);
+    let samples = qwen_asr::audio::load_wav(&wav);
     assert!(samples.is_some(), "Should load audio.wav");
     let samples = samples.unwrap();
 
@@ -367,13 +367,12 @@ fn test_transcribe_full_json_shape() {
         None => return,
     };
 
-    let wav = "audio.wav";
-    if !std::path::Path::new(wav).exists() {
-        eprintln!("Skipping: {} not found", wav);
-        return;
-    }
+    let wav = match sample_wav("audio.wav") {
+        Some(w) => w,
+        None => return,
+    };
 
-    let samples = qwen_asr::audio::load_wav(wav);
+    let samples = qwen_asr::audio::load_wav(&wav);
     assert!(samples.is_some(), "Should load audio.wav");
     let samples = samples.unwrap();
 

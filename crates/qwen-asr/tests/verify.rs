@@ -28,17 +28,7 @@ use std::sync::Mutex;
 // model-loading integration tests (each test file owns its own static mutex).
 static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
-/// Resolve a path that exists either relative to the workspace root or to the
-/// crate dir (cargo runs test binaries with cwd = package dir).
-fn resolve(rel: &str) -> Option<String> {
-    for prefix in ["", "../../"] {
-        let p = format!("{prefix}{rel}");
-        if std::path::Path::new(&p).exists() {
-            return Some(p);
-        }
-    }
-    None
-}
+mod common;
 
 /// Build a fresh KV cache + RoPE cache and prefill a fixed token sequence.
 /// Returns `(kv_cache, rope, prefill_len)` positioned right after the prefill.
@@ -92,9 +82,9 @@ fn sequential_argmaxes(ctx: &QwenCtx, prefill_tokens: &[i32], continuation: &[i3
 fn verify_exactness_vs_sequential() {
     let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
 
-    let model_dir = match resolve("qwen3-asr-0.6b") {
-        Some(d) if std::path::Path::new(&d).join("model.safetensors").exists() => d,
-        _ => {
+    let model_dir = match common::model_dir() {
+        Some(d) => d,
+        None => {
             eprintln!("Skipping verify test: model not downloaded");
             return;
         }
@@ -253,9 +243,9 @@ fn generate_via_verify(
 fn verify_rollback_matches_sequential() {
     let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
 
-    let model_dir = match resolve("qwen3-asr-0.6b") {
-        Some(d) if std::path::Path::new(&d).join("model.safetensors").exists() => d,
-        _ => {
+    let model_dir = match common::model_dir() {
+        Some(d) => d,
+        None => {
             eprintln!("Skipping verify rollback test: model not downloaded");
             return;
         }
