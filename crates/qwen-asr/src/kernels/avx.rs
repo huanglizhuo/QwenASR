@@ -2,6 +2,10 @@
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
+/// Convert a buffer of BF16 values (as raw u16) to f32 in place order.
+///
+/// # Safety
+/// Uses AVX2 intrinsics; `dst` must hold at least `src.len()` elements.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 pub unsafe fn bf16_to_f32_buf(dst: &mut [f32], src: &[u16]) {
@@ -50,6 +54,12 @@ unsafe fn hsum_ps(v: __m256) -> f32 {
     _mm_cvtss_f32(sum32)
 }
 
+/// Fused BF16 matvec: `y = W @ x (+ bias)` where W is BF16 row-major.
+///
+/// # Safety
+/// Uses AVX2+FMA intrinsics; `w_bf16` must point to at least
+/// `out_dim * in_dim` valid BF16 values, `x` to `in_dim`, `y` to `out_dim`,
+/// and `bias` (if present) to `out_dim` elements.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2", enable = "fma")]
 pub unsafe fn bf16_matvec_fused(
@@ -164,6 +174,12 @@ pub unsafe fn bf16_matvec_fused(
     }
 }
 
+/// Find the argmax over rows `[start, end)` of `x @ W.T` (BF16 row-major W),
+/// returning `(row_index, score)`.
+///
+/// # Safety
+/// Uses AVX2+FMA intrinsics; `w_bf16` must point to at least `end * in_dim`
+/// valid BF16 values and `x` to `in_dim` elements.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2", enable = "fma")]
 pub unsafe fn argmax_bf16_range(
@@ -259,6 +275,10 @@ pub unsafe fn argmax_bf16_range(
     (best, best_val)
 }
 
+/// Dot product of the first `n` elements of `a` and `b`.
+///
+/// # Safety
+/// Uses AVX2+FMA intrinsics; `a` and `b` must each have at least `n` elements.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2", enable = "fma")]
 pub unsafe fn dot_f32(a: &[f32], b: &[f32], n: usize) -> f32 {
@@ -313,6 +333,10 @@ pub unsafe fn dot_f32(a: &[f32], b: &[f32], n: usize) -> f32 {
     sum
 }
 
+/// Scale the first `n` elements of `dst` by `scale` in place.
+///
+/// # Safety
+/// Uses AVX2 intrinsics; `dst` must have at least `n` elements.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 pub unsafe fn vec_scale_inplace(dst: &mut [f32], scale: f32, n: usize) {
@@ -353,6 +377,11 @@ pub unsafe fn vec_scale_inplace(dst: &mut [f32], scale: f32, n: usize) {
     }
 }
 
+/// In-place axpy: `dst[i] += alpha * src[i]` for the first `n` elements.
+///
+/// # Safety
+/// Uses AVX2+FMA intrinsics; `dst` and `src` must each have at least `n`
+/// elements.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2", enable = "fma")]
 pub unsafe fn vec_axpy_inplace(dst: &mut [f32], src: &[f32], alpha: f32, n: usize) {
@@ -413,6 +442,12 @@ pub unsafe fn vec_axpy_inplace(dst: &mut [f32], src: &[f32], alpha: f32, n: usiz
     }
 }
 
+/// In-place scale-and-add: `dst[i] = dst[i] * correction + src[i]` for the
+/// first `n` elements.
+///
+/// # Safety
+/// Uses AVX2+FMA intrinsics; `dst` and `src` must each have at least `n`
+/// elements.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2", enable = "fma")]
 pub unsafe fn vec_scale_add(dst: &mut [f32], src: &[f32], correction: f32, n: usize) {
@@ -474,6 +509,10 @@ pub unsafe fn vec_scale_add(dst: &mut [f32], src: &[f32], correction: f32, n: us
 }
 
 /// AVX2-accelerated RMS norm for a single row.
+///
+/// # Safety
+/// Uses AVX2+FMA intrinsics; `out`, `x`, and `weight` must each have at least
+/// `hidden` elements.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2", enable = "fma")]
 pub unsafe fn rms_norm_row(out: &mut [f32], x: &[f32], weight: &[f32], hidden: usize, eps: f32) {
@@ -520,6 +559,10 @@ pub unsafe fn rms_norm_row(out: &mut [f32], x: &[f32], weight: &[f32], hidden: u
 }
 
 /// AVX2-accelerated layer norm for a single row.
+///
+/// # Safety
+/// Uses AVX2+FMA intrinsics; `out`, `x`, `weight`, and `bias` must each have
+/// at least `hidden` elements.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2", enable = "fma")]
 pub unsafe fn layer_norm_row(
@@ -600,8 +643,8 @@ pub unsafe fn layer_norm_row(
 #[target_feature(enable = "avx2", enable = "fma")]
 #[inline]
 unsafe fn fast_exp_avx(x: __m256) -> __m256 {
-    let log2e = _mm256_set1_ps(1.442695041);
-    let ln2 = _mm256_set1_ps(0.6931471806);
+    let log2e = _mm256_set1_ps(core::f32::consts::LOG2_E);
+    let ln2 = _mm256_set1_ps(core::f32::consts::LN_2);
 
     let val = _mm256_mul_ps(x, log2e);
     let val = _mm256_min_ps(val, _mm256_set1_ps(126.0));
@@ -631,6 +674,10 @@ unsafe fn fast_exp_avx(x: __m256) -> __m256 {
 }
 
 /// AVX2-accelerated exp() in-place using fast polynomial approximation.
+///
+/// # Safety
+/// Uses AVX2+FMA intrinsics; loads/stores are bounds-checked against
+/// `x.len()` by the loop conditions.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2", enable = "fma")]
 pub unsafe fn exp_inplace(x: &mut [f32]) {
@@ -648,13 +695,18 @@ pub unsafe fn exp_inplace(x: &mut [f32]) {
 }
 
 /// AVX2-accelerated GELU (tanh approximation).
+///
+/// # Safety
+/// Uses AVX2+FMA intrinsics; `x` must have at least `n` elements.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2", enable = "fma")]
 pub unsafe fn gelu_inplace(x: &mut [f32], n: usize) {
     let half = _mm256_set1_ps(0.5);
     let one = _mm256_set1_ps(1.0);
     let two = _mm256_set1_ps(2.0);
-    let coeff = _mm256_set1_ps(0.7978845608028654);
+    // sqrt(2/pi), truncated to the shortest value that round-trips to the
+    // same f32 (identical bits to the previous long literal).
+    let coeff = _mm256_set1_ps(0.797_884_6);
     let c3 = _mm256_set1_ps(0.044715);
     let mut i = 0usize;
 
@@ -673,7 +725,7 @@ pub unsafe fn gelu_inplace(x: &mut [f32], n: usize) {
     while i < n {
         let val = x[i];
         let x3 = val * val * val;
-        let inner = 0.7978845608028654f32 * (val + 0.044715 * x3);
+        let inner = 0.797_884_6_f32 * (val + 0.044715 * x3);
         x[i] = 0.5 * val * (1.0 + inner.tanh());
         i += 1;
     }
@@ -755,7 +807,7 @@ pub unsafe fn quantize_bf16_to_int8(
     let mut scales = vec![0.0f32; out_dim];
     let abs_mask = _mm256_castsi256_ps(_mm256_set1_epi32(0x7FFF_FFFF));
 
-    for row in 0..out_dim {
+    for (row, scale_out) in scales.iter_mut().enumerate().take(out_dim) {
         let w_row = w_bf16.add(row * in_dim);
 
         // Find absmax of the row
@@ -777,7 +829,7 @@ pub unsafe fn quantize_bf16_to_int8(
 
         let scale = if max_abs > 0.0 { max_abs / 127.0 } else { 1.0 };
         let inv_scale = 127.0 / max_abs.max(1e-10);
-        scales[row] = scale;
+        *scale_out = scale;
 
         // Quantize row
         let dst = int8_data.as_mut_ptr().add(row * in_dim);

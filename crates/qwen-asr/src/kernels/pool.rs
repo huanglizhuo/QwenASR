@@ -219,6 +219,9 @@ pub fn get_default_threads() -> usize {
 /// branch so the `E - P` subtraction can never underflow the unsigned type.
 ///   E <= P  -> extra = E            -> P + E   (== old `P + min(E, P)`)
 ///   E >  P  -> extra = P + (E-P)/2  (always <= E, so result <= P + E)
+// Only called from the macOS sysctl path (and its unit test); gate it to match
+// so non-macOS builds don't see dead code.
+#[cfg(any(target_os = "macos", test))]
 #[inline]
 fn default_threads_formula(p: usize, e: usize) -> usize {
     let extra = if e <= p { e } else { (p + (e - p) / 2).min(e) };
@@ -247,7 +250,7 @@ pub(crate) fn parallel_for<F: Fn(usize, usize) + Send + Sync>(f: F) {
     pool.fn_ptr_atomic
         .store(&f as *const F as *const () as usize, Ordering::Relaxed);
     pool.fn_call_atomic
-        .store(trampoline::<F> as usize, Ordering::Relaxed);
+        .store(trampoline::<F> as *const () as usize, Ordering::Relaxed);
     pool.n_threads_atomic.store(n_threads, Ordering::Relaxed);
     // Release: ensures all stores above are visible to workers that Acquire gen_atomic
     pool.gen_atomic.fetch_add(1, Ordering::Release);
