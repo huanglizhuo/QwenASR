@@ -506,7 +506,7 @@ struct OfflineVerifyStats {
 /// `verify_pool` (aarch64 only): `Some` enables the R14-B1 prompt-lookup
 /// speculative decode path (serial/single-session callers pass the ctx-owned
 /// pool when `QWEN_ASR_VERIFY=1` opts in — default OFF, measured acceptance
-/// on ASR text is ~0); `None` keeps the plain autoregressive loop (the L3
+/// on ASR text is low); `None` keeps the plain autoregressive loop (the L3
 /// parallel workers pass `None` — they run single-threaded by design and v1
 /// does not speculate there).
 #[allow(clippy::too_many_arguments)]
@@ -589,7 +589,7 @@ fn decode_segment_core(
 
             // Owned copy (≤ 7 tokens): the commit loop below mutates `lookup`,
             // which `propose`'s returned slice borrows.
-            let drafts = lookup.propose(kernels::MAX_BATCH - 1).to_vec();
+            let drafts = lookup.propose(token, kernels::MAX_BATCH - 1).to_vec();
             if drafts.is_empty() {
                 stats.single_steps += 1;
                 stats.empty_proposals += 1;
@@ -803,7 +803,8 @@ fn transcribe_segment(
         &mut ctx.enc_bufs,
         // R14-B1: the serial single-session path speculates with the
         // ctx-owned verify pool. Opt-in only (default OFF — measured
-        // acceptance on ASR text is ~0); `QWEN_ASR_VERIFY=1` enables.
+        // acceptance on ASR text is low, ~3% fewer decode forwards on
+        // long-2min); `QWEN_ASR_VERIFY=1` enables.
         #[cfg(target_arch = "aarch64")]
         if offline_verify_enabled() {
             Some(&mut ctx.verify_pool)
@@ -1936,12 +1937,16 @@ fn stream_verify_enabled() -> bool {
 }
 
 /// Whether the R14-B1 offline prompt-lookup verifier is enabled. Default OFF:
-/// measured acceptance on real ASR output is ~0 (audio.wav: 46/46 empty
-/// proposals; long-2min: 0/39 first-draft hits — speech transcripts have no
-/// exploitable token-level n-gram repetition), so the mechanism is kept
-/// byte-identical and tested but opt-in via `QWEN_ASR_VERIFY=1`. The
-/// streaming overlap-draft path above is unaffected (its draft source is the
-/// previous chunk's tail, which DOES predict).
+/// measured acceptance on real ASR output is low (audio.wav: 46/46 empty
+/// proposals, no repetition in a short segment; long-2min: 29 verify steps ≈
+/// 8% of decode steps, 11 accepted drafts, 1.38 tok/step ≈ 3% fewer decode
+/// forwards — speech transcripts have little exploitable token-level n-gram
+/// repetition), so the mechanism is kept byte-identical and tested but opt-in
+/// via `QWEN_ASR_VERIFY=1`. Note the env var is shared with the streaming
+/// verifier above, whose default is the opposite (`=0` disables it), so the
+/// two cannot be toggled independently. The streaming overlap-draft path is
+/// unaffected (its draft source is the previous chunk's tail, which DOES
+/// predict).
 #[cfg(target_arch = "aarch64")]
 fn offline_verify_enabled() -> bool {
     std::env::var("QWEN_ASR_VERIFY")
