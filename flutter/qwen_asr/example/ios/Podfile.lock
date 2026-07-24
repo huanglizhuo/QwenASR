@@ -1,22 +1,41 @@
 PODS:
   - Flutter (1.0.0)
+  - onnxruntime-c (1.22.0)
+  - onnxruntime-objc (1.22.0):
+    - onnxruntime-objc/Core (= 1.22.0)
+  - onnxruntime-objc/Core (1.22.0):
+    - onnxruntime-c (= 1.22.0)
   - qwen_asr (0.1.0):
     - Flutter
+  - vad (0.0.6):
+    - Flutter
+    - onnxruntime-objc (= 1.22.0)
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
   - qwen_asr (from `.symlinks/plugins/qwen_asr/ios`)
+  - vad (from `.symlinks/plugins/vad/ios`)
+
+SPEC REPOS:
+  trunk:
+    - onnxruntime-c
+    - onnxruntime-objc
 
 EXTERNAL SOURCES:
   Flutter:
     :path: Flutter
   qwen_asr:
     :path: ".symlinks/plugins/qwen_asr/ios"
+  vad:
+    :path: ".symlinks/plugins/vad/ios"
 
 SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  onnxruntime-c: 7f778680e96145956c0a31945f260321eed2611a
+  onnxruntime-objc: 83d28b87525bd971259a66e153ea32b5d023de19
   qwen_asr: df21f2f8607e14e11d86db7ec27ad5810bcf7303
+  vad: 7934867589afe53567f492df66fb1615f2185822
 
-PODFILE CHECKSUM: 3c63482e143d1b91d2d2560aee9fb04ecc74ac7e
+PODFILE CHECKSUM: aa138be8409ad2ab7f70f36aee65b237099b922e
 
 COCOAPODS: 1.16.2
