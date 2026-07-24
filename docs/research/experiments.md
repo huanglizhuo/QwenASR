@@ -18,6 +18,9 @@ This file collects the optimization experiment diaries.
 - [Speed Improvement Experiments — Round 9](#speed-improvement-experiments--round-9)
 - [Speed Improvement Experiments — Round 10](#speed-improvement-experiments--round-10)
 - [Speed Improvement Experiments — Round 11](#speed-improvement-experiments--round-11)
+- [Speed Improvement Experiments — Round 12](#speed-improvement-experiments--round-12)
+- [Speed Improvement Experiments — Round 13 (multi-token greedy verifier)](#speed-improvement-experiments--round-13-multi-token-greedy-verifier)
+- [Speed Improvement Experiments — Round 14 (A-layer micro-opts + B1 offline speculative decode)](#speed-improvement-experiments--round-14-a-layer-micro-opts--b1-offline-speculative-decode)
 - [Autoresearch Program Baseline Experiments](#autoresearch-program-baseline-experiments)
 - [Historical Commit Ledger (perf-opt-1 branch)](#historical-commit-ledger-perf-opt-1-branch)
 - [Opportunity Backlog](#opportunity-backlog)
@@ -7818,6 +7821,73 @@ R12-B) no blind kernel variants were tried. Desktop/BLAS untouched by constructi
 (feature never compiled). Commits: `b11b1a7b` (kernels+feature+wiring),
 `e4d952df` (QASR_METRIC diagnostic + CLI no-BLAS feature forwarding), plus this
 doc entry.
+
+---
+
+## Speed Improvement Experiments — Round 14 (A-layer micro-opts + B1 offline speculative decode)
+
+Plan: `docs/research/r14-ab-speedups-plan.md`. Branch `r14-ab-speedups`.
+Scope: implement the review's A-layer (numerically neutral micro-opts) and B1
+(offline prompt-lookup speculative decode). Explicitly skipped per user
+decision: A3 (attention sequence partition — needs a WER gate) and A6 (x86
+kernels). Final bench: `bench/results/r14-final/`; WER unchanged in all modes
+(0.0270 / 0.0270 / 0.2973). Full suite: 77 passed / 0 failed.
+
+### R14-A1: decode hot-path heap allocations — landed (`fccf84e9`)
+
+- `Change`: `int8_swiglu_range` takes a caller scratch instead of allocating
+  per call; the per-token INT8 quantization buffer moves to `thread_local`.
+- `Results`: zero per-token heap traffic in the decode loop; byte-identical
+  output.
+- `Decision`: kept.
+
+### R14-A2: lm_head argmax folded into the fused decode region — landed (`8fa008dd`)
+
+- `Change`: the epilogue argmax runs inside the fused region instead of as a
+  separate pass.
+- `Results`: segmented −2.8%, streaming −3.3% decode time (interleaved A/B).
+- `Decision`: kept.
+
+### R14-A4: encoder/mel micro-opts — landed (`1504b5ea`, `cea12781`, `81df7507`)
+
+- `Change`: (a) sinusoidal positional-embedding cache + `chunk_sizes`
+  preallocation; (b) mel `thread_local` scratch (a concurrent DFT-GEMM
+  variant was micro-benchmarked, showed no gain, and was reverted); (c)
+  reshape-transpose parallelization (threshold `1<<15`) + vectorized bias
+  add.
+- `Results`: A/B ≈ +2.8% for (c); (a)/(b) neutral-to-small, byte-identical.
+- `Decision`: kept.
+
+### R14-A5: timestamped paths on the parallel segment scheduler — landed (`32b41f8a`)
+
+- `Change`: the `--timestamps` paths join the L3 parallel segment scheduler
+  instead of the legacy serial multi-thread loop.
+- `Results`: long-2min 1.35×, long-10min 1.60× wall-clock. Output differs
+  from the old serial path only by near-tie token flips (same mechanism as
+  the already-shipped L3 path); long-10min WER +0.0028.
+- `Decision`: kept parallel (user decision — no WER gate added).
+
+### R14-B1: offline prompt-lookup speculative decode — landed, default OFF (`6519c23e`, fix `fec0072c`)
+
+- `Change`: n-gram self-match drafts (`draft.rs::PromptLookup`) verified by
+  the R13 multi-token greedy verifier in the serial offline decode path;
+  opt-in via `QWEN_ASR_VERIFY=1`.
+- `Bug found in review`: the original `propose()` built its match pattern
+  from committed tokens only, so `drafts[0]` predicted the already-known
+  pending token — every verify window was shifted by one and no draft could
+  ever be accepted. The "p ≈ 0" measurement behind the initial default-OFF
+  call was an artifact of this bug.
+- `Fix` (`fec0072c`): `propose(pending, k_max)` ends the pattern at the
+  pending token (last n−1 committed + pending), matching the verifier's
+  lane-0-consumes-t0 contract; 9 unit tests pin the alignment.
+- `Results` (post-fix, byte-identical output on both samples — now with real
+  accepts exercised): audio.wav 46/46 empty proposals (short segment, no
+  repetition); long-2min 29 verify steps (~8% of decode steps), 11 accepted
+  drafts, 1.38 tok/step ≈ 3% fewer decode forwards.
+- `Decision`: kept but default OFF (user confirmed with the corrected
+  numbers): speech transcripts have little exploitable token-level n-gram
+  repetition. Note `QWEN_ASR_VERIFY` is shared with the streaming verifier
+  whose default is the opposite; the two cannot be toggled independently.
 
 ---
 

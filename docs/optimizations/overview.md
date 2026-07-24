@@ -9,6 +9,8 @@ This document catalogs the performance optimizations implemented in the pure-Rus
   - **Encoder**: `EncoderBuffers` persists scratch spaces for `chunk_mel`, convolution variables, and `im2col`. The main activation buffer (`x`) and `window_starts` metadata are reused across calls.
   - **Decoder**: `DecoderBuffers` provides pre-allocated scratch for BF16-to-F32 conversions, removing ~140 allocations per prefill pass.
   - **Transcription**: Embedding assembly buffers are reused instead of being reallocated per chunk.
+  - **Decode hot path (R14-A1)**: The per-token INT8 quantization buffer is `thread_local` and fused SwiGLU kernels take caller scratch, eliminating all per-token heap traffic in the decode loop.
+  - **Mel front-end (R14-A4b)**: Spectrogram scratch (windowing, DFT, power) is `thread_local` and reused across chunks.
 - **Static Weight Prepacking**: Multi-token decoder prefill weights are preconverted from BF16 to F32 at load time and stored in a reusable matrix. This skips repetitive conversions across streaming chunks or segmented prefills.
 
 ## 2. Kernel Fusion & Cache Locality
@@ -16,6 +18,7 @@ This document catalogs the performance optimizations implemented in the pure-Rus
 - **Fused Residual Adds**: Replaced separate `y = y + x` loops with `linear_accumulate` and `linear_nobias_bf16_addto`. Matvec/GEMM operations accumulate directly into the destination residual buffer, saving read/write passes.
 - **Fused Matvec + SwiGLU**: A fused kernel computes the `gate_up` projection and applies the `SwiGLU` activation in one pass, keeping intermediate values in L1 cache.
 - **Head-Contiguous KV Cache**: Cache layout is `[layer][head][pos][head_dim]`. Storing heads contiguously improves spatial locality and reduces cache misses during causal attention scans.
+- **Fused lm_head Argmax (R14-A2)**: The decode epilogue's INT8 `lm_head` argmax runs inside the fused decode region instead of as a separate pass (−2.8% segmented / −3.3% streaming decode time).
 
 ## 3. SIMD & Platform Acceleration
 
@@ -35,9 +38,12 @@ This document catalogs the performance optimizations implemented in the pure-Rus
   - `im2col` packing for encoder convolutions.
   - `gelu` and `swiglu` activations over large FFN buffers.
   - Bidirectional attention across attention heads.
+  - Reshape/transpose of large activations (R14-A4c, threshold-gated) with vectorized bias add (~+2.8%).
+- **Parallel Timestamped Transcription (R14-A5)**: The `--timestamps` paths run on the same parallel segment scheduler as plain segmented mode instead of a legacy serial loop (long-2min 1.35×, long-10min 1.60×; output differs only by near-tie token flips, same mechanism as the shipped L3 path).
 
 ## 5. Algorithmic Improvements
 
 - **Silence Compaction**: Energy-based VAD preprocesses audio to strip non-speech segments. Edge padding is reduced to 2 windows and extra non-voice hangover is eliminated, minimizing data sent to the encoder.
 - **Lazy Encoder Re-encoding**: In streaming mode, the partial encoder tail is only re-encoded every other chunk. This provides near-perfect Longest Common Prefix (LCP) reuse and reduces decoder prefill cost by ~50% on skipped chunks.
 - **Online Softmax**: Single-token causal attention uses an online softmax scan, combining score tracking, normalization, and value accumulation into a single loop. This avoids temporary score buffer allocations and separate exponentiation passes for `seq_len = 1` queries.
+- **Speculative Decoding with Greedy Verification**: Multi-token forward passes verify drafted tokens against the sequential greedy argmax in one weight stream, so accepted drafts are nearly-free tokens and output stays byte-identical. Two draft sources exist: streaming overlap drafts (R13, default ON — the previous chunk's tail predicts the re-decoded overlap) and offline prompt-lookup n-gram self-match (R14-B1, opt-in via `QWEN_ASR_VERIFY=1`, default OFF — measured acceptance on ASR text is low: ~8% of decode steps speculate on long audio, ≈3% fewer decode forwards).
