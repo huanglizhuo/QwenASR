@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.10.0](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.9.0...qwen-asr-v0.10.0) (2026-07-25)
+
+
+### Features
+
+* **decoder:** offline prompt-lookup speculative decode (opt-in, default off) ([6519c23](https://github.com/huanglizhuo/QwenASR/commit/6519c23e1513bf1ca65f9d084ab5eea1ca14868c))
+* **flutter:** Android device support — dotprod rustflags, release permissions, metric hooks ([62a8894](https://github.com/huanglizhuo/QwenASR/commit/62a8894876e295c9dd9c334d914d206bcd80cc2f))
+* **mobile:** gate INT8 decoder-prefill behind int8-prefill cargo feature; Android default-ON (full-set WER +3.3%) ([3aa1491](https://github.com/huanglizhuo/QwenASR/commit/3aa1491a6e749f24a03fcad6f42a45d9f7c4cb22))
+* **mobile:** INT8 encoder weight GEMMs behind int8-encoder cargo feature (R13 stage 2) ([b11b1a7](https://github.com/huanglizhuo/QwenASR/commit/b11b1a7b3e818b484918b9b5bdb0226551c4205e))
+* **mobile:** QASR_METRIC active-INT8-path log + CLI no-BLAS feature forwarding (R13 stage 2 diagnostics) ([e4d952d](https://github.com/huanglizhuo/QwenASR/commit/e4d952df98fe54d3610e48498313795af34a3a42))
+* multi-token greedy verifier core (R13-A) ([1ff66ff](https://github.com/huanglizhuo/QwenASR/commit/1ff66ff75311b8cf225153c2d55bf49ffc8ef4e5))
+* **stream:** decouple VAD segment reset from multilingual; 2s-only chunk ([f06a0de](https://github.com/huanglizhuo/QwenASR/commit/f06a0dec861b83b5a53dc68576120ef8ba1f4171))
+* **streaming:** expose provisional (unfixed) tail for lower-latency UX ([e70c387](https://github.com/huanglizhuo/QwenASR/commit/e70c387d1d80cfcf8ac1397cecac7f9b42fa3009))
+* **streaming:** opt-in multilingual per-utterance language re-detection ([d3b18c1](https://github.com/huanglizhuo/QwenASR/commit/d3b18c12099cd69e4bfa6be16f84f0cf4103d639))
+
+
+### Bug Fixes
+
+* **ci:** resolve clippy lints on linux/stable toolchain ([4c11cb7](https://github.com/huanglizhuo/QwenASR/commit/4c11cb7b2da667477e49b2cede8ad56c3d9b2925))
+* **decoder:** align prompt-lookup drafts with the verify window ([fec0072](https://github.com/huanglizhuo/QwenASR/commit/fec0072c66f3a1876758185aad2ac9577dd2f8ee))
+
+
+### Performance Improvements
+
+* **audio:** reuse thread-local scratch buffers in mel_spectrogram ([cea1278](https://github.com/huanglizhuo/QwenASR/commit/cea12781c2c2084dd8a02d49a6c3fa635f1493aa))
+* **decoder:** fuse final-norm + INT8 lm_head argmax into the decode region ([8fa008d](https://github.com/huanglizhuo/QwenASR/commit/8fa008dd65365cef87ab14af6304f5884256c335))
+* **decoder:** remove per-token heap allocations from hot decode kernels ([fccf84e](https://github.com/huanglizhuo/QwenASR/commit/fccf84e9fdcb3c319fbda0c24e2ddaf48ed55580))
+* **encoder:** cache sinusoidal PE table across chunks ([1504b5e](https://github.com/huanglizhuo/QwenASR/commit/1504b5ea09415946d08950145cbbad3410e6a93d))
+* **encoder:** parallelize conv-output reshape, vectorize bias adds ([81df750](https://github.com/huanglizhuo/QwenASR/commit/81df7507ab259abe4d4d1cd045c9e51d1bf03fd6))
+* **kernels:** INT8 decoder-prefill GEMM for no-BLAS Android (R13 stage 1, default off) ([a276e90](https://github.com/huanglizhuo/QwenASR/commit/a276e90d35a3d7e3fff68acbd9c9744868a62683))
+* **kernels:** NEON pool-parallel no-BLAS GEMM fallback (Android) ([b1fa840](https://github.com/huanglizhuo/QwenASR/commit/b1fa8406f9bdfda9a4d239bd4254ff8299fceac3))
+* streaming overlap-draft speculative decode via multi-token verifier (R13-B) ([f187897](https://github.com/huanglizhuo/QwenASR/commit/f187897e66b820fc51b4523d9841cf0c8904909e))
+* **transcribe:** parallel segment scheduling for timestamped paths ([32b41f8](https://github.com/huanglizhuo/QwenASR/commit/32b41f8a98e747cdc8cb04516fe641d23585f14b))
+* x86_64 AVX2 INT8 decode kernels and encoder conv workspace reuse ([da3df9f](https://github.com/huanglizhuo/QwenASR/commit/da3df9f0f6c25c1bdb1fbaa0b2170baaf4a91891))
+
 ## [0.9.0](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.8.1...qwen-asr-v0.9.0) (2026-07-16)
 
 

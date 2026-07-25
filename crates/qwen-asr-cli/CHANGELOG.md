@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.0](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-cli-v0.8.2...qwen-asr-cli-v0.9.0) (2026-07-25)
+
+
+### Features
+
+* **mobile:** QASR_METRIC active-INT8-path log + CLI no-BLAS feature forwarding (R13 stage 2 diagnostics) ([e4d952d](https://github.com/huanglizhuo/QwenASR/commit/e4d952df98fe54d3610e48498313795af34a3a42))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * qwen-asr bumped from 0.9.0 to 0.10.0
+
 ## [0.8.2](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-cli-v0.8.1...qwen-asr-cli-v0.8.2) (2026-07-16)
 
 
