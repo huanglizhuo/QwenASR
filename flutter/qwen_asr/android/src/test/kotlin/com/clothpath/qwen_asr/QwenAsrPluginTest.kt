@@ -1,4 +1,4 @@
-package com.example.qwen_asr
+package com.clothpath.qwen_asr
 
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel

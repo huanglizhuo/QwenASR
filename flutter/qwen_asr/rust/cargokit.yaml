@@ -17,6 +17,23 @@
 # `target.<triple>.rustflags` from config/CLI. The Android `+dotprod` feature is
 # therefore injected into `CARGO_ENCODED_RUSTFLAGS` itself, in
 # cargokit/build_tool/lib/src/android_environment.dart.
+# Precompiled binaries (cargokit's GitHub-releases flow).
+#
+# `publish-flutter.yml` runs `build_tool precompile-binaries` for every
+# supported target before `dart pub publish`; the binaries are uploaded to a
+# GitHub release named `precompiled_<crate-hash>`. At consumer build time
+# cargokit downloads `<url_prefix><crate-hash>/<target>_<libname>` plus its
+# ed25519 signature and verifies it against `public_key`. Consumers without a
+# Rust toolchain use these automatically; with rustup installed cargokit
+# builds from source unless `use_precompiled_binaries: true` is set in
+# `cargokit_options.yaml`. If no binary is available for the computed crate
+# hash, cargokit falls back to building from source.
+#
+# The matching private key lives in the `CARGOKIT_PRIVATE_KEY` GitHub Actions
+# secret; it must never be committed.
+precompiled_binaries:
+  url_prefix: https://github.com/huanglizhuo/QwenASR/releases/download/precompiled_
+  public_key: 2ab817ebdc5bae35172bc9eabe15e53d05398892b42c27d186a51146af4df05b
 cargo:
   debug:
     extra_flags:

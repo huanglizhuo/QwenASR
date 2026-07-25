@@ -1,11 +1,13 @@
+require 'yaml'
+
 Pod::Spec.new do |s|
   s.name             = 'qwen_asr'
-  s.version          = '0.1.0'
+  s.version          = YAML.load_file(File.join(__dir__, '..', 'pubspec.yaml'))['version']
   s.summary          = 'CPU-only Qwen3-ASR inference for Flutter.'
   s.description      = 'Flutter plugin wrapping qwen-asr, a pure-Rust CPU-only Qwen3-ASR engine.'
-  s.homepage         = 'https://github.com/user/qwen-asr'
+  s.homepage         = 'https://github.com/huanglizhuo/QwenASR'
   s.license          = { :file => '../LICENSE' }
-  s.author           = { 'qwen-asr' => 'noreply@example.com' }
+  s.author           = { 'huanglizhuo' => 'lizhuo.huang@outlook.com' }
   s.source           = { :path => '.' }
   s.source_files = 'Classes/**/*'
   s.dependency 'Flutter'

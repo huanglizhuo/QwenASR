@@ -5,8 +5,120 @@ on:
     tags:
       - 'qwen_asr-v[0-9]+.[0-9]+.[0-9]+'
 
+permissions:
+  contents: write # precompile jobs create the precompiled_<crate-hash> release
+
 jobs:
+  # Build the Rust engine for every supported target and upload the binaries
+  # (plus ed25519 signatures) to a GitHub release named
+  # `precompiled_<crate-hash>`. Cargokit downloads these at consumer build
+  # time, so the published package works without a Rust toolchain.
+  # The crate hash is computed over flutter/qwen_asr/rust (see
+  # cargokit/build_tool/lib/src/crate_hash.dart), so every job below must
+  # produce byte-identical rust/ contents: same commit, same codegen version,
+  # same engine-revision stamp.
+  precompile-darwin:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64-apple-darwin, x86_64-apple-darwin
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Install dependencies
+        working-directory: flutter/qwen_asr
+        run: flutter pub get
+
+      - name: Install flutter_rust_bridge_codegen
+        # Pinned to the flutter_rust_bridge version in rust/Cargo.toml so the
+        # regenerated bindings are byte-identical across all jobs.
+        run: cargo install flutter_rust_bridge_codegen --version 2.11.1 --locked
+
+      - name: Generate Rust Bindings
+        working-directory: flutter/qwen_asr
+        run: flutter_rust_bridge_codegen generate
+
+      - name: Stamp engine revision
+        # The engine crate (crates/qwen-asr) is a path dependency outside the
+        # hashed manifest dir; stamping the commit into rust/src makes the
+        # crate hash change whenever the engine does, so stale precompiled
+        # binaries can never be picked up for a newer release.
+        working-directory: flutter/qwen_asr
+        run: git rev-parse HEAD > rust/src/engine_rev.txt
+
+      - name: Precompile binaries (iOS + macOS)
+        working-directory: flutter/qwen_asr
+        env:
+          PRIVATE_KEY: ${{ secrets.CARGOKIT_PRIVATE_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGOKIT_TOOL_TEMP_DIR: ${{ runner.temp }}/cargokit_tool
+        run: sh cargokit/run_build_tool.sh precompile-binaries --repository huanglizhuo/QwenASR --manifest-dir rust
+
+  precompile-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Install dependencies
+        working-directory: flutter/qwen_asr
+        run: flutter pub get
+
+      - name: Install flutter_rust_bridge_codegen
+        run: cargo install flutter_rust_bridge_codegen --version 2.11.1 --locked
+
+      - name: Generate Rust Bindings
+        working-directory: flutter/qwen_asr
+        run: flutter_rust_bridge_codegen generate
+
+      - name: Stamp engine revision
+        working-directory: flutter/qwen_asr
+        run: git rev-parse HEAD > rust/src/engine_rev.txt
+
+      - name: Detect Android NDK
+        id: ndk
+        # ubuntu-latest runners ship the Android SDK with at least one NDK;
+        # cargokit installs it via sdkmanager if the version is missing.
+        run: echo "version=$(ls "$ANDROID_HOME/ndk" | sort -V | tail -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Precompile binaries (Android)
+        working-directory: flutter/qwen_asr
+        env:
+          PRIVATE_KEY: ${{ secrets.CARGOKIT_PRIVATE_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGOKIT_TOOL_TEMP_DIR: ${{ runner.temp }}/cargokit_tool
+        run: >
+          sh cargokit/run_build_tool.sh precompile-binaries
+          --repository huanglizhuo/QwenASR
+          --manifest-dir rust
+          --android-sdk-location "$ANDROID_HOME"
+          --android-ndk-version "${{ steps.ndk.outputs.version }}"
+          --android-min-sdk-version 24
+          --target aarch64-linux-android
+          --target armv7-linux-androideabi
+          --target i686-linux-android
+          --target x86_64-linux-android
+
   publish:
+    needs: [precompile-darwin, precompile-android]
     permissions:
       id-token: write # Required for authentication using OIDC
       contents: read
@@ -34,11 +146,17 @@ jobs:
         run: flutter pub get
 
       - name: Install flutter_rust_bridge_codegen
-        run: cargo install flutter_rust_bridge_codegen
+        run: cargo install flutter_rust_bridge_codegen --version 2.11.1 --locked
 
       - name: Generate Rust Bindings
         working-directory: flutter/qwen_asr
         run: flutter_rust_bridge_codegen generate
+
+      - name: Stamp engine revision
+        # Must match the precompile jobs byte-for-byte: the stamp is part of
+        # the crate hash and of the published archive.
+        working-directory: flutter/qwen_asr
+        run: git rev-parse HEAD > rust/src/engine_rev.txt
 
       - name: Publish to pub.dev
         working-directory: flutter/qwen_asr

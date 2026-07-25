@@ -1,13 +1,28 @@
 # qwen_asr
 
-On-device Qwen3-ASR speech-to-text for Flutter. Runs entirely on the device
-using a pure Rust inference engine — no cloud services, no server, no network
-required (beyond the one-time model download you provide). Supports Android,
-iOS, and macOS.
+[![pub package](https://img.shields.io/pub/v/qwen_asr.svg)](https://pub.dev/packages/qwen_asr)
+[![ci](https://github.com/huanglizhuo/QwenASR/actions/workflows/ci.yml/badge.svg)](https://github.com/huanglizhuo/QwenASR/actions/workflows/ci.yml)
 
-The native Rust engine is compiled in release mode automatically by the Flutter
-build pipeline. If you build the Rust library manually, always use `--release` —
-debug builds are 10–50× slower and unusable for real-time inference.
+On-device Qwen3-ASR speech-to-text for Flutter, from the
+[QwenASR](https://github.com/huanglizhuo/QwenASR) project. Runs entirely on the
+device using a pure Rust inference engine — no cloud services, no server, no
+network required (beyond the one-time model download you provide). Supports
+Android, iOS, and macOS.
+
+The pub package ships **precompiled native binaries** for all supported
+platforms (Android, iOS, macOS), so consumers do **not** need a Rust toolchain.
+If a precompiled binary is unavailable for your target (or you set
+`use_precompiled_binaries: false` in `cargokit_options.yaml`), the Rust engine
+is compiled from source in release mode automatically by the Flutter build
+pipeline — that fallback requires a Rust toolchain. If you build the Rust
+library manually, always use `--release` — debug builds are 10–50× slower and
+unusable for real-time inference.
+
+### Building from source (contributors)
+
+Clone the [QwenASR](https://github.com/huanglizhuo/QwenASR) repository and use
+the example app under `example/`; the Rust bridge crate (`rust/`) depends on
+the engine crate by path, so source builds require the full repo checkout.
 
 For a complete integration reference — model download UI, live streaming, VAD
 segmentation, file transcription, and push-to-talk — see the
@@ -19,7 +34,7 @@ Add the dependency:
 
 ```yaml
 dependencies:
-  qwen_asr: ^0.3.0
+  qwen_asr: ^0.4.0
 ```
 
 The model is not bundled; ship or download it at runtime. The engine needs a
@@ -137,9 +152,13 @@ might build on top of the one-shot API.
 `perfStats()` returns a timing summary string for the last transcription (encode
 / decode milliseconds, etc.).
 
-## Mobile / Android performance
+## Performance
 
-On desktop (macOS / Linux) the engine uses a BLAS backend (Accelerate / OpenBLAS).
+On desktop (macOS / Linux) the engine uses a BLAS backend (Accelerate /
+OpenBLAS). The fused INT8 single-token decode path runs on hand-written SIMD
+kernels — NEON on aarch64, AVX2 on x86_64 (bit-matched to the NEON
+implementations, with a scalar fallback on other architectures).
+
 Android ships no BLAS, so the Android build uses a **NEON pool-parallel no-BLAS
 GEMM fallback** — hand-written NEON kernels sliced across the persistent thread
 pool. This is the base path that makes real-time on-device ASR viable on a phone.

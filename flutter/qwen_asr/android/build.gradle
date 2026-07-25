@@ -1,4 +1,4 @@
-group = "com.example.qwen_asr"
+group = "com.clothpath.qwen_asr"
 version = "1.0-SNAPSHOT"
 
 buildscript {
@@ -25,7 +25,7 @@ apply plugin: "com.android.library"
 apply plugin: "kotlin-android"
 
 android {
-    namespace = "com.example.qwen_asr"
+    namespace = "com.clothpath.qwen_asr"
 
     compileSdk = 36
 

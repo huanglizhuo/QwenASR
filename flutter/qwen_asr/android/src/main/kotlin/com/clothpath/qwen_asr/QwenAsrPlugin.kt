@@ -1,4 +1,4 @@
-package com.example.qwen_asr
+package com.clothpath.qwen_asr
 
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
