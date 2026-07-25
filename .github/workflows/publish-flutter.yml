@@ -4,6 +4,13 @@ on:
   push:
     tags:
       - 'qwen_asr-v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (checked out instead of the default ref)'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: write # precompile jobs create the precompiled_<crate-hash> release
@@ -22,6 +29,10 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          # On workflow_dispatch, check out the requested tag; on tag push,
+          # this is the pushed tag itself.
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -55,18 +66,26 @@ jobs:
         run: git rev-parse HEAD > rust/src/engine_rev.txt
 
       - name: Precompile binaries (iOS + macOS)
+        # Invoke with `bash` (ubuntu's `sh` is dash and cannot parse the
+        # script's `[[ ]]`) and with ABSOLUTE paths: the script cd's into
+        # CARGOKIT_TOOL_TEMP_DIR before resolving its own directory, so a
+        # relative path to run_build_tool.sh breaks from any CWD.
         working-directory: flutter/qwen_asr
         env:
           PRIVATE_KEY: ${{ secrets.CARGOKIT_PRIVATE_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGOKIT_TOOL_TEMP_DIR: ${{ runner.temp }}/cargokit_tool
-        run: sh cargokit/run_build_tool.sh precompile-binaries --repository huanglizhuo/QwenASR --manifest-dir rust
+        run: bash "$GITHUB_WORKSPACE/flutter/qwen_asr/cargokit/run_build_tool.sh" precompile-binaries --repository huanglizhuo/QwenASR --manifest-dir "$GITHUB_WORKSPACE/flutter/qwen_asr/rust"
 
   precompile-android:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          # On workflow_dispatch, check out the requested tag; on tag push,
+          # this is the pushed tag itself.
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -100,15 +119,16 @@ jobs:
         run: echo "version=$(ls "$ANDROID_HOME/ndk" | sort -V | tail -1)" >> "$GITHUB_OUTPUT"
 
       - name: Precompile binaries (Android)
+        # Same invocation rules as the darwin job: `bash`, absolute paths.
         working-directory: flutter/qwen_asr
         env:
           PRIVATE_KEY: ${{ secrets.CARGOKIT_PRIVATE_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGOKIT_TOOL_TEMP_DIR: ${{ runner.temp }}/cargokit_tool
         run: >
-          sh cargokit/run_build_tool.sh precompile-binaries
+          bash "$GITHUB_WORKSPACE/flutter/qwen_asr/cargokit/run_build_tool.sh" precompile-binaries
           --repository huanglizhuo/QwenASR
-          --manifest-dir rust
+          --manifest-dir "$GITHUB_WORKSPACE/flutter/qwen_asr/rust"
           --android-sdk-location "$ANDROID_HOME"
           --android-ndk-version "${{ steps.ndk.outputs.version }}"
           --android-min-sdk-version 24
@@ -126,6 +146,10 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          # On workflow_dispatch, check out the requested tag; on tag push,
+          # this is the pushed tag itself.
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
