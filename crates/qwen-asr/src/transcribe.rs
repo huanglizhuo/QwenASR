@@ -899,39 +899,6 @@ pub struct TranscriptSegment {
     pub text: String,
 }
 
-/// Transcribe audio and return per-segment results with timestamps.
-///
-/// Unlike [`transcribe_audio`], this function preserves the original audio
-/// timeline (no silence compaction) so that `start_ms`/`end_ms` are accurate
-/// for subtitle generation.  Each segment's duration is used to set the token
-/// budget, so accuracy is not sacrificed for long files.
-///
-/// Uses `ctx.segment_sec` for splitting; falls back to 30 s if unset.
-pub fn transcribe_segmented(ctx: &mut QwenCtx, samples: &[f32]) -> Option<Vec<TranscriptSegment>> {
-    ctx.reset_perf();
-
-    let tokenizer = load_tokenizer(&ctx.model.model_dir)?;
-    if !ctx.prepare_prompt_tokens(&tokenizer) {
-        return None;
-    }
-
-    let mut segments: Vec<TranscriptSegment> = Vec::new();
-    transcribe_splits(
-        ctx,
-        samples,
-        &tokenizer,
-        &mut |_, seg_start, seg_end, text| {
-            segments.push(TranscriptSegment {
-                start_ms: samples_to_ms(seg_start),
-                end_ms: samples_to_ms(seg_end),
-                text,
-            });
-        },
-    );
-
-    Some(segments)
-}
-
 /// Build low-energy split points for segmented transcription. Always contains
 /// a leading `0`; further splits are added only when the audio exceeds one
 /// segment (`target_samples + margin_samples`).

@@ -117,13 +117,9 @@ pub struct QwenTokenizer {
     pub vocab_size: usize,
     id_to_text: Vec<Option<String>>,
     id_to_bytes: Vec<Option<Vec<u8>>>,
-    #[allow(dead_code)]
-    id_to_bpe: Vec<Option<String>>,
     vocab_map: HashMap<String, i32>,
     merge_map: HashMap<String, i32>,
     byte_to_unicode: [i32; 256],
-    #[allow(dead_code)]
-    unicode_to_byte: [i32; 512],
 }
 
 impl QwenTokenizer {
@@ -172,7 +168,6 @@ impl QwenTokenizer {
         let vocab_size = (max_id + 1) as usize;
         let mut id_to_text = vec![None; vocab_size];
         let mut id_to_bytes: Vec<Option<Vec<u8>>> = vec![None; vocab_size];
-        let mut id_to_bpe = vec![None; vocab_size];
         let mut vocab_map = HashMap::new();
 
         for (key, id) in entries {
@@ -184,7 +179,6 @@ impl QwenTokenizer {
                 id_to_text[idx] = Some(text);
                 id_to_bytes[idx] = Some(raw_bytes);
                 vocab_map.insert(key.clone(), id);
-                id_to_bpe[idx] = Some(key);
             }
         }
 
@@ -195,11 +189,9 @@ impl QwenTokenizer {
             vocab_size,
             id_to_text,
             id_to_bytes,
-            id_to_bpe,
             vocab_map,
             merge_map,
             byte_to_unicode,
-            unicode_to_byte,
         })
     }
 

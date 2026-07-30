@@ -40,16 +40,6 @@ impl Dtype {
             _ => Dtype::Unknown,
         }
     }
-
-    pub fn element_size(&self) -> usize {
-        match self {
-            Dtype::F32 | Dtype::I32 => 4,
-            Dtype::F16 | Dtype::BF16 => 2,
-            Dtype::I64 => 8,
-            Dtype::Bool => 1,
-            Dtype::Unknown => 0,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]

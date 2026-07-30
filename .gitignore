@@ -13,7 +13,6 @@ qwen-asr-int8.sidecar
 /bench/.venv-mlx-audio/
 /bench/__pycache__/
 /tmp/qwen3_asr_rs/
-/bench/generate_unified_charts.py
 /qwen3-aligner-0.6b
 /tmp/
 /librispeech-wer-bench/*

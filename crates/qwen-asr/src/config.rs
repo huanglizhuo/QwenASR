@@ -6,22 +6,14 @@ pub const HOP_LENGTH: usize = 160;
 pub const WINDOW_SIZE: usize = 400;
 pub const VOCAB_SIZE: usize = 151936;
 
-pub const MAX_ENC_LAYERS: usize = 24;
-pub const MAX_DEC_LAYERS: usize = 28;
-
 // Special token IDs
-pub const TOKEN_IM_START: i32 = 151644;
 pub const TOKEN_IM_END: i32 = 151645;
 pub const TOKEN_ENDOFTEXT: i32 = 151643;
-pub const TOKEN_AUDIO_START: i32 = 151669;
-pub const TOKEN_AUDIO_END: i32 = 151670;
-pub const TOKEN_AUDIO_PAD: i32 = 151676;
 pub const TOKEN_ASR_TEXT: i32 = 151704;
 pub const TOKEN_TIMESTAMP: i32 = 151705;
 
 // Conv2D stem constants
 pub const CONV_HIDDEN: usize = 480;
-pub const CONV_KERNEL: usize = 3;
 
 #[derive(Clone)]
 pub struct QwenConfig {
@@ -35,7 +27,6 @@ pub struct QwenConfig {
     pub enc_n_window: usize,
     pub enc_n_window_infer: usize,
     pub enc_chunk_size: usize,
-    pub enc_conv_proj_dim: usize,
 
     // LLM decoder
     pub dec_hidden: usize,
@@ -65,7 +56,6 @@ impl Default for QwenConfig {
             enc_n_window: 50,
             enc_n_window_infer: 800,
             enc_chunk_size: 100,
-            enc_conv_proj_dim: CONV_HIDDEN * 16,
             dec_hidden: 0,
             dec_layers: 28,
             dec_heads: 16,
