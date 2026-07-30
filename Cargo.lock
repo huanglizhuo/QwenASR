@@ -437,14 +437,14 @@ dependencies = [
 
 [[package]]
 name = "qwen-asr"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "qwen-asr-cli"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "coreaudio-sys",
  "ctrlc",
