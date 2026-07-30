@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.11.0](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.10.0...qwen-asr-v0.11.0) (2026-07-30)
+
+
+### ⚠ BREAKING CHANGES
+
+* **qwen-asr:** transcribe_segmented and the listed constants are removed from the published qwen-asr API surface.
+
+### Code Refactoring
+
+* **qwen-asr:** remove unused public API and dead code ([7fea8f2](https://github.com/huanglizhuo/QwenASR/commit/7fea8f22fb20a77fce1730eacf59a3e4e9d94707))
+
 ## [0.10.0](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.9.0...qwen-asr-v0.10.0) (2026-07-25)
 
 
