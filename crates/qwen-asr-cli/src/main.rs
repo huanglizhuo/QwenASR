@@ -1421,7 +1421,10 @@ fn spawn_stdin_pcm_reader(verbosity: i32) -> std::sync::mpsc::Receiver<Vec<f32>>
                             src_rate = rate.max(1);
                             channels = ch.max(1);
                             if verbosity >= 2 {
-                                eprintln!("Detected WAV on stdin: {} Hz, {} ch", src_rate, channels);
+                                eprintln!(
+                                    "Detected WAV on stdin: {} Hz, {} ch",
+                                    src_rate, channels
+                                );
                             }
                             pending.drain(0..off.min(pending.len()));
                             header_done = true;
@@ -1565,8 +1568,8 @@ fn run_stdin_stream(ctx: &mut QwenCtx, verbosity: i32, profile: bool) {
         }
 
         // Commit held text if the hypothesis has been stable through a pause.
-        let quiet = !last_provisional.is_empty()
-            && last_change.elapsed().as_secs_f32() >= text_flush_secs;
+        let quiet =
+            !last_provisional.is_empty() && last_change.elapsed().as_secs_f32() >= text_flush_secs;
 
         push(ctx, &audio_buf, &mut state, quiet);
 
