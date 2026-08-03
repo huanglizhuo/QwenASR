@@ -785,6 +785,15 @@ fn main() {
         return;
     }
 
+    // Live incremental transcription from a stdin pipe. Reading the whole
+    // stream up front (read_to_end) blocks forever on an open pipe such as
+    // `arecord ... | qwen-asr --stdin --stream`, so consume it chunk by chunk
+    // and emit text as audio arrives.
+    if stream_mode && use_stdin {
+        run_stdin_stream(&mut ctx, verbosity, profile);
+        return;
+    }
+
     // Transcribe
     let text = if stream_mode {
         let samples = if use_stdin {
@@ -1343,5 +1352,330 @@ fn run_live_capture(
 
     if profile {
         kernels::profile_report();
+    }
+}
+
+/// Locate the PCM payload inside a (possibly partial) WAV header.
+///
+/// Returns `(data_offset, sample_rate, channels)` once the `data` chunk header
+/// has been seen, or `None` if more bytes are needed to find it.
+fn wav_stream_offset(prefix: &[u8]) -> Option<(usize, i32, i32)> {
+    if prefix.len() < 12 || &prefix[0..4] != b"RIFF" || &prefix[8..12] != b"WAVE" {
+        return None;
+    }
+    let read_u16 = |d: &[u8]| u16::from_le_bytes([d[0], d[1]]) as i32;
+    let read_u32 = |d: &[u8]| u32::from_le_bytes([d[0], d[1], d[2], d[3]]) as usize;
+
+    let mut sample_rate = 16000i32;
+    let mut channels = 1i32;
+    let mut p = 12usize;
+    while p + 8 <= prefix.len() {
+        let chunk_id = &prefix[p..p + 4];
+        let chunk_size = read_u32(&prefix[p + 4..]);
+        if chunk_id == b"fmt " && p + 8 + 16 <= prefix.len() {
+            channels = read_u16(&prefix[p + 10..]);
+            sample_rate = read_u32(&prefix[p + 12..]) as i32;
+        } else if chunk_id == b"data" {
+            // PCM payload begins right after this 8-byte chunk header.
+            return Some((p + 8, sample_rate, channels));
+        }
+        p += 8 + chunk_size + (chunk_size & 1);
+    }
+    None
+}
+
+/// Spawn a thread that reads s16le PCM from stdin and forwards it as 16 kHz
+/// mono f32 chunks.
+///
+/// Auto-detects a leading WAV header (skipped, with its sample rate / channel
+/// count honored) versus raw s16le 16 kHz mono. Non-16 kHz input is resampled
+/// and multi-channel input downmixed per batch, mirroring the macOS `--live`
+/// loop. The channel closes at stdin EOF, which the consumer treats as
+/// end-of-stream.
+fn spawn_stdin_pcm_reader(verbosity: i32) -> std::sync::mpsc::Receiver<Vec<f32>> {
+    use std::io::Read;
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<f32>>();
+    std::thread::spawn(move || {
+        let mut stdin = std::io::stdin().lock();
+        let mut pending: Vec<u8> = Vec::new();
+        let mut header_done = false;
+        let mut src_rate = 16000i32;
+        let mut channels = 1i32;
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = match stdin.read(&mut buf) {
+                Ok(0) => break, // EOF: pipe closed
+                Ok(n) => n,
+                Err(_) => break,
+            };
+            pending.extend_from_slice(&buf[..n]);
+
+            // Decide raw-vs-WAV once we have enough bytes to tell.
+            if !header_done {
+                if pending.len() < 4 {
+                    continue;
+                }
+                if &pending[0..4] == b"RIFF" {
+                    match wav_stream_offset(&pending) {
+                        Some((off, rate, ch)) => {
+                            src_rate = rate.max(1);
+                            channels = ch.max(1);
+                            if verbosity >= 2 {
+                                eprintln!("Detected WAV on stdin: {} Hz, {} ch", src_rate, channels);
+                            }
+                            pending.drain(0..off.min(pending.len()));
+                            header_done = true;
+                        }
+                        None => {
+                            // Keep buffering until the data chunk appears, but
+                            // bail to a sane default if the header is oversized.
+                            if pending.len() < 65536 {
+                                continue;
+                            }
+                            pending.drain(0..44.min(pending.len()));
+                            header_done = true;
+                        }
+                    }
+                } else {
+                    if verbosity >= 2 {
+                        eprintln!("Treating stdin as raw s16le 16kHz mono");
+                    }
+                    header_done = true;
+                }
+            }
+
+            // Convert whole frames; keep any partial trailing frame for later.
+            let frame = 2 * channels as usize;
+            let n_frames = pending.len() / frame;
+            if n_frames == 0 {
+                continue;
+            }
+            let mut batch = vec![0f32; n_frames];
+            for (i, s) in batch.iter_mut().enumerate() {
+                if channels == 1 {
+                    let v = i16::from_le_bytes([pending[i * 2], pending[i * 2 + 1]]);
+                    *s = v as f32 / 32768.0;
+                } else {
+                    let mut sum = 0.0f32;
+                    for c in 0..channels as usize {
+                        let off = (i * channels as usize + c) * 2;
+                        sum += i16::from_le_bytes([pending[off], pending[off + 1]]) as f32;
+                    }
+                    *s = (sum / channels as f32) / 32768.0;
+                }
+            }
+            pending.drain(0..n_frames * frame);
+
+            let out = if src_rate != 16000 {
+                qwen_asr::audio::resample(&batch, src_rate, 16000)
+            } else {
+                batch
+            };
+            if !out.is_empty() && tx.send(out).is_err() {
+                break; // consumer gone
+            }
+        }
+    });
+    rx
+}
+
+/// Live incremental transcription from a stdin pipe (`--stdin --stream`).
+///
+/// Reads audio as it arrives and emits text deltas, mirroring the macOS
+/// `--live` streaming loop but sourced from stdin instead of CoreAudio.
+fn run_stdin_stream(ctx: &mut QwenCtx, verbosity: i32, profile: bool) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc::RecvTimeoutError;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let target_rate = 16000usize;
+    let max_window_samples = 120 * target_rate;
+
+    ctx.past_text_conditioning = true;
+    ctx.reset_perf();
+
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+    let _ = ctrlc::set_handler(move || {
+        r.store(false, Ordering::SeqCst);
+    });
+
+    if verbosity >= 1 {
+        eprintln!(
+            "Listening (streaming, {:.1}s chunks) from stdin... (EOF or Ctrl+C to stop)\n",
+            ctx.stream_chunk_sec
+        );
+    }
+
+    let rx = spawn_stdin_pcm_reader(verbosity);
+    let mut state = transcribe::StreamState::new();
+    let mut audio_buf: Vec<f32> = Vec::new();
+    let mut total_samples: usize = 0;
+    ctx.token_cb = None; // stream_push_audio returns delta text directly
+
+    // On a continuous stream, `finalize` only happens at EOF, so stable text
+    // held in the rollback window would never surface. Commit it once the
+    // hypothesis stops changing for a short gap (a speech pause) — that is
+    // exactly when early-commit is safe, and it keeps the correction window
+    // open while speech is actively flowing.
+    let text_flush_secs = 5.0_f32;
+    let mut last_provisional = String::new();
+    let mut last_change = std::time::Instant::now();
+
+    fn push(
+        ctx: &mut QwenCtx,
+        audio_buf: &[f32],
+        state: &mut transcribe::StreamState,
+        finalize: bool,
+    ) {
+        if audio_buf.len() > state.audio_cursor() {
+            if let Some(delta) = transcribe::stream_push_audio(ctx, audio_buf, state, finalize) {
+                if !delta.is_empty() {
+                    print!("{}", delta);
+                    std::io::stdout().flush().ok();
+                }
+            }
+        }
+    }
+
+    while running.load(Ordering::SeqCst) {
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(chunk) => {
+                total_samples += chunk.len();
+                audio_buf.extend_from_slice(&chunk);
+                while let Ok(chunk) = rx.try_recv() {
+                    total_samples += chunk.len();
+                    audio_buf.extend_from_slice(&chunk);
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => break, // stdin EOF
+        }
+
+        // Bound memory on long-running streams: flush and re-anchor at ~120s.
+        if audio_buf.len() > max_window_samples {
+            push(ctx, &audio_buf, &mut state, true);
+            println!();
+            audio_buf.clear();
+            state.reset();
+            last_provisional.clear();
+            last_change = std::time::Instant::now();
+            continue;
+        }
+
+        // Commit held text if the hypothesis has been stable through a pause.
+        let quiet = !last_provisional.is_empty()
+            && last_change.elapsed().as_secs_f32() >= text_flush_secs;
+
+        push(ctx, &audio_buf, &mut state, quiet);
+
+        let prov = state.provisional_text();
+        if prov != last_provisional {
+            last_provisional = prov;
+            last_change = std::time::Instant::now();
+        }
+    }
+
+    // Drain anything the reader queued after the loop condition flipped.
+    while let Ok(chunk) = rx.try_recv() {
+        total_samples += chunk.len();
+        audio_buf.extend_from_slice(&chunk);
+    }
+
+    // Final flush: emit rollback-buffered tokens.
+    push(ctx, &audio_buf, &mut state, true);
+    println!();
+
+    ctx.perf_audio_ms = 1000.0 * total_samples as f64 / target_rate as f64;
+    if verbosity >= 1 {
+        let tokens_per_sec = if ctx.perf_total_ms > 0.0 {
+            1000.0 * ctx.perf_text_tokens as f64 / ctx.perf_total_ms
+        } else {
+            0.0
+        };
+        eprintln!(
+            "Inference: {:.0} ms, {} text tokens ({:.2} tok/s, encoding: {:.0}ms, decoding: {:.0}ms)",
+            ctx.perf_total_ms,
+            ctx.perf_text_tokens,
+            tokens_per_sec,
+            ctx.perf_encode_ms,
+            ctx.perf_decode_ms
+        );
+    }
+    if profile {
+        kernels::profile_report();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wav_stream_offset;
+
+    fn wav_header(sample_rate: u32, channels: u16, data_len: u32) -> Vec<u8> {
+        let mut h = Vec::new();
+        h.extend_from_slice(b"RIFF");
+        h.extend_from_slice(&(36 + data_len).to_le_bytes());
+        h.extend_from_slice(b"WAVE");
+        h.extend_from_slice(b"fmt ");
+        h.extend_from_slice(&16u32.to_le_bytes());
+        h.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        h.extend_from_slice(&channels.to_le_bytes());
+        h.extend_from_slice(&sample_rate.to_le_bytes());
+        let byte_rate = sample_rate * channels as u32 * 2;
+        h.extend_from_slice(&byte_rate.to_le_bytes());
+        h.extend_from_slice(&(channels * 2).to_le_bytes()); // block align
+        h.extend_from_slice(&16u16.to_le_bytes()); // bits
+        h.extend_from_slice(b"data");
+        h.extend_from_slice(&data_len.to_le_bytes());
+        h
+    }
+
+    #[test]
+    fn parses_standard_wav_header() {
+        let h = wav_header(16000, 1, 1000);
+        assert_eq!(wav_stream_offset(&h), Some((44, 16000, 1)));
+    }
+
+    #[test]
+    fn honors_rate_and_channels() {
+        let h = wav_header(44100, 2, 500);
+        assert_eq!(wav_stream_offset(&h), Some((44, 44100, 2)));
+    }
+
+    #[test]
+    fn skips_extra_chunk_before_data() {
+        // Insert a LIST chunk between fmt and data; data offset must account for it.
+        let mut h = Vec::new();
+        h.extend_from_slice(b"RIFF");
+        h.extend_from_slice(&0u32.to_le_bytes());
+        h.extend_from_slice(b"WAVE");
+        h.extend_from_slice(b"fmt ");
+        h.extend_from_slice(&16u32.to_le_bytes());
+        h.extend_from_slice(&1u16.to_le_bytes());
+        h.extend_from_slice(&1u16.to_le_bytes());
+        h.extend_from_slice(&16000u32.to_le_bytes());
+        h.extend_from_slice(&32000u32.to_le_bytes());
+        h.extend_from_slice(&2u16.to_le_bytes());
+        h.extend_from_slice(&16u16.to_le_bytes());
+        h.extend_from_slice(b"LIST");
+        h.extend_from_slice(&6u32.to_le_bytes());
+        h.extend_from_slice(&[0u8; 6]);
+        let data_off = h.len() + 8;
+        h.extend_from_slice(b"data");
+        h.extend_from_slice(&100u32.to_le_bytes());
+        assert_eq!(wav_stream_offset(&h), Some((data_off, 16000, 1)));
+    }
+
+    #[test]
+    fn none_when_data_chunk_not_yet_seen() {
+        // fmt present but no data chunk yet (still streaming the header).
+        let h = &wav_header(16000, 1, 1000)[..36];
+        assert_eq!(wav_stream_offset(h), None);
+    }
+
+    #[test]
+    fn none_for_non_riff() {
+        assert_eq!(wav_stream_offset(b"not a wav file at all........"), None);
     }
 }
