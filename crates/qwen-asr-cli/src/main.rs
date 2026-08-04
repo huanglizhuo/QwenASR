@@ -1498,6 +1498,14 @@ fn run_stdin_stream(ctx: &mut QwenCtx, verbosity: i32, profile: bool) {
     ctx.past_text_conditioning = true;
     ctx.reset_perf();
 
+    // Live streaming wants progressive output. The library default holds every
+    // token "unfixed" until chunk 99 (≈13 min) or EOF so a finite `--stdin`
+    // file transcribes at maximum accuracy — but on a live mic pipe that means
+    // nothing ever prints. Commit after a few chunks (still guarded by the
+    // rollback window) so words surface as they stabilize.
+    ctx.stream_unfixed_chunks = 3;
+    let chunk_samples = (ctx.stream_chunk_sec * target_rate as f32) as usize;
+
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
     let _ = ctrlc::set_handler(move || {
@@ -1542,6 +1550,7 @@ fn run_stdin_stream(ctx: &mut QwenCtx, verbosity: i32, profile: bool) {
         }
     }
 
+    let mut eof = false;
     while running.load(Ordering::SeqCst) {
         match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(chunk) => {
@@ -1553,7 +1562,7 @@ fn run_stdin_stream(ctx: &mut QwenCtx, verbosity: i32, profile: bool) {
                 }
             }
             Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => break, // stdin EOF
+            Err(RecvTimeoutError::Disconnected) => eof = true, // stdin closed
         }
 
         // Bound memory on long-running streams: flush and re-anchor at ~120s.
@@ -1567,11 +1576,29 @@ fn run_stdin_stream(ctx: &mut QwenCtx, verbosity: i32, profile: bool) {
             continue;
         }
 
+        // Process buffered audio one chunk at a time, re-checking `running`
+        // between chunks. On a machine slower than realtime the reader thread
+        // fills `audio_buf` faster than we consume it; feeding a growing prefix
+        // slice keeps each `stream_push_audio` call bounded to a single chunk so
+        // Ctrl+C interrupts within one chunk instead of grinding the whole
+        // backlog (and re-grinding it again in a `finalize` flush).
+        while running.load(Ordering::SeqCst)
+            && audio_buf.len().saturating_sub(state.audio_cursor()) >= chunk_samples
+        {
+            let end = state.audio_cursor() + chunk_samples;
+            push(ctx, &audio_buf[..end], &mut state, false);
+        }
+
+        if eof {
+            break;
+        }
+
         // Commit held text if the hypothesis has been stable through a pause.
         let quiet =
             !last_provisional.is_empty() && last_change.elapsed().as_secs_f32() >= text_flush_secs;
-
-        push(ctx, &audio_buf, &mut state, quiet);
+        if quiet {
+            push(ctx, &audio_buf, &mut state, true);
+        }
 
         let prov = state.provisional_text();
         if prov != last_provisional {
@@ -1580,14 +1607,24 @@ fn run_stdin_stream(ctx: &mut QwenCtx, verbosity: i32, profile: bool) {
         }
     }
 
-    // Drain anything the reader queued after the loop condition flipped.
-    while let Ok(chunk) = rx.try_recv() {
-        total_samples += chunk.len();
-        audio_buf.extend_from_slice(&chunk);
+    if running.load(Ordering::SeqCst) {
+        // Genuine EOF: the input ended, so finalize the remaining tail. The
+        // per-chunk loop above already consumed all full chunks, leaving at most
+        // a sub-chunk remainder here — cheap to flush.
+        while let Ok(chunk) = rx.try_recv() {
+            total_samples += chunk.len();
+            audio_buf.extend_from_slice(&chunk);
+        }
+        push(ctx, &audio_buf, &mut state, true);
+    } else {
+        // Ctrl+C: stop now. Emit the already-decoded provisional tail instead of
+        // finalizing (which would re-encode the unprocessed backlog and hang).
+        let prov = state.provisional_text();
+        if !prov.is_empty() {
+            print!("{}", prov);
+            std::io::stdout().flush().ok();
+        }
     }
-
-    // Final flush: emit rollback-buffered tokens.
-    push(ctx, &audio_buf, &mut state, true);
     println!();
 
     ctx.perf_audio_ms = 1000.0 * total_samples as f64 / target_rate as f64;
