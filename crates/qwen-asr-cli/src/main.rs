@@ -790,7 +790,7 @@ fn main() {
     // `arecord ... | qwen-asr --stdin --stream`, so consume it chunk by chunk
     // and emit text as audio arrives.
     if stream_mode && use_stdin {
-        run_stdin_stream(&mut ctx, verbosity, profile);
+        run_stdin_stream(&mut ctx, verbosity, profile, stream_chunk_sec > 0.0);
         return;
     }
 
@@ -1486,7 +1486,103 @@ fn spawn_stdin_pcm_reader(verbosity: i32) -> std::sync::mpsc::Receiver<Vec<f32>>
 ///
 /// Reads audio as it arrives and emits text deltas, mirroring the macOS
 /// `--live` streaming loop but sourced from stdin instead of CoreAudio.
-fn run_stdin_stream(ctx: &mut QwenCtx, verbosity: i32, profile: bool) {
+/// Rough terminal display width of a string (CJK / full-width glyphs count as
+/// two columns). Good enough to keep the redrawn provisional preview from
+/// wrapping; exact grapheme widths are not needed.
+fn display_width(s: &str) -> usize {
+    s.chars()
+        .map(|c| {
+            let u = c as u32;
+            let wide = matches!(u,
+                0x1100..=0x115F | 0x2E80..=0x303E | 0x3041..=0x33FF | 0x3400..=0x4DBF |
+                0x4E00..=0x9FFF | 0xA000..=0xA4CF | 0xAC00..=0xD7A3 | 0xF900..=0xFAFF |
+                0xFE30..=0xFE4F | 0xFF00..=0xFF60 | 0xFFE0..=0xFFE6 | 0x20000..=0x3FFFD);
+            if wide {
+                2
+            } else {
+                1
+            }
+        })
+        .sum()
+}
+
+/// Live transcript renderer for the stdin streaming path.
+///
+/// On a TTY it prints committed text permanently (it flows and wraps like
+/// normal output) and shows the current provisional tail as a dim preview right
+/// after it, erasing that preview in place before the next update — so words
+/// appear ~1 chunk after they are spoken instead of waiting for a commit. When
+/// stdout is a pipe/file it degrades to append-only committed text (no ANSI, no
+/// provisional churn) so redirected output stays clean.
+struct LiveOut {
+    tty: bool,
+    /// Display width of the provisional preview currently drawn after the
+    /// cursor, so we can erase exactly it (and nothing committed) next time.
+    prov_width: usize,
+}
+
+impl LiveOut {
+    fn new() -> Self {
+        use std::io::IsTerminal;
+        LiveOut {
+            tty: std::io::stdout().is_terminal(),
+            prov_width: 0,
+        }
+    }
+
+    /// Emit newly committed `delta` (permanent) and refresh the `prov` preview.
+    fn update(&mut self, delta: &str, prov: &str) {
+        let mut out = std::io::stdout().lock();
+        if self.tty {
+            if self.prov_width > 0 {
+                // Move back over the old preview and clear to end of line.
+                let _ = write!(out, "\x1b[{}D\x1b[K", self.prov_width);
+                self.prov_width = 0;
+            }
+            if !delta.is_empty() {
+                let _ = write!(out, "{}", delta);
+            }
+            if !prov.is_empty() {
+                let _ = write!(out, "\x1b[90m{}\x1b[0m", prov);
+                self.prov_width = display_width(prov);
+            }
+            let _ = out.flush();
+        } else if !delta.is_empty() {
+            let _ = write!(out, "{}", delta);
+            let _ = out.flush();
+        }
+    }
+
+    /// Break to a fresh line at a speech pause / re-anchor so each utterance
+    /// lands on its own line. TTY-only: piped output stays a single flowing
+    /// stream (committed tokens already carry their own spacing), matching the
+    /// non-streaming transcript format.
+    fn newline(&mut self) {
+        if !self.tty {
+            return;
+        }
+        let mut out = std::io::stdout().lock();
+        if self.prov_width > 0 {
+            let _ = write!(out, "\x1b[{}D\x1b[K", self.prov_width);
+            self.prov_width = 0;
+        }
+        let _ = writeln!(out);
+        let _ = out.flush();
+    }
+
+    /// Terminate output with a trailing newline (both TTY and pipe).
+    fn finish(&mut self) {
+        let mut out = std::io::stdout().lock();
+        if self.tty && self.prov_width > 0 {
+            let _ = write!(out, "\x1b[{}D\x1b[K", self.prov_width);
+            self.prov_width = 0;
+        }
+        let _ = writeln!(out);
+        let _ = out.flush();
+    }
+}
+
+fn run_stdin_stream(ctx: &mut QwenCtx, verbosity: i32, profile: bool, chunk_sec_set: bool) {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::RecvTimeoutError;
     use std::sync::Arc;
@@ -1504,6 +1600,13 @@ fn run_stdin_stream(ctx: &mut QwenCtx, verbosity: i32, profile: bool) {
     // nothing ever prints. Commit after a few chunks (still guarded by the
     // rollback window) so words surface as they stabilize.
     ctx.stream_unfixed_chunks = 3;
+    // The 8s library default is tuned for a finite file; on a live mic that is
+    // an 8s "speak, then wait" latency floor since a full chunk must accumulate
+    // before the encoder runs at all. Default the live path to a snappier 2s
+    // unless the user picked a value with --stream-chunk-sec.
+    if !chunk_sec_set {
+        ctx.stream_chunk_sec = 2.0;
+    }
     let chunk_samples = (ctx.stream_chunk_sec * target_rate as f32) as usize;
 
     let running = Arc::new(AtomicBool::new(true));
@@ -1530,24 +1633,28 @@ fn run_stdin_stream(ctx: &mut QwenCtx, verbosity: i32, profile: bool) {
     // hypothesis stops changing for a short gap (a speech pause) — that is
     // exactly when early-commit is safe, and it keeps the correction window
     // open while speech is actively flowing.
-    let text_flush_secs = 5.0_f32;
+    let text_flush_secs = 1.5_f32;
     let mut last_provisional = String::new();
     let mut last_change = std::time::Instant::now();
+    let mut out = LiveOut::new();
 
+    // Run one incremental step and hand the committed delta + current
+    // provisional tail to the renderer. Returns the delta so callers can tell
+    // whether anything committed.
     fn push(
         ctx: &mut QwenCtx,
         audio_buf: &[f32],
         state: &mut transcribe::StreamState,
         finalize: bool,
-    ) {
+        out: &mut LiveOut,
+    ) -> String {
         if audio_buf.len() > state.audio_cursor() {
             if let Some(delta) = transcribe::stream_push_audio(ctx, audio_buf, state, finalize) {
-                if !delta.is_empty() {
-                    print!("{}", delta);
-                    std::io::stdout().flush().ok();
-                }
+                out.update(&delta, &state.provisional_text());
+                return delta;
             }
         }
+        String::new()
     }
 
     let mut eof = false;
@@ -1567,8 +1674,8 @@ fn run_stdin_stream(ctx: &mut QwenCtx, verbosity: i32, profile: bool) {
 
         // Bound memory on long-running streams: flush and re-anchor at ~120s.
         if audio_buf.len() > max_window_samples {
-            push(ctx, &audio_buf, &mut state, true);
-            println!();
+            push(ctx, &audio_buf, &mut state, true, &mut out);
+            out.newline();
             audio_buf.clear();
             state.reset();
             last_provisional.clear();
@@ -1586,18 +1693,23 @@ fn run_stdin_stream(ctx: &mut QwenCtx, verbosity: i32, profile: bool) {
             && audio_buf.len().saturating_sub(state.audio_cursor()) >= chunk_samples
         {
             let end = state.audio_cursor() + chunk_samples;
-            push(ctx, &audio_buf[..end], &mut state, false);
+            push(ctx, &audio_buf[..end], &mut state, false, &mut out);
         }
 
         if eof {
             break;
         }
 
-        // Commit held text if the hypothesis has been stable through a pause.
+        // Commit held text if the hypothesis has been stable through a pause,
+        // then break the line so each utterance stands on its own.
         let quiet =
             !last_provisional.is_empty() && last_change.elapsed().as_secs_f32() >= text_flush_secs;
         if quiet {
-            push(ctx, &audio_buf, &mut state, true);
+            push(ctx, &audio_buf, &mut state, true, &mut out);
+            out.newline();
+            last_provisional.clear();
+            last_change = std::time::Instant::now();
+            continue;
         }
 
         let prov = state.provisional_text();
@@ -1615,17 +1727,15 @@ fn run_stdin_stream(ctx: &mut QwenCtx, verbosity: i32, profile: bool) {
             total_samples += chunk.len();
             audio_buf.extend_from_slice(&chunk);
         }
-        push(ctx, &audio_buf, &mut state, true);
+        push(ctx, &audio_buf, &mut state, true, &mut out);
     } else {
-        // Ctrl+C: stop now. Emit the already-decoded provisional tail instead of
-        // finalizing (which would re-encode the unprocessed backlog and hang).
+        // Ctrl+C: stop now. Promote the already-decoded provisional tail to
+        // committed text instead of finalizing (which would re-encode the
+        // unprocessed backlog and hang).
         let prov = state.provisional_text();
-        if !prov.is_empty() {
-            print!("{}", prov);
-            std::io::stdout().flush().ok();
-        }
+        out.update(&prov, "");
     }
-    println!();
+    out.finish();
 
     ctx.perf_audio_ms = 1000.0 * total_samples as f64 / target_rate as f64;
     if verbosity >= 1 {
@@ -1650,7 +1760,16 @@ fn run_stdin_stream(ctx: &mut QwenCtx, verbosity: i32, profile: bool) {
 
 #[cfg(test)]
 mod tests {
+    use super::display_width;
     use super::wav_stream_offset;
+
+    #[test]
+    fn display_width_counts_cjk_as_two() {
+        assert_eq!(display_width("hello"), 5);
+        assert_eq!(display_width(""), 0);
+        assert_eq!(display_width("你好"), 4); // two full-width CJK glyphs
+        assert_eq!(display_width("a你b"), 4); // 1 + 2 + 1
+    }
 
     fn wav_header(sample_rate: u32, channels: u16, data_len: u32) -> Vec<u8> {
         let mut h = Vec::new();
