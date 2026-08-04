@@ -3191,6 +3191,12 @@ pub fn stream_push_audio(
                         .raw_tokens
                         .extend_from_slice(&state.stable_text_tokens[carry_start..]);
                 }
+                // Keep the stable-token cursor in sync with the re-seeded
+                // window: raw_tokens now holds only the carried tail, so drop
+                // everything before it. Otherwise `stable_text_tokens.len()`
+                // can exceed the re-anchored text region and slicing the
+                // provisional tail (or emitting) indexes out of bounds.
+                state.stable_text_tokens.drain(..carry_start);
                 state.prev_prefill_keys.clear();
                 state.stale_count = 0;
                 state.prev_tail_snapshot.clear();
@@ -3218,6 +3224,12 @@ pub fn stream_push_audio(
                         .raw_tokens
                         .extend_from_slice(&state.stable_text_tokens[carry_start..]);
                 }
+                // Keep the stable-token cursor in sync with the re-seeded
+                // window: raw_tokens now holds only the carried tail, so drop
+                // everything before it. Otherwise `stable_text_tokens.len()`
+                // can exceed the re-anchored text region and slicing the
+                // provisional tail (or emitting) indexes out of bounds.
+                state.stable_text_tokens.drain(..carry_start);
                 state.prev_prefill_keys.clear();
                 state.stale_count = 0;
                 state.prev_tail_snapshot.clear();
@@ -3307,7 +3319,8 @@ pub fn stream_push_audio(
                 // the reset drops it (mirrors the speech-end commit block).
                 let text_start = stream_text_start(ctx, &state.raw_tokens);
                 let candidate = &state.raw_tokens[text_start..];
-                for &tok in &candidate[state.stable_text_tokens.len()..] {
+                let emit_from = state.stable_text_tokens.len().min(candidate.len());
+                for &tok in &candidate[emit_from..] {
                     state.stable_text_tokens.push(tok);
                     let piece_bytes = tokenizer.decode_bytes(tok);
                     if let Some(ref cb) = ctx.token_cb {
@@ -3340,7 +3353,8 @@ pub fn stream_push_audio(
     {
         let text_start = stream_text_start(ctx, &state.raw_tokens);
         let candidate_tokens = &state.raw_tokens[text_start..];
-        for &tok in &candidate_tokens[state.stable_text_tokens.len()..] {
+        let prov_from = state.stable_text_tokens.len().min(candidate_tokens.len());
+        for &tok in &candidate_tokens[prov_from..] {
             let piece_bytes = tokenizer.decode_bytes(tok);
             state.provisional_bytes.extend_from_slice(piece_bytes);
         }
