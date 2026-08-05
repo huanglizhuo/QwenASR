@@ -76,10 +76,14 @@ pub mod transcribe;
 pub fn optimization_flags() -> Vec<&'static str> {
     let mut flags = Vec::new();
 
-    if cfg!(feature = "vdsp") {
+    // The `vdsp` feature only reaches real code on Apple platforms; reporting
+    // "vDSP/Accelerate" on a Linux build (where `blas` means OpenBLAS) sent
+    // issue #47 chasing the wrong library.
+    let apple_vdsp = cfg!(feature = "vdsp") && cfg!(target_vendor = "apple");
+    if apple_vdsp {
         flags.push("vDSP/Accelerate");
     }
-    if cfg!(feature = "blas") && !cfg!(feature = "vdsp") {
+    if cfg!(feature = "blas") && !apple_vdsp {
         flags.push("BLAS");
     }
 
