@@ -1181,14 +1181,32 @@ pub fn matmul_t(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: usiz
 /// Whether to slice a BLAS GEMM across our own thread pool instead of issuing
 /// one call and letting the BLAS library thread it internally.
 ///
-/// This is a *vendor* question, not an architecture question. Apple Accelerate
-/// runs a lone `sgemm` mostly on the calling thread, so slicing the output
-/// across the pool is what lets every core feed the matrix hardware (Round 10,
-/// measured ~30% end-to-end there). OpenBLAS is the opposite: it threads
-/// internally and packs the shared operand once per call. Slicing it hands
-/// every thread a full re-pack of the *same* matrix and divides the GEMM's
-/// arithmetic intensity by the slice count — see [`conv_pooled_gemm`] for the
-/// measured damage.
+/// This is a *vendor* question, not an architecture question, and it is a
+/// **soundness** question before it is a performance one.
+///
+/// Slicing means N pool threads each call `cblas_sgemm` concurrently. That is
+/// only legal on a BLAS built to be called from multiple threads: stock
+/// OpenBLAS documents its thread server as requiring `USE_LOCKING=1` for
+/// concurrent entry, and Ubuntu's `libopenblas0-pthread` 0.3.26 is not built
+/// that way. Apple Accelerate is safe here, and slicing is a real win there
+/// because a lone `sgemm` runs mostly on the calling thread, leaving the pool
+/// idle (Round 10, ~30% end-to-end).
+///
+/// Measured on an AMD EPYC 7763 (Zen 3, 4 cores) with that OpenBLAS, on the
+/// encoder stem's real shapes (`conv-stem-bench` in CI):
+///
+/// | slicing | `OPENBLAS_NUM_THREADS` | conv stem |
+/// |---|---|---|
+/// | on  | default | **hangs — killed at 300 s** |
+/// | off | default | 951.9 ms |
+/// | on  | 1       | 946.6 ms |
+/// | off | 1       | 1450.7 ms |
+///
+/// The first two rows are the finding: the same sliced code completes in
+/// 946.6 ms once OpenBLAS's own threading is disabled, so the hang is the
+/// concurrent-entry problem and not the workload. Rows 2 and 3 are within noise
+/// of each other, so slicing buys nothing here even when it does complete —
+/// there is one unit of parallelism available and either layer can supply it.
 ///
 /// `default_on` is the built-in policy; the env var is an A/B override so a
 /// single binary can measure both sides on a machine we don't have.
@@ -1199,21 +1217,10 @@ fn pooled_gemm_flag(var: &str, default_on: bool) -> bool {
 
 /// Pool-slicing policy for the encoder's conv stem GEMMs. **Apple only.**
 ///
-/// The conv stem is where slicing hurts most. With `enc_chunk_size = 100` and
-/// `CONV_HIDDEN = 480`, conv layer 2 is `C[480,800] = W[480,4320] @ cols[4320,800]`
-/// — a 13.8 MB shared `cols` operand. Slicing it into `480/32 = 15` blocks makes
-/// each block stream and re-pack all 13.8 MB to produce just 32 output rows,
-/// dropping arithmetic intensity from 480:1 to 32:1 and pushing the combined
-/// working set (~200 MB of packed panels) far past a desktop L3.
-///
-/// Measured on the same 28.2 s clip, same source, same call counts (issue #47):
-/// `conv2d_op` is 60 ms on an M5 Pro and 12659 ms on a Ryzen 9 5900X — 211x,
-/// against a ~8x hardware baseline set by the purely bandwidth-bound
-/// `bf16_matvec` (170 ms vs 1399 ms). That is ~25x beyond what the memory
-/// system alone explains, and it accounts for 95% of the encoder's time there.
-///
-/// Off by default on non-Apple BLAS so OpenBLAS packs once and blocks the GEMM
-/// itself. Override with `QASR_CONV_POOLED=1`/`0`.
+/// This is the path that hangs on stock OpenBLAS — see [`pooled_gemm_flag`] for
+/// the measurements. It issues the most concurrent `cblas_sgemm` calls of any
+/// path in the encoder: 87 conv invocations per 28 s clip, each sliced into
+/// `480/32 = 15` blocks. Override with `QASR_CONV_POOLED=1`/`0`.
 #[cfg(feature = "blas")]
 pub(crate) fn conv_pooled_gemm() -> bool {
     use std::sync::OnceLock;
@@ -1222,18 +1229,20 @@ pub(crate) fn conv_pooled_gemm() -> bool {
 }
 
 /// Pool-slicing policy for the `linear` / attention-projection GEMMs.
+/// **Apple only**, for the same reason as [`conv_pooled_gemm`].
 ///
-/// Left **on everywhere** for now: unlike the conv stem, `sgemm` measured 8.3x
-/// on the 5900X (233 ms vs 1940 ms), which sits at the hardware baseline rather
-/// than above it, so there is no evidence it is hurting. The same re-pack
-/// mechanism applies in principle — the operands are much smaller and the slice
-/// count lower (`out_dim = 896` → 7 slices) — so it is exposed as a separate
-/// knob to measure independently. Override with `QASR_LINEAR_POOLED=0`.
+/// This path was initially left on everywhere because `sgemm` measured 8.3x on
+/// the 5900X — at the hardware baseline, so no evidence it was *slow*. That
+/// reasoning does not survive the conv-stem result: the concern is not speed
+/// but that concurrent `cblas_sgemm` entry is unsupported on stock OpenBLAS
+/// regardless of which call site does it. Fewer slices (`out_dim = 896` → 7)
+/// and smaller operands presumably make a hang less likely, not impossible.
+/// Override with `QASR_LINEAR_POOLED=1`/`0`.
 #[cfg(feature = "blas")]
 pub(crate) fn linear_pooled_gemm() -> bool {
     use std::sync::OnceLock;
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| pooled_gemm_flag("QASR_LINEAR_POOLED", true))
+    *ENABLED.get_or_init(|| pooled_gemm_flag("QASR_LINEAR_POOLED", cfg!(target_vendor = "apple")))
 }
 
 /// Pool-parallel `y[seq,out] = x @ W^T + beta*y (+ b)`: splits the output

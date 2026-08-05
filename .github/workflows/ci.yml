@@ -156,40 +156,51 @@ jobs:
           elif command -v gtimeout >/dev/null 2>&1; then TO="gtimeout -s KILL 300"
           else TO=""; echo "note: no timeout(1) available, running unbounded"; fi
 
-          # $1 label, $2 QASR_CONV_POOLED, $3 OPENBLAS_NUM_THREADS ("" = default)
+          # $1 label, $2 test name, $3 knob env, $4 slicing 0/1,
+          # $5 OPENBLAS_NUM_THREADS ("" = library default)
           run() {
-            local label=$1 pooled=$2 obt=$3 log="/tmp/bench-$1.log"
-            echo "::group::$label (QASR_CONV_POOLED=$pooled OPENBLAS_NUM_THREADS=${obt:-default})"
-            if env QASR_CONV_POOLED="$pooled" ${obt:+OPENBLAS_NUM_THREADS=$obt} \
-                 $TO "$bin" --ignored --nocapture 2>&1 | tee "$log"; then
-              :
-            else
-              echo "TIMED_OUT_OR_FAILED (exit $?)" | tee -a "$log"
-            fi
+            local label=$1 test=$2 knob=$3 pooled=$4 obt=$5 log="/tmp/bench-$1.log" rc=0
+            echo "::group::$label ($knob=$pooled OPENBLAS_NUM_THREADS=${obt:-default})"
+            # Capture the pipeline's *left* exit status: without this the `tee`
+            # succeeds and a SIGKILLed timeout is silently recorded as a pass.
+            set +e
+            env "$knob=$pooled" ${obt:+OPENBLAS_NUM_THREADS=$obt} \
+              $TO "$bin" --exact "$test" --ignored --nocapture > "$log" 2>&1
+            rc=$?
+            set -e
+            cat "$log"
+            [ $rc -ne 0 ] && echo "TIMED_OUT_OR_FAILED rc=$rc" | tee -a "$log"
             echo "::endgroup::"
+            return 0
           }
 
-          run sliced        1 ""
-          run single        0 ""
-          run sliced-obt1   1 1
-          run single-obt1   0 1
+          C=conv_stem_gemm_bench
+          L=linear_gemm_bench
+          run conv-sliced      $C QASR_CONV_POOLED   1 ""
+          run conv-single      $C QASR_CONV_POOLED   0 ""
+          run conv-sliced-obt1 $C QASR_CONV_POOLED   1 1
+          run conv-single-obt1 $C QASR_CONV_POOLED   0 1
+          run lin-sliced       $L QASR_LINEAR_POOLED 1 ""
+          run lin-single       $L QASR_LINEAR_POOLED 0 ""
 
           total() {
             local v
             v=$(grep -h BENCH_TOTAL_MS "/tmp/bench-$1.log" 2>/dev/null | awk '{print $2}' | head -1)
-            echo "${v:-timeout/fail}"
+            if [ -z "$v" ]; then echo "**HANG/FAIL**"; else echo "$v ms"; fi
           }
           {
-            echo "### Conv-stem GEMM — ${{ matrix.os }} ($(uname -m), $(getconf _NPROCESSORS_ONLN) cores)"
+            echo "### GEMM pool-slicing — ${{ matrix.os }} ($(uname -m), $(getconf _NPROCESSORS_ONLN) cores)"
             echo ""
-            echo "| config | OpenBLAS threads | total |"
-            echo "|---|---|---|"
-            echo "| pool-sliced (Accelerate policy) | default | $(total sliced) ms |"
-            echo "| single BLAS call | default | $(total single) ms |"
-            echo "| pool-sliced | 1 | $(total sliced-obt1) ms |"
-            echo "| single BLAS call | 1 | $(total single-obt1) ms |"
+            echo "| path | sliced | OpenBLAS threads | total |"
+            echo "|---|---|---|---|"
+            echo "| conv stem | yes | default | $(total conv-sliced) |"
+            echo "| conv stem | no | default | $(total conv-single) |"
+            echo "| conv stem | yes | 1 | $(total conv-sliced-obt1) |"
+            echo "| conv stem | no | 1 | $(total conv-single-obt1) |"
+            echo "| linear | yes | default | $(total lin-sliced) |"
+            echo "| linear | no | default | $(total lin-single) |"
             echo ""
-            echo "A timeout in the pool-sliced rows is itself the result: issuing"
-            echo "concurrent \`cblas_sgemm\` calls from our pool is only safe on a"
-            echo "BLAS built for it, which is exactly what #47 gates off."
+            echo "A HANG in a sliced row is the result, not a flake: concurrent"
+            echo "\`cblas_sgemm\` entry is unsupported on stock OpenBLAS"
+            echo "(\`USE_LOCKING=1\` required), which is what #47 gates off."
           } >> "$GITHUB_STEP_SUMMARY"

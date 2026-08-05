@@ -171,3 +171,66 @@ fn conv_stem_gemm_bench() {
     // Machine-readable line for the CI comparison step.
     println!("BENCH_TOTAL_MS {grand_total_ms:.1}");
 }
+
+/// The other site that issues concurrent `cblas_sgemm` calls from the pool:
+/// `linear`, via `sgemm_nt_pooled`. The conv stem hangs on stock OpenBLAS when
+/// sliced; this covers whether `linear`'s smaller operands and lower slice
+/// count (`out_dim = 896` → 7) avoid it or merely make it rarer. Driven by
+/// `QASR_LINEAR_POOLED`.
+#[test]
+#[ignore = "microbenchmark; run explicitly with --ignored --nocapture"]
+fn linear_gemm_bench() {
+    let threads = kernels::get_default_threads();
+    kernels::set_threads(threads);
+
+    // Encoder transformer shapes: d_model 896, ffn 3584, ~750 tokens for a
+    // 28 s clip. `sgemm_nt_pooled` needs seq_len >= 2 and out_dim >= 256.
+    const SEQ: usize = 750;
+    const D: usize = 896;
+    const FFN: usize = 3584;
+    let shapes = [("qkvo", D, D), ("fc1", D, FFN), ("fc2", FFN, D)];
+
+    let pooled = std::env::var("QASR_LINEAR_POOLED").unwrap_or_else(|_| "<default>".into());
+    println!("threads={threads} QASR_LINEAR_POOLED={pooled} seq={SEQ}");
+
+    let mut total_ms = 0.0f64;
+    let mut total_macs = 0u64;
+    // 18 encoder layers; one representative call per shape per layer.
+    const REPS: usize = 18;
+
+    for (name, in_dim, out_dim) in shapes {
+        let mut x = vec![0.0f32; SEQ * in_dim];
+        let mut w = vec![0.0f32; out_dim * in_dim];
+        let b = vec![0.0f32; out_dim];
+        fill_pseudo_random(&mut x, 0xA11CE);
+        fill_pseudo_random(&mut w, 0xB0B);
+        let mut y = vec![0.0f32; SEQ * out_dim];
+
+        kernels::linear(&mut y, &x, &w, Some(&b), SEQ, in_dim, out_dim);
+
+        let start = Instant::now();
+        for _ in 0..REPS {
+            kernels::linear(&mut y, &x, &w, Some(&b), SEQ, in_dim, out_dim);
+        }
+        let ms = start.elapsed().as_secs_f64() * 1000.0;
+
+        let macs = (SEQ * in_dim * out_dim) as u64 * REPS as u64;
+        total_ms += ms;
+        total_macs += macs;
+        println!(
+            "{name:<5} M={SEQ:<4} N={out_dim:<5} K={in_dim:<5} {ms:>9.1} ms  ({:>6.1} GFLOP/s)",
+            (2.0 * macs as f64) / (ms / 1000.0) / 1e9,
+        );
+        assert!(
+            y.iter().all(|v| v.is_finite()),
+            "{name} produced non-finite output"
+        );
+    }
+
+    println!(
+        "TOTAL  {:.1} ms  ({:.1} GFLOP/s)",
+        total_ms,
+        (2.0 * total_macs as f64) / (total_ms / 1000.0) / 1e9,
+    );
+    println!("BENCH_TOTAL_MS {total_ms:.1}");
+}
