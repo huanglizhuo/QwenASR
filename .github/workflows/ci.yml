@@ -128,29 +128,68 @@ jobs:
             ldconfig -p | grep -i openblas | head -2
           fi
 
-      - name: Conv-stem GEMM, pool-sliced vs single BLAS call
-        run: |
-          set -o pipefail
-          run() {
-            QASR_CONV_POOLED="$1" cargo test --release --test conv_stem_bench \
-              -- --ignored --nocapture 2>&1 | tee "/tmp/pooled-$1.log"
-          }
-          echo "::group::pool-sliced (QASR_CONV_POOLED=1)"
-          run 1
-          echo "::endgroup::"
-          echo "::group::single BLAS call (QASR_CONV_POOLED=0)"
-          run 0
-          echo "::endgroup::"
+      # Build first so a slow build can never be mistaken for a slow benchmark.
+      - name: Build benchmark
+        run: cargo test --release --no-run --test conv_stem_bench
 
-          sliced=$(grep BENCH_TOTAL_MS /tmp/pooled-1.log | awk '{print $2}')
-          single=$(grep BENCH_TOTAL_MS /tmp/pooled-0.log | awk '{print $2}')
+      # Each configuration gets its own hard timeout. The first run of this job
+      # hung for 66 min on ubuntu-latest under `QASR_CONV_POOLED=1` while the
+      # same step took 18 s on macos-latest, so a hang is a plausible outcome
+      # here and must be recorded rather than allowed to stall the workflow.
+      # `OPENBLAS_NUM_THREADS=1` is included to separate two candidate causes:
+      # if slicing only completes with OpenBLAS threading disabled, the problem
+      # is concurrent entry into a BLAS whose thread server is not reentrant
+      # (stock OpenBLAS needs USE_LOCKING=1 for that), not just cache pressure.
+      - name: Conv-stem GEMM, pool-sliced vs single BLAS call
+        timeout-minutes: 25
+        run: |
+          bin=$(cargo test --release --no-run --test conv_stem_bench \
+                  --message-format=json 2>/dev/null \
+                | sed -n 's/.*"executable":"\([^"]*conv_stem_bench[^"]*\)".*/\1/p' | head -1)
+          echo "bench binary: $bin"
+
+          # `timeout` is GNU coreutils; macOS runners have neither it nor
+          # gtimeout unless brew coreutils is installed. Degrade to no timeout
+          # there — the hang only reproduces on the Linux leg anyway, and the
+          # job-level timeout-minutes still bounds it.
+          if command -v timeout >/dev/null 2>&1; then TO="timeout -s KILL 300"
+          elif command -v gtimeout >/dev/null 2>&1; then TO="gtimeout -s KILL 300"
+          else TO=""; echo "note: no timeout(1) available, running unbounded"; fi
+
+          # $1 label, $2 QASR_CONV_POOLED, $3 OPENBLAS_NUM_THREADS ("" = default)
+          run() {
+            local label=$1 pooled=$2 obt=$3 log="/tmp/bench-$1.log"
+            echo "::group::$label (QASR_CONV_POOLED=$pooled OPENBLAS_NUM_THREADS=${obt:-default})"
+            if env QASR_CONV_POOLED="$pooled" ${obt:+OPENBLAS_NUM_THREADS=$obt} \
+                 $TO "$bin" --ignored --nocapture 2>&1 | tee "$log"; then
+              :
+            else
+              echo "TIMED_OUT_OR_FAILED (exit $?)" | tee -a "$log"
+            fi
+            echo "::endgroup::"
+          }
+
+          run sliced        1 ""
+          run single        0 ""
+          run sliced-obt1   1 1
+          run single-obt1   0 1
+
+          total() {
+            local v
+            v=$(grep -h BENCH_TOTAL_MS "/tmp/bench-$1.log" 2>/dev/null | awk '{print $2}' | head -1)
+            echo "${v:-timeout/fail}"
+          }
           {
-            echo "### Conv-stem GEMM — ${{ matrix.os }}"
+            echo "### Conv-stem GEMM — ${{ matrix.os }} ($(uname -m), $(getconf _NPROCESSORS_ONLN) cores)"
             echo ""
-            echo "| pool-sliced (Accelerate policy) | single BLAS call | ratio |"
+            echo "| config | OpenBLAS threads | total |"
             echo "|---|---|---|"
-            echo "| ${sliced} ms | ${single} ms | $(awk "BEGIN{printf \"%.2fx\", ${sliced}/${single}}") |"
+            echo "| pool-sliced (Accelerate policy) | default | $(total sliced) ms |"
+            echo "| single BLAS call | default | $(total single) ms |"
+            echo "| pool-sliced | 1 | $(total sliced-obt1) ms |"
+            echo "| single BLAS call | 1 | $(total single-obt1) ms |"
             echo ""
-            echo "Ratio > 1 means slicing is *slower* here, i.e. this vendor"
-            echo "should take the single-call path (the #47 gating)."
+            echo "A timeout in the pool-sliced rows is itself the result: issuing"
+            echo "concurrent \`cblas_sgemm\` calls from our pool is only safe on a"
+            echo "BLAS built for it, which is exactly what #47 gates off."
           } >> "$GITHUB_STEP_SUMMARY"
