@@ -1218,9 +1218,7 @@ fn pooled_gemm_flag(var: &str, default_on: bool) -> bool {
 pub(crate) fn conv_pooled_gemm() -> bool {
     use std::sync::OnceLock;
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        pooled_gemm_flag("QASR_CONV_POOLED", cfg!(target_vendor = "apple"))
-    })
+    *ENABLED.get_or_init(|| pooled_gemm_flag("QASR_CONV_POOLED", cfg!(target_vendor = "apple")))
 }
 
 /// Pool-slicing policy for the `linear` / attention-projection GEMMs.

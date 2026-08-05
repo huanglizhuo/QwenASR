@@ -87,3 +87,70 @@ jobs:
 
       - name: Test (no default features)
         run: cargo test --release --no-default-features
+
+  # Issue #47: pool-slicing the conv-stem GEMM is an Accelerate workaround that
+  # becomes a large pessimization on a BLAS that threads internally (OpenBLAS),
+  # because every slice re-packs the whole shared `cols` operand. This runs the
+  # stem's real shapes both ways on both vendors so the gating stays honest
+  # without needing the 1.2GB model. Informational: it prints a comparison and
+  # does not fail the build, since hosted-runner timings are noisy.
+  conv-stem-bench:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install OpenBLAS (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev
+
+      - name: Set target-cpu (Linux)
+        if: runner.os == 'Linux'
+        run: echo "RUSTFLAGS=-C target-cpu=x86-64-v3" >> "$GITHUB_ENV"
+
+      - name: Report machine
+        run: |
+          echo "os=${{ matrix.os }} arch=$(uname -m)"
+          if [ "$(uname -s)" = "Darwin" ]; then
+            sysctl -n machdep.cpu.brand_string hw.physicalcpu hw.logicalcpu
+          else
+            nproc && grep -m1 'model name' /proc/cpuinfo
+            ldconfig -p | grep -i openblas | head -2
+          fi
+
+      - name: Conv-stem GEMM, pool-sliced vs single BLAS call
+        run: |
+          set -o pipefail
+          run() {
+            QASR_CONV_POOLED="$1" cargo test --release --test conv_stem_bench \
+              -- --ignored --nocapture 2>&1 | tee "/tmp/pooled-$1.log"
+          }
+          echo "::group::pool-sliced (QASR_CONV_POOLED=1)"
+          run 1
+          echo "::endgroup::"
+          echo "::group::single BLAS call (QASR_CONV_POOLED=0)"
+          run 0
+          echo "::endgroup::"
+
+          sliced=$(grep BENCH_TOTAL_MS /tmp/pooled-1.log | awk '{print $2}')
+          single=$(grep BENCH_TOTAL_MS /tmp/pooled-0.log | awk '{print $2}')
+          {
+            echo "### Conv-stem GEMM — ${{ matrix.os }}"
+            echo ""
+            echo "| pool-sliced (Accelerate policy) | single BLAS call | ratio |"
+            echo "|---|---|---|"
+            echo "| ${sliced} ms | ${single} ms | $(awk "BEGIN{printf \"%.2fx\", ${sliced}/${single}}") |"
+            echo ""
+            echo "Ratio > 1 means slicing is *slower* here, i.e. this vendor"
+            echo "should take the single-call path (the #47 gating)."
+          } >> "$GITHUB_STEP_SUMMARY"
