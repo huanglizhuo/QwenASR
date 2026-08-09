@@ -11,10 +11,9 @@
  *   B) A pool of `nproc` workers (capped at 16, like kernels::get_default_threads)
  *      pulls 15 slices of sgemm(M=32, N=800, K=4320) off a shared counter, over
  *      disjoint output rows of the same C, sharing one B. This is what QwenASR
- *      did before PR #51 -- and what stock OpenBLAS does not support: its thread
- *      server needs USE_LOCKING=1 for concurrent entry. Concurrency is bounded
- *      by the pool, not by the slice count; one thread per slice would just
- *      oversubscribe a small box and measure the scheduler instead.
+ *      did before PR #51. Concurrency is bounded by the pool, not by the slice
+ *      count; one thread per slice would just oversubscribe a small box and
+ *      measure the scheduler instead.
  *
  * Build:
  *   Linux:  gcc -O2 blas_concurrency_repro.c -o repro -lopenblas -lpthread
@@ -22,9 +21,24 @@
  *
  * Run:  ./repro
  *
- * If B hangs or is far slower than A, this machine's BLAS is not safe to call
- * concurrently and PR #51's gating is the right fix. If B matches A, the BLAS
- * is fine and QwenASR's slowness on this machine has another cause.
+ * WHAT THIS DOES NOT SHOW. It was written to isolate the #47 hang outside our
+ * codebase, and it fails at that: on the very runner where the in-repo
+ * `gemm_pooling_bench` conv-sliced config hangs in 4 of 5 runs, config B here
+ * completes every time at a mild 1.24x. It also does not separate vendors --
+ * 1.24x on EPYC/OpenBLAS vs 1.40x on a 3-core M1 VM, while the real kernel
+ * hangs on one and gets *faster* on the other.
+ *
+ * The likely reason is that this uses plain pthread_create/join, whereas the
+ * real dispatch goes through a persistent pool whose join spins on an atomic
+ * with no yield (kernels/pool.rs). Concurrent BLAS entry may need that spinning
+ * to wedge. So treat "B is only mildly slower" here as NOT exonerating a BLAS.
+ *
+ * WHAT IT IS GOOD FOR: column A, one thread issuing one full-width sgemm, is a
+ * stable measure of how fast this BLAS is at the shape that dominates the
+ * encoder. Reference values, 29 reps: 69 ms on an M5 Pro, 107 ms on a 3-core
+ * M1 VM, 649 ms on a 4-core EPYC 7763 with libopenblas0-pthread 0.3.26. A
+ * machine far off those numbers has a slow BLAS build, independent of any
+ * concurrency question -- which is the open half of #47.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -137,9 +151,11 @@ int main(void) {
     double sliced_ms = now_ms() - t0;
     printf("%8.1f ms\n\n", sliced_ms);
 
-    printf("ratio B/A = %.2fx %s\n", sliced_ms / single_ms,
-           sliced_ms > single_ms * 1.25 ? "  <-- concurrent entry is harmful here"
-                                        : "  (no penalty on this BLAS)");
+    /* Deliberately not labelled pass/fail: this ratio does not reliably
+     * separate a BLAS that wedges from one that does not. See the header. */
+    printf("ratio B/A = %.2fx\n", sliced_ms / single_ms);
+    printf("\nCompare column A against the reference values in the header;\n"
+           "the ratio is informational only and does not exonerate a BLAS.\n");
     free(W); free(B); free(C);
     return 0;
 }

@@ -129,12 +129,14 @@ jobs:
             ldconfig -p | grep -i openblas | head -2
           fi
 
-      # Publishes an absolute reference for bench/blas_concurrency_repro.c on a
-      # known-good OpenBLAS. #47's reporter is ~12x slower per conv call than
-      # this 4-core runner even in the arrangement that is healthy here, which
-      # concurrency alone cannot explain -- a slow BLAS build (no DYNAMIC_ARCH,
-      # no Zen kernel) would. The ratio tells him whether concurrent entry hurts;
-      # these absolute numbers tell him whether his BLAS is slow to begin with.
+      # Publishes reference numbers for bench/blas_concurrency_repro.c. Only its
+      # column A (one thread, one full-width sgemm) is load-bearing: it measures
+      # raw BLAS throughput at the shape that dominates the encoder, which is the
+      # open half of #47 -- the reporter is ~12x slower per conv call than this
+      # runner even in the arrangement that is healthy here. The B/A ratio is NOT
+      # a reliable hang detector: config B completes here every time while the
+      # gemm_pooling_bench conv-sliced config on this same runner hangs in 4 of 5
+      # runs, so the repro does not reproduce what it was written to isolate.
       - name: BLAS concurrent-entry repro (reference numbers)
         timeout-minutes: 10
         run: |
