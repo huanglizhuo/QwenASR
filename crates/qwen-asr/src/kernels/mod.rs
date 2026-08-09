@@ -1228,6 +1228,35 @@ pub(crate) fn conv_pooled_gemm() -> bool {
     *ENABLED.get_or_init(|| pooled_gemm_flag("QASR_CONV_POOLED", cfg!(target_vendor = "apple")))
 }
 
+/// Pool-parallel head split for **multi-token** attention. **Apple only.**
+///
+/// Third site with the same shape as the other two, found by auditing every
+/// `cblas_sgemm` call against its callers. [`causal_attention`] fans out over
+/// query heads with `parallel_for`; for `seq_q > 1` each worker issues two
+/// `cblas_sgemm` calls per head, so prefill puts up to `n_heads` threads in
+/// BLAS at once.
+///
+/// Measured on the prefill shapes (16/8 heads, head_dim 64, seq 512, 28 layers):
+/// splitting heads is **1.55x slower** on the EPYC/OpenBLAS runner (909.3 vs
+/// 586.2 ms) and **3.0x faster** on an M5 Pro (48.7 vs 144.6 ms). A clean vendor
+/// split, so it is gated rather than removed. Override with `QASR_ATTN_POOLED`.
+///
+/// Only consulted for `seq_q > 1`: single-token decode takes the BLAS-free
+/// online-softmax scan, where head parallelism is safe and valuable everywhere.
+#[cfg(feature = "blas")]
+pub(crate) fn attn_parallel_heads() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| pooled_gemm_flag("QASR_ATTN_POOLED", cfg!(target_vendor = "apple")))
+}
+
+/// No BLAS in this build, so `causal_attention_heads` runs the online-softmax
+/// scan for every `seq_q` and there is no concurrent-entry hazard to avoid.
+#[cfg(not(feature = "blas"))]
+pub(crate) fn attn_parallel_heads() -> bool {
+    true
+}
+
 /// Pool-slicing policy for the `linear` / attention-projection GEMMs.
 /// **Apple only**, for the same reason as [`conv_pooled_gemm`].
 ///
@@ -3079,7 +3108,12 @@ pub fn causal_attention(
 ) {
     let _pg = ProfileGuard::new(&PROF.attention_causal);
     let n_threads = get_num_threads();
-    if n_threads > 1 && n_heads >= 2 {
+    // `seq_q == 1` takes the BLAS-free online-softmax branch inside
+    // `causal_attention_heads`, so splitting heads across the pool is safe on
+    // every platform. `seq_q > 1` issues two `cblas_sgemm` per head, and fanning
+    // that out means N threads inside BLAS at once — see `attn_parallel_heads`.
+    let par_heads = seq_q == 1 || attn_parallel_heads();
+    if n_threads > 1 && n_heads >= 2 && par_heads {
         let out_ptr = out.as_mut_ptr() as usize;
         let q_ptr = q.as_ptr() as usize;
         let k_ptr = k_base as usize;

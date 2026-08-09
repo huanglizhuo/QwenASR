@@ -5,8 +5,8 @@
 //!
 //! 1. [`conv_stem_gemm_bench`] — the encoder conv stem (`QASR_CONV_POOLED`).
 //! 2. [`linear_gemm_bench`] — `linear` via `sgemm_nt_pooled` (`QASR_LINEAR_POOLED`).
-//! 3. [`causal_attention_prefill_bench`] — head-parallel prefill attention.
-//!    **Not gated by anything yet**; this measures whether it needs to be.
+//! 3. [`causal_attention_prefill_bench`] — head-parallel prefill attention
+//!    (`QASR_ATTN_POOLED`).
 //!
 //! Each reproduces its kernel's real shapes without the model: only the shapes
 //! and the BLAS call pattern drive the effect, so random weights are fine.
@@ -249,8 +249,8 @@ fn linear_gemm_bench() {
 /// decoder prefill path (`decoder.rs:926` passes `seq_len`, not 1); single-token
 /// decode takes the BLAS-free online-softmax branch and is unaffected.
 ///
-/// There is no knob for this one yet — that is the point of measuring it. Run it
-/// with `QASR_ATTN_THREADS=1` to get the serial reference.
+/// Gated by `attn_parallel_heads` (Apple-only default); `QASR_ATTN_POOLED=1`
+/// forces the fan-out on so the off-vendor cost stays visible in CI.
 #[test]
 #[ignore = "microbenchmark; run explicitly with --ignored --nocapture"]
 fn causal_attention_prefill_bench() {
@@ -262,15 +262,13 @@ fn causal_attention_prefill_bench() {
     const LAYERS: usize = 28;
     const SEQ: usize = 512;
 
-    // Empty must mean "default", not "unparseable → 1": CI passes the knob as
-    // `QASR_ATTN_THREADS=` for the parallel config, and silently falling back to
-    // 1 there would make the parallel and serial rows identical.
-    let threads = match std::env::var("QASR_ATTN_THREADS") {
-        Ok(v) if !v.trim().is_empty() => v.trim().parse().unwrap_or(1),
-        _ => kernels::get_default_threads(),
-    };
+    // Drive the real `attn_parallel_heads` gate rather than a thread-count
+    // proxy, so this measures the shipped decision. The pool keeps all its
+    // threads either way; only the head fan-out changes.
+    let threads = kernels::get_default_threads();
     kernels::set_threads(threads);
-    println!("threads={threads} seq_q={SEQ} seq_k={SEQ} heads={N_HEADS}/{N_KV}");
+    let pooled = std::env::var("QASR_ATTN_POOLED").unwrap_or_else(|_| "<default>".into());
+    println!("threads={threads} QASR_ATTN_POOLED={pooled} seq_q={SEQ} seq_k={SEQ} heads={N_HEADS}/{N_KV}");
 
     let q_hidden = N_HEADS * HEAD_DIM;
     // KV cache layout is [head][pos][head_dim]; head_stride spans one KV head.

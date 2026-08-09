@@ -187,10 +187,10 @@ jobs:
           run conv-single-obt1 $C QASR_CONV_POOLED   0 1
           run lin-sliced       $L QASR_LINEAR_POOLED 1 ""
           run lin-single       $L QASR_LINEAR_POOLED 0 ""
-          # The ungated third site: head-parallel prefill attention. QASR_ATTN_THREADS=1
-          # is the serial reference -- one thread in BLAS at a time.
-          run attn-parallel    $A QASR_ATTN_THREADS  "" ""
-          run attn-serial      $A QASR_ATTN_THREADS  1  ""
+          # Third site: head-parallel prefill attention. Sliced = N threads in
+          # BLAS at once; single = one caller, BLAS threads each per-head GEMM.
+          run attn-sliced      $A QASR_ATTN_POOLED   1 ""
+          run attn-single      $A QASR_ATTN_POOLED   0 ""
 
           total() {
             local v
@@ -208,8 +208,8 @@ jobs:
             echo "| conv stem | no | 1 | $(total conv-single-obt1) |"
             echo "| linear | yes | default | $(total lin-sliced) |"
             echo "| linear | no | default | $(total lin-single) |"
-            echo "| prefill attention (**ungated**) | yes | default | $(total attn-parallel) |"
-            echo "| prefill attention | serial ref | default | $(total attn-serial) |"
+            echo "| prefill attention | yes | default | $(total attn-sliced) |"
+            echo "| prefill attention | no | default | $(total attn-single) |"
             echo ""
             echo "A HANG in a sliced row is the result, not a flake: concurrent"
             echo "\`cblas_sgemm\` entry is unsupported on stock OpenBLAS"
