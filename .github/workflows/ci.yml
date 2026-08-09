@@ -88,12 +88,13 @@ jobs:
       - name: Test (no default features)
         run: cargo test --release --no-default-features
 
-  # Issue #47: pool-slicing the conv-stem GEMM is an Accelerate workaround that
-  # becomes a large pessimization on a BLAS that threads internally (OpenBLAS),
-  # because every slice re-packs the whole shared `cols` operand. This runs the
-  # stem's real shapes both ways on both vendors so the gating stays honest
-  # without needing the 1.2GB model. Informational: it prints a comparison and
-  # does not fail the build, since hosted-runner timings are noisy.
+  # Issue #47: several kernels have N pool threads each call `cblas_sgemm`
+  # concurrently. That is safe on Accelerate and is what makes the pool useful
+  # there, but stock OpenBLAS needs USE_LOCKING=1 for concurrent entry and
+  # Ubuntu's package lacks it -- observed as an outright hang, and on a rerun as
+  # a 2.6x slowdown, so it is intermittent. This exercises all three such sites
+  # on both vendors, model-free. Informational: hosted-runner timings are noisy
+  # and the hang is a race, so this exhibits the problem rather than gating on it.
   conv-stem-bench:
     strategy:
       fail-fast: false
@@ -130,7 +131,7 @@ jobs:
 
       # Build first so a slow build can never be mistaken for a slow benchmark.
       - name: Build benchmark
-        run: cargo test --release --no-run --test conv_stem_bench
+        run: cargo test --release --no-run --test gemm_pooling_bench
 
       # Each configuration gets its own hard timeout. The first run of this job
       # hung for 66 min on ubuntu-latest under `QASR_CONV_POOLED=1` while the
@@ -140,20 +141,23 @@ jobs:
       # if slicing only completes with OpenBLAS threading disabled, the problem
       # is concurrent entry into a BLAS whose thread server is not reentrant
       # (stock OpenBLAS needs USE_LOCKING=1 for that), not just cache pressure.
-      - name: Conv-stem GEMM, pool-sliced vs single BLAS call
-        timeout-minutes: 25
+      - name: GEMM pool-slicing, sliced vs single BLAS call
+        # Budget: 8 configs x 180 s worst case = 24 min, under this ceiling. Keep
+        # these two numbers consistent when adding configs, or GitHub kills the
+        # step mid-run and the partial results are lost.
+        timeout-minutes: 30
         run: |
-          bin=$(cargo test --release --no-run --test conv_stem_bench \
+          bin=$(cargo test --release --no-run --test gemm_pooling_bench \
                   --message-format=json 2>/dev/null \
-                | sed -n 's/.*"executable":"\([^"]*conv_stem_bench[^"]*\)".*/\1/p' | head -1)
+                | sed -n 's/.*"executable":"\([^"]*gemm_pooling_bench[^"]*\)".*/\1/p' | head -1)
           echo "bench binary: $bin"
 
           # `timeout` is GNU coreutils; macOS runners have neither it nor
           # gtimeout unless brew coreutils is installed. Degrade to no timeout
           # there — the hang only reproduces on the Linux leg anyway, and the
           # job-level timeout-minutes still bounds it.
-          if command -v timeout >/dev/null 2>&1; then TO="timeout -s KILL 300"
-          elif command -v gtimeout >/dev/null 2>&1; then TO="gtimeout -s KILL 300"
+          if command -v timeout >/dev/null 2>&1; then TO="timeout -s KILL 180"
+          elif command -v gtimeout >/dev/null 2>&1; then TO="gtimeout -s KILL 180"
           else TO=""; echo "note: no timeout(1) available, running unbounded"; fi
 
           # $1 label, $2 test name, $3 knob env, $4 slicing 0/1,
@@ -176,12 +180,17 @@ jobs:
 
           C=conv_stem_gemm_bench
           L=linear_gemm_bench
+          A=causal_attention_prefill_bench
           run conv-sliced      $C QASR_CONV_POOLED   1 ""
           run conv-single      $C QASR_CONV_POOLED   0 ""
           run conv-sliced-obt1 $C QASR_CONV_POOLED   1 1
           run conv-single-obt1 $C QASR_CONV_POOLED   0 1
           run lin-sliced       $L QASR_LINEAR_POOLED 1 ""
           run lin-single       $L QASR_LINEAR_POOLED 0 ""
+          # The ungated third site: head-parallel prefill attention. QASR_ATTN_THREADS=1
+          # is the serial reference -- one thread in BLAS at a time.
+          run attn-parallel    $A QASR_ATTN_THREADS  "" ""
+          run attn-serial      $A QASR_ATTN_THREADS  1  ""
 
           total() {
             local v
@@ -199,6 +208,8 @@ jobs:
             echo "| conv stem | no | 1 | $(total conv-single-obt1) |"
             echo "| linear | yes | default | $(total lin-sliced) |"
             echo "| linear | no | default | $(total lin-single) |"
+            echo "| prefill attention (**ungated**) | yes | default | $(total attn-parallel) |"
+            echo "| prefill attention | serial ref | default | $(total attn-serial) |"
             echo ""
             echo "A HANG in a sliced row is the result, not a flake: concurrent"
             echo "\`cblas_sgemm\` entry is unsupported on stock OpenBLAS"

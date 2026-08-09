@@ -1,14 +1,21 @@
-//! Conv-stem GEMM microbenchmark for issue #47.
+//! Microbenchmarks for issue #47: every site where N pool threads call
+//! `cblas_sgemm` concurrently.
 //!
-//! Reproduces the encoder stem's three `conv2d_with_cols` calls at their real
-//! shapes without needing the model: only the shapes and the BLAS call pattern
-//! matter for the effect under test, so random weights are fine.
+//! There are three, and they are covered here in the order they were found:
 //!
-//! The pool-slicing policy (`QASR_CONV_POOLED`) is cached in a `OnceLock`, so a
-//! single process can only measure one side. CI runs this binary twice, once
-//! per setting, and diffs the printed totals — see `.github/workflows/ci.yml`.
+//! 1. [`conv_stem_gemm_bench`] — the encoder conv stem (`QASR_CONV_POOLED`).
+//! 2. [`linear_gemm_bench`] — `linear` via `sgemm_nt_pooled` (`QASR_LINEAR_POOLED`).
+//! 3. [`causal_attention_prefill_bench`] — head-parallel prefill attention.
+//!    **Not gated by anything yet**; this measures whether it needs to be.
 //!
-//! `#[ignore]`d so it never runs as part of the normal suite.
+//! Each reproduces its kernel's real shapes without the model: only the shapes
+//! and the BLAS call pattern drive the effect, so random weights are fine.
+//!
+//! The policy flags are cached in a `OnceLock`, so one process can only measure
+//! one side. CI runs this binary once per configuration and diffs the printed
+//! `BENCH_TOTAL_MS` lines — see `.github/workflows/ci.yml`.
+//!
+//! `#[ignore]`d so they never run as part of the normal suite.
 
 use qwen_asr::config::CONV_HIDDEN;
 use qwen_asr::kernels;
@@ -233,4 +240,81 @@ fn linear_gemm_bench() {
         (2.0 * total_macs as f64) / (total_ms / 1000.0) / 1e9,
     );
     println!("BENCH_TOTAL_MS {total_ms:.1}");
+}
+
+/// The third site that issues concurrent `cblas_sgemm` calls from the pool, and
+/// the one #47's gating does *not* cover: `causal_attention` fans out over
+/// query heads with `parallel_for`, and for `seq_q > 1` each worker's
+/// `causal_attention_heads` issues two `cblas_sgemm` calls per head. That is the
+/// decoder prefill path (`decoder.rs:926` passes `seq_len`, not 1); single-token
+/// decode takes the BLAS-free online-softmax branch and is unaffected.
+///
+/// There is no knob for this one yet — that is the point of measuring it. Run it
+/// with `QASR_ATTN_THREADS=1` to get the serial reference.
+#[test]
+#[ignore = "microbenchmark; run explicitly with --ignored --nocapture"]
+fn causal_attention_prefill_bench() {
+    // Decoder geometry: 16 query heads, 8 KV heads (GQA), head_dim 64, 28
+    // layers. seq_q = seq_k = a representative prefill length.
+    const N_HEADS: usize = 16;
+    const N_KV: usize = 8;
+    const HEAD_DIM: usize = 64;
+    const LAYERS: usize = 28;
+    const SEQ: usize = 512;
+
+    // Empty must mean "default", not "unparseable → 1": CI passes the knob as
+    // `QASR_ATTN_THREADS=` for the parallel config, and silently falling back to
+    // 1 there would make the parallel and serial rows identical.
+    let threads = match std::env::var("QASR_ATTN_THREADS") {
+        Ok(v) if !v.trim().is_empty() => v.trim().parse().unwrap_or(1),
+        _ => kernels::get_default_threads(),
+    };
+    kernels::set_threads(threads);
+    println!("threads={threads} seq_q={SEQ} seq_k={SEQ} heads={N_HEADS}/{N_KV}");
+
+    let q_hidden = N_HEADS * HEAD_DIM;
+    // KV cache layout is [head][pos][head_dim]; head_stride spans one KV head.
+    let head_stride = SEQ * HEAD_DIM;
+    let mut q = vec![0.0f32; SEQ * q_hidden];
+    let mut k = vec![0.0f32; N_KV * head_stride];
+    let mut v = vec![0.0f32; N_KV * head_stride];
+    fill_pseudo_random(&mut q, 0xDEC0DE);
+    fill_pseudo_random(&mut k, 0x1234_5678);
+    fill_pseudo_random(&mut v, 0x8765_4321);
+    let mut out = vec![0.0f32; SEQ * q_hidden];
+    let scale = 1.0 / (HEAD_DIM as f32).sqrt();
+
+    let call = |out: &mut Vec<f32>| {
+        kernels::causal_attention(
+            out,
+            &q,
+            k.as_ptr(),
+            v.as_ptr(),
+            head_stride,
+            SEQ,
+            SEQ,
+            N_HEADS,
+            N_KV,
+            HEAD_DIM,
+            scale,
+            0,
+        );
+    };
+    call(&mut out);
+
+    let start = Instant::now();
+    for _ in 0..LAYERS {
+        call(&mut out);
+    }
+    let ms = start.elapsed().as_secs_f64() * 1000.0;
+
+    assert!(
+        out.iter().all(|x| x.is_finite()),
+        "non-finite attention output"
+    );
+    println!(
+        "attn   {LAYERS} layers  {ms:.1} ms  ({:.2} ms/layer)",
+        ms / LAYERS as f64
+    );
+    println!("BENCH_TOTAL_MS {ms:.1}");
 }
