@@ -129,6 +129,31 @@ jobs:
             ldconfig -p | grep -i openblas | head -2
           fi
 
+      # Publishes an absolute reference for bench/blas_concurrency_repro.c on a
+      # known-good OpenBLAS. #47's reporter is ~12x slower per conv call than
+      # this 4-core runner even in the arrangement that is healthy here, which
+      # concurrency alone cannot explain -- a slow BLAS build (no DYNAMIC_ARCH,
+      # no Zen kernel) would. The ratio tells him whether concurrent entry hurts;
+      # these absolute numbers tell him whether his BLAS is slow to begin with.
+      - name: BLAS concurrent-entry repro (reference numbers)
+        timeout-minutes: 10
+        run: |
+          if [ "$(uname -s)" = "Darwin" ]; then
+            clang -O2 -w bench/blas_concurrency_repro.c -o /tmp/repro -framework Accelerate
+          else
+            gcc -O2 -w bench/blas_concurrency_repro.c -o /tmp/repro -lopenblas -lpthread
+          fi
+          # Bounded: config B is the one that can wedge on a non-reentrant BLAS.
+          if command -v timeout >/dev/null 2>&1; then TO="timeout -s KILL 240"; else TO=""; fi
+          $TO /tmp/repro | tee /tmp/repro.log || echo "TIMED_OUT_OR_FAILED rc=$?"
+          {
+            echo "### BLAS concurrent-entry repro — ${{ matrix.os }}"
+            echo ""
+            echo '```'
+            cat /tmp/repro.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       # Build first so a slow build can never be mistaken for a slow benchmark.
       - name: Build benchmark
         run: cargo test --release --no-run --test gemm_pooling_bench
