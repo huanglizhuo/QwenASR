@@ -8,10 +8,13 @@
  *      serial im2col, then a single full-width BLAS call. OpenBLAS threads it
  *      internally.
  *
- *   B) 15 threads each issue sgemm(M=32, N=800, K=4320) over disjoint output
- *      rows of the same C, sharing one B. This is what QwenASR did before
- *      PR #51 -- and what stock OpenBLAS does not support: its thread server
- *      needs USE_LOCKING=1 for concurrent entry.
+ *   B) A pool of `nproc` workers (capped at 16, like kernels::get_default_threads)
+ *      pulls 15 slices of sgemm(M=32, N=800, K=4320) off a shared counter, over
+ *      disjoint output rows of the same C, sharing one B. This is what QwenASR
+ *      did before PR #51 -- and what stock OpenBLAS does not support: its thread
+ *      server needs USE_LOCKING=1 for concurrent entry. Concurrency is bounded
+ *      by the pool, not by the slice count; one thread per slice would just
+ *      oversubscribe a small box and measure the scheduler instead.
  *
  * Build:
  *   Linux:  gcc -O2 blas_concurrency_repro.c -o repro -lopenblas -lpthread
@@ -28,6 +31,7 @@
 #include <string.h>
 #include <time.h>
 #include <pthread.h>
+#include <unistd.h>
 
 #ifdef __APPLE__
 #include <Accelerate/Accelerate.h>
@@ -63,25 +67,48 @@ static void run_single(void) {
                 W, K_DIM, B, N_DIM, 0.0f, C, N_DIM);
 }
 
+/* Mirror QwenASR's `parallel_for_dynamic`: a fixed pool of `n_workers` threads
+ * pulls slice indices off a shared counter. Concurrency is bounded by the pool
+ * size, NOT by NSLICE -- spawning one thread per slice would oversubscribe a
+ * small machine 5:1 and measure scheduler thrash instead of BLAS reentrancy. */
+static int n_workers;
+static int next_slice;
+static pthread_mutex_t slice_lock = PTHREAD_MUTEX_INITIALIZER;
+
 static void *slice_worker(void *arg) {
-    long id = (long)arg;
-    int start = (int)id * BLOCK;
-    /* Disjoint output rows; every slice re-reads the whole shared B. */
-    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-                BLOCK, N_DIM, K_DIM, 1.0f,
-                W + (size_t)start * K_DIM, K_DIM, B, N_DIM,
-                0.0f, C + (size_t)start * N_DIM, N_DIM);
-    return NULL;
+    (void)arg;
+    for (;;) {
+        pthread_mutex_lock(&slice_lock);
+        int i = next_slice++;
+        pthread_mutex_unlock(&slice_lock);
+        if (i >= NSLICE) return NULL;
+        int start = i * BLOCK;
+        /* Disjoint output rows; every slice re-reads the whole shared B. */
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    BLOCK, N_DIM, K_DIM, 1.0f,
+                    W + (size_t)start * K_DIM, K_DIM, B, N_DIM,
+                    0.0f, C + (size_t)start * N_DIM, N_DIM);
+    }
 }
 
-/* NSLICE threads inside BLAS at once, like QwenASR before PR #51. */
+/* Up to n_workers threads inside BLAS at once, like QwenASR before PR #51. */
 static void run_sliced(void) {
     pthread_t th[NSLICE];
-    for (long i = 0; i < NSLICE; i++) pthread_create(&th[i], NULL, slice_worker, (void *)i);
-    for (int i = 0; i < NSLICE; i++) pthread_join(th[i], NULL);
+    next_slice = 0;
+    for (long i = 0; i < n_workers; i++) pthread_create(&th[i], NULL, slice_worker, (void *)i);
+    for (int i = 0; i < n_workers; i++) pthread_join(th[i], NULL);
 }
 
 int main(void) {
+    /* Match the pool QwenASR would use: online cores, capped at MAX_THREADS(16)
+     * like kernels::get_default_threads. Override with QASR_REPRO_THREADS. */
+    n_workers = (int)sysconf(_SC_NPROCESSORS_ONLN);
+    const char *env = getenv("QASR_REPRO_THREADS");
+    if (env && *env) n_workers = atoi(env);
+    if (n_workers < 1) n_workers = 1;
+    if (n_workers > 16) n_workers = 16;
+    if (n_workers > NSLICE) n_workers = NSLICE;
+
     W = malloc(sizeof(float) * (size_t)M_TOTAL * K_DIM);
     B = malloc(sizeof(float) * (size_t)K_DIM * N_DIM);
     C = malloc(sizeof(float) * (size_t)M_TOTAL * N_DIM);
@@ -92,8 +119,9 @@ int main(void) {
     printf("shape C[%d,%d] = W[%d,%d] @ B[%d,%d], B = %.1f MB, %d reps\n",
            M_TOTAL, N_DIM, M_TOTAL, K_DIM, K_DIM, N_DIM,
            (double)K_DIM * N_DIM * 4 / (1024 * 1024), REPS);
-    printf("A = 1 thread, one full call   (antirez/qwen-asr)\n");
-    printf("B = %d threads, %d rows each   (QwenASR before #51)\n\n", NSLICE, BLOCK);
+    printf("A = 1 thread, one full call         (antirez/qwen-asr)\n");
+    printf("B = %d workers over %d slices of %d rows  (QwenASR before #51)\n\n",
+           n_workers, NSLICE, BLOCK);
 
     run_single();                       /* warm up */
     double t0 = now_ms();
@@ -102,7 +130,7 @@ int main(void) {
     printf("A  single call : %8.1f ms\n", single_ms);
     fflush(stdout);
 
-    printf("B  %2d threads  : ", NSLICE);
+    printf("B  %2d workers  : ", n_workers);
     fflush(stdout);                     /* flush before the call that may hang */
     t0 = now_ms();
     for (int i = 0; i < REPS; i++) run_sliced();
