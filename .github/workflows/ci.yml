@@ -87,3 +87,122 @@ jobs:
 
       - name: Test (no default features)
         run: cargo test --release --no-default-features
+
+  # Issue #47: exercise every kernel where our pool can fan out concurrent
+  # `cblas_sgemm` calls. The shipped policy must complete on both backends:
+  # pooled on Apple Accelerate, one BLAS caller on OpenBLAS. The opposite policy
+  # remains an informational A/B reference and may time out on Linux.
+  gemm-pooling-bench:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install OpenBLAS (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev
+
+      - name: Set target-cpu (Linux)
+        if: runner.os == 'Linux'
+        run: echo "RUSTFLAGS=-C target-cpu=x86-64-v3" >> "$GITHUB_ENV"
+
+      - name: Report machine
+        run: |
+          echo "os=${{ matrix.os }} arch=$(uname -m)"
+          if [ "$(uname -s)" = "Darwin" ]; then
+            sysctl -n machdep.cpu.brand_string hw.physicalcpu hw.logicalcpu
+          else
+            nproc && grep -m1 'model name' /proc/cpuinfo
+            ldconfig -p | grep -i openblas | head -2
+          fi
+
+      # Build first so a slow build can never be mistaken for a slow benchmark.
+      - name: Build benchmark
+        run: cargo test --release --no-run --test gemm_pooling_bench
+
+      - name: Verify shipped GEMM policy and measure opposite policy
+        timeout-minutes: 15
+        run: |
+          bin=$(cargo test --release --no-run --test gemm_pooling_bench \
+                  --message-format=json 2>/dev/null \
+                | sed -n 's/.*"executable":"\([^"]*gemm_pooling_bench[^"]*\)".*/\1/p' | head -1)
+          echo "bench binary: $bin"
+
+          # Bound each A/B reference independently. macOS runners may not have
+          # coreutils; the job-level timeout still bounds that leg.
+          if command -v timeout >/dev/null 2>&1; then TO="timeout -s KILL 90"
+          elif command -v gtimeout >/dev/null 2>&1; then TO="gtimeout -s KILL 90"
+          else TO=""; echo "note: no timeout(1) available, running unbounded"; fi
+
+          # $1 label, $2 test name, $3 required (1 = shipped policy must pass),
+          # optional $4/$5 are an env knob and value for the opposite policy.
+          run_case() {
+            local label=$1 test=$2 required=$3 knob=${4:-} value=${5:-}
+            local log="/tmp/bench-$label.log" rc=0
+            echo "::group::$label"
+            set +e
+            if [ -n "$knob" ]; then
+              env "$knob=$value" $TO "$bin" --exact "$test" --ignored --nocapture > "$log" 2>&1
+            else
+              $TO "$bin" --exact "$test" --ignored --nocapture > "$log" 2>&1
+            fi
+            rc=$?
+            set -e
+            cat "$log"
+            [ $rc -ne 0 ] && echo "TIMED_OUT_OR_FAILED rc=$rc" | tee -a "$log"
+            echo "::endgroup::"
+            if [ "$required" = 1 ] && [ $rc -ne 0 ]; then
+              echo "shipped policy failed: $label" >&2
+              exit $rc
+            fi
+            return 0
+          }
+
+          C=conv_stem_gemm_bench
+          L=linear_gemm_bench
+          A=causal_attention_prefill_bench
+          run_case conv-default $C 1
+          run_case lin-default  $L 1
+          run_case attn-default $A 1
+
+          if [ "$(uname -s)" = "Darwin" ]; then
+            # Apple ships pooled; compare against one BLAS caller.
+            run_case conv-opposite $C 0 QASR_CONV_POOLED 0
+            run_case lin-opposite  $L 0 QASR_LINEAR_POOLED 0
+            run_case attn-opposite $A 0 QASR_ATTN_POOLED 0
+            opposite="single caller"
+          else
+            # OpenBLAS ships one caller; keep the old pooled policy visible.
+            run_case conv-opposite $C 0 QASR_CONV_POOLED 1
+            run_case lin-opposite  $L 0 QASR_LINEAR_POOLED 1
+            run_case attn-opposite $A 0 QASR_ATTN_POOLED 1
+            opposite="pool sliced"
+          fi
+
+          total() {
+            local v
+            v=$(grep -h BENCH_TOTAL_MS "/tmp/bench-$1.log" 2>/dev/null | awk '{print $2}' | head -1)
+            if [ -z "$v" ]; then echo "**HANG/FAIL**"; else echo "$v ms"; fi
+          }
+          {
+            echo "### GEMM pool-slicing — ${{ matrix.os }} ($(uname -m), $(getconf _NPROCESSORS_ONLN) cores)"
+            echo ""
+            echo "| path | shipped default | opposite ($opposite) |"
+            echo "|---|---|---|"
+            echo "| conv stem | $(total conv-default) | $(total conv-opposite) |"
+            echo "| linear | $(total lin-default) | $(total lin-opposite) |"
+            echo "| prefill attention | $(total attn-default) | $(total attn-opposite) |"
+            echo ""
+            echo "Only the shipped-default column gates CI. The opposite column"
+            echo "is diagnostic because hosted-runner timings and hangs are noisy."
+          } >> "$GITHUB_STEP_SUMMARY"
