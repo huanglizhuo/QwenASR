@@ -1148,13 +1148,24 @@ fn choose_seg_schedule(ctx: &QwenCtx, n_splits: usize) -> SegSchedule {
     }
     #[cfg(target_arch = "aarch64")]
     {
+        // Lockstep runs background prefill workers under the same
+        // `set_thread_override(1)` + scoped-thread pattern as the L3 pool, so
+        // it carries the same concurrent-BLAS-entry hazard on a non-Accelerate
+        // backend (aarch64 Linux + OpenBLAS). No-op on Apple, where this is the
+        // preferred path and the gate is on.
         let b = lockstep_batch_size(n_splits);
-        if b >= 2 {
+        if b >= 2 && kernels::seg_parallel_blas() {
             return SegSchedule::Lockstep(b);
         }
     }
+    // The K workers each run single-threaded kernels, but "single-threaded"
+    // only disables *our* pool — every one of them still calls `cblas_sgemm`
+    // directly, so K workers means K threads inside BLAS at once. That is the
+    // same concurrent-entry pattern the pooled-GEMM gates avoid, reached by a
+    // different route (`std::thread::scope`, not `parallel_for`), so the same
+    // vendor policy applies. See `kernels::seg_parallel_blas`.
     let k = segment_worker_count(n_splits);
-    if k >= 2 {
+    if k >= 2 && kernels::seg_parallel_blas() {
         SegSchedule::ParallelWorkers(k)
     } else {
         SegSchedule::Serial

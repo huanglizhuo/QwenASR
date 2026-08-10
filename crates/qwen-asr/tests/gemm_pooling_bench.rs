@@ -41,6 +41,18 @@ fn fill_pseudo_random(buf: &mut [f32], seed: u64) {
     }
 }
 
+/// Pool size for the run. Defaults to the shipped thread count; CI overrides it
+/// so a small hosted runner can reproduce the pool-threads-vs-cores ratio of a
+/// real machine (issue #47 runs 16 pool threads). The oversubscription is the
+/// variable under test here, so this deliberately does not clamp to `nproc`.
+fn bench_threads() -> usize {
+    std::env::var("QASR_BENCH_THREADS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or_else(kernels::get_default_threads)
+}
+
 struct Layer {
     name: &'static str,
     c_in: usize,
@@ -59,7 +71,7 @@ impl Layer {
 #[test]
 #[ignore = "microbenchmark; run explicitly with --ignored --nocapture"]
 fn conv_stem_gemm_bench() {
-    let threads = kernels::get_default_threads();
+    let threads = bench_threads();
     kernels::set_threads(threads);
 
     // The stem's three convs, chained: each layer's output dims feed the next.
@@ -186,7 +198,7 @@ fn conv_stem_gemm_bench() {
 #[test]
 #[ignore = "microbenchmark; run explicitly with --ignored --nocapture"]
 fn linear_gemm_bench() {
-    let threads = kernels::get_default_threads();
+    let threads = bench_threads();
     kernels::set_threads(threads);
 
     // Encoder transformer shapes: d_model 896, ffn 3584, ~750 tokens for a
@@ -264,7 +276,7 @@ fn causal_attention_prefill_bench() {
     // Drive the real `attn_parallel_heads` gate rather than a thread-count
     // proxy, so this measures the shipped decision. The pool keeps all its
     // threads either way; only the head fan-out changes.
-    let threads = kernels::get_default_threads();
+    let threads = bench_threads();
     kernels::set_threads(threads);
     let pooled = std::env::var("QASR_ATTN_POOLED").unwrap_or_else(|_| "<default>".into());
     println!("threads={threads} QASR_ATTN_POOLED={pooled} seq_q={SEQ} seq_k={SEQ} heads={N_HEADS}/{N_KV}");

@@ -131,31 +131,38 @@ jobs:
         run: cargo test --release --no-run --test gemm_pooling_bench
 
       - name: Verify shipped GEMM policy and measure opposite policy
-        timeout-minutes: 15
+        timeout-minutes: 45
         run: |
           bin=$(cargo test --release --no-run --test gemm_pooling_bench \
                   --message-format=json 2>/dev/null \
                 | sed -n 's/.*"executable":"\([^"]*gemm_pooling_bench[^"]*\)".*/\1/p' | head -1)
           echo "bench binary: $bin"
+          cores=$(getconf _NPROCESSORS_ONLN)
 
           # Bound each A/B reference independently. macOS runners may not have
           # coreutils; the job-level timeout still bounds that leg.
-          if command -v timeout >/dev/null 2>&1; then TO="timeout -s KILL 90"
-          elif command -v gtimeout >/dev/null 2>&1; then TO="gtimeout -s KILL 90"
+          # 180s, not 90s: the oversubscribed `16` leg is legitimately slower
+          # on a 3-core runner, and the bound only needs to catch a wedge.
+          if command -v timeout >/dev/null 2>&1; then TO="timeout -s KILL 180"
+          elif command -v gtimeout >/dev/null 2>&1; then TO="gtimeout -s KILL 180"
           else TO=""; echo "note: no timeout(1) available, running unbounded"; fi
 
           # $1 label, $2 test name, $3 required (1 = shipped policy must pass),
-          # optional $4/$5 are an env knob and value for the opposite policy.
+          # $4 pool threads ("native" = shipped default), $5 pooled 1/0/"" .
           run_case() {
-            local label=$1 test=$2 required=$3 knob=${4:-} value=${5:-}
+            local label=$1 test=$2 required=$3 threads=$4 pooled=${5:-}
             local log="/tmp/bench-$label.log" rc=0
+            local -a env_args=()
+            if [ "$threads" != native ]; then
+              env_args+=("QASR_BENCH_THREADS=$threads")
+            fi
+            if [ -n "$pooled" ]; then
+              env_args+=("QASR_CONV_POOLED=$pooled" "QASR_LINEAR_POOLED=$pooled" \
+                         "QASR_ATTN_POOLED=$pooled" "QASR_SEG_POOLED=$pooled")
+            fi
             echo "::group::$label"
             set +e
-            if [ -n "$knob" ]; then
-              env "$knob=$value" $TO "$bin" --exact "$test" --ignored --nocapture > "$log" 2>&1
-            else
-              $TO "$bin" --exact "$test" --ignored --nocapture > "$log" 2>&1
-            fi
+            env "${env_args[@]}" $TO "$bin" --exact "$test" --ignored --nocapture > "$log" 2>&1
             rc=$?
             set -e
             cat "$log"
@@ -171,23 +178,27 @@ jobs:
           C=conv_stem_gemm_bench
           L=linear_gemm_bench
           A=causal_attention_prefill_bench
-          run_case conv-default $C 1
-          run_case lin-default  $L 1
-          run_case attn-default $A 1
 
           if [ "$(uname -s)" = "Darwin" ]; then
-            # Apple ships pooled; compare against one BLAS caller.
-            run_case conv-opposite $C 0 QASR_CONV_POOLED 0
-            run_case lin-opposite  $L 0 QASR_LINEAR_POOLED 0
-            run_case attn-opposite $A 0 QASR_ATTN_POOLED 0
-            opposite="single caller"
+            opp=0; opposite="single caller"     # Apple ships pooled
           else
-            # OpenBLAS ships one caller; keep the old pooled policy visible.
-            run_case conv-opposite $C 0 QASR_CONV_POOLED 1
-            run_case lin-opposite  $L 0 QASR_LINEAR_POOLED 1
-            run_case attn-opposite $A 0 QASR_ATTN_POOLED 1
-            opposite="pool sliced"
+            opp=1; opposite="pool sliced"       # OpenBLAS ships one caller
           fi
+
+          # Two pool sizes. `native` is the shipped default. `16` reproduces the
+          # pool-threads-vs-cores ratio of the 12c/24t machine in issue #47,
+          # which a 3-4 core hosted runner otherwise never exercises — and the
+          # pooled/OpenBLAS penalty grows with that ratio, so testing only at
+          # `native` understates it. At 16 the pool is also oversubscribed
+          # against the runner's cores, which is the regression guard for the
+          # bounded spin-join backoff in `kernels::pool`.
+          for t in native 16; do
+            for pair in "conv:$C" "lin:$L" "attn:$A"; do
+              k=${pair%%:*}; test=${pair#*:}
+              run_case "$k-default-$t"  "$test" 1 "$t"
+              run_case "$k-opposite-$t" "$test" 0 "$t" "$opp"
+            done
+          done
 
           total() {
             local v
@@ -195,14 +206,23 @@ jobs:
             if [ -z "$v" ]; then echo "**HANG/FAIL**"; else echo "$v ms"; fi
           }
           {
-            echo "### GEMM pool-slicing — ${{ matrix.os }} ($(uname -m), $(getconf _NPROCESSORS_ONLN) cores)"
+            echo "### GEMM pool-slicing — ${{ matrix.os }} ($(uname -m), $cores cores)"
             echo ""
-            echo "| path | shipped default | opposite ($opposite) |"
-            echo "|---|---|---|"
-            echo "| conv stem | $(total conv-default) | $(total conv-opposite) |"
-            echo "| linear | $(total lin-default) | $(total lin-opposite) |"
-            echo "| prefill attention | $(total attn-default) | $(total attn-opposite) |"
+            echo "| pool threads | path | shipped default | opposite ($opposite) |"
+            echo "|---|---|---|---|"
+            for t in native 16; do
+              echo "| $t | conv stem | $(total conv-default-$t) | $(total conv-opposite-$t) |"
+              echo "| $t | linear | $(total lin-default-$t) | $(total lin-opposite-$t) |"
+              echo "| $t | prefill attention | $(total attn-default-$t) | $(total attn-opposite-$t) |"
+            done
             echo ""
             echo "Only the shipped-default column gates CI. The opposite column"
             echo "is diagnostic because hosted-runner timings and hangs are noisy."
+            echo ""
+            echo "Hosted runners are small (this one has $cores cores), and the"
+            echo "pooled-vs-single gap is a function of pool size and cache, so"
+            echo "the \`native\` row can disagree with real hardware — a 3-core"
+            echo "macOS VM has measured pooled conv *slower* while an M5 Pro"
+            echo "measures it 1.2x faster. The \`16\` row is the one that tracks"
+            echo "the machines in issue #47."
           } >> "$GITHUB_STEP_SUMMARY"
