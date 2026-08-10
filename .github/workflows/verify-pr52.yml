@@ -1,0 +1,143 @@
+name: verify-pr52-issue47
+
+# Temporary verification harness for PR #52 / issue #47. NOT for merge.
+#
+# The in-tree `gemm-pooling-bench` job covers the kernels. This covers what it
+# cannot: the real model on real audio, plus the two paths the review added
+# fixes for (segmented-mode BLAS entry, and the pool's spin-join under
+# oversubscription).
+#
+# One binary throughout: QASR_*_POOLED=1 reproduces main's scheduling exactly,
+# so every A/B is compiler- and machine-identical.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci/verify-pr52-issue47]
+
+jobs:
+  e2e-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install OpenBLAS
+        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev
+
+      - name: Report machine and BLAS variant
+        run: |
+          echo "nproc=$(nproc)"
+          grep -m1 'model name' /proc/cpuinfo
+          so=$(ldconfig -p | awk '/libopenblas\.so\.0/{print $NF; exit}')
+          echo "libopenblas: $so"
+          echo "openmp symbols: $(nm -D "$so" 2>/dev/null | grep -c 'omp_' || echo '?')"
+
+      - name: Build CLI
+        env:
+          RUSTFLAGS: -C target-cpu=x86-64-v3
+        run: cargo build --release -p qwen-asr-cli
+
+      - name: Confirm OpenBLAS is linked
+        run: ldd target/release/qwen-asr | grep -i blas
+
+      - name: Cache model
+        id: model
+        uses: actions/cache@v4
+        with:
+          path: qwen3-asr-0.6b
+          key: qwen3-asr-0.6b-hf-v1
+
+      - name: Download model
+        if: steps.model.outputs.cache-hit != 'true'
+        run: ./target/release/qwen-asr download qwen3-asr-0.6b --output qwen3-asr-0.6b
+
+      - name: End-to-end A/B
+        run: |
+          BIN=./target/release/qwen-asr
+          AUDIO=bench/samples/audio.wav
+          MODEL=qwen3-asr-0.6b
+          LIMIT=600
+
+          # Linux ships all four gates off. `pooled` re-enables them, which is
+          # exactly main's behaviour.
+          SHIPPED="QASR_CONV_POOLED=0 QASR_LINEAR_POOLED=0 QASR_ATTN_POOLED=0 QASR_SEG_POOLED=0"
+          POOLED="QASR_CONV_POOLED=1 QASR_LINEAR_POOLED=1 QASR_ATTN_POOLED=1 QASR_SEG_POOLED=1"
+
+          # $1 label, $2 env string, $3 "stdin" to pipe the clip, $4.. CLI args.
+          run_case() {
+            local label=$1 envs=$2 mode=$3; shift 3
+            local log=/tmp/$label.log rc=0
+            echo "::group::$label [$envs] $*"
+            set +e
+            if [ "$mode" = stdin ]; then
+              env $envs /usr/bin/time -v timeout -s KILL $LIMIT \
+                "$BIN" -d "$MODEL" "$@" < "$AUDIO" > "$log" 2>&1
+            else
+              env $envs /usr/bin/time -v timeout -s KILL $LIMIT \
+                "$BIN" -d "$MODEL" -i "$AUDIO" "$@" > "$log" 2>&1
+            fi
+            rc=$?
+            set -e
+            cat "$log"
+            echo "rc=$rc"
+            [ $rc -ne 0 ] && echo "TIMEOUT_OR_FAIL rc=$rc" >> "$log"
+            echo "::endgroup::"
+            return 0
+          }
+
+          # --- the headline A/B, pool size == core count (the #47 regime) ---
+          run_case off-shipped-t4 "$SHIPPED" file  -t 4 --profile
+          run_case off-pooled-t4  "$POOLED"  file  -t 4 --profile
+          run_case str-shipped-t4 "$SHIPPED" stdin -t 4 --stdin --stream --profile
+          run_case str-pooled-t4  "$POOLED"  stdin -t 4 --stdin --stream --profile
+
+          # --- review item 4: pool oversubscribed 4x against the runner's cores.
+          # Before the bounded spin-join backoff this took ~157 s (decode alone
+          # ~156 s) under BOTH policies. It should now track the -t 4 numbers.
+          run_case off-shipped-t16 "$SHIPPED" file -t 16 --profile
+          run_case off-pooled-t16  "$POOLED"  file -t 16 --profile
+
+          # --- review item 3: segmented mode, the 4th BLAS-entry site. Vary
+          # only QASR_SEG_POOLED; the other three stay at the Linux default.
+          SEGOFF="QASR_CONV_POOLED=0 QASR_LINEAR_POOLED=0 QASR_ATTN_POOLED=0 QASR_SEG_POOLED=0"
+          SEGON="QASR_CONV_POOLED=0 QASR_LINEAR_POOLED=0 QASR_ATTN_POOLED=0 QASR_SEG_POOLED=1"
+          run_case seg-shipped-t4 "$SEGOFF" file -t 4 -S 10 --profile
+          run_case seg-pooled-t4  "$SEGON"  file -t 4 -S 10 --profile
+
+          infer() {
+            local v; v=$(grep -h '^Inference:' "/tmp/$1.log" 2>/dev/null | head -1 \
+                         | sed 's/^Inference: //')
+            if [ -z "$v" ]; then echo '**TIMEOUT/HANG**'; else echo "$v"; fi
+          }
+          cpu() { grep -h 'Percent of CPU' "/tmp/$1.log" 2>/dev/null | head -1 | sed 's/.*: //'; }
+          # Guard against a "fast" run that silently stopped transcribing.
+          text() {
+            if grep -qi 'disappointing me is rarely a wise decision' "/tmp/$1.log" 2>/dev/null
+            then echo 'ok'; else echo '**TEXT DIFF**'; fi
+          }
+
+          {
+            echo "### PR #52 (+review fixes) end-to-end — ubuntu-latest ($(nproc) cores, OpenBLAS)"
+            echo ""
+            echo "| case | Inference | %CPU | transcript |"
+            echo "|---|---|---|---|"
+            for c in off-shipped-t4 off-pooled-t4 str-shipped-t4 str-pooled-t4 \
+                     off-shipped-t16 off-pooled-t16 seg-shipped-t4 seg-pooled-t4; do
+              echo "| \`$c\` | $(infer $c) | $(cpu $c) | $(text $c) |"
+            done
+            echo ""
+            echo "\`shipped\` = the four gates off (PR #52 Linux default);"
+            echo "\`pooled\` = gates on, i.e. current main."
+            echo "The \`t16\` pair is the spin-join backoff guard: both policies"
+            echo "took ~157 s there before the fix."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: /tmp/*.log
