@@ -2010,12 +2010,12 @@ pub(crate) unsafe fn int8_swiglu_range(
 // ========================================================================
 
 /// Max lockstep batch size (per-session pointer arrays are stack-allocated).
-#[cfg(any(target_arch = "aarch64", all(test, target_arch = "x86_64")))]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub(crate) const MAX_BATCH: usize = 8;
 
 /// Batched analogue of [`int8_matvec_range`]: rows `[start, end)` for all `b`
 /// sessions. `y[bi]`/`x_int8[bi]`/`bias[bi]` are per-session base pointers.
-#[cfg(any(target_arch = "aarch64", all(test, target_arch = "x86_64")))]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn int8_matvec_range_batched(
@@ -2079,7 +2079,7 @@ pub(crate) unsafe fn int8_matvec_range_batched(
 
 /// Batched analogue of [`int8_qkv_range`]: the `[start, end)` slice over the
 /// concatenated `q|k|v` rows, for all `b` sessions.
-#[cfg(any(target_arch = "aarch64", all(test, target_arch = "x86_64")))]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn int8_qkv_range_batched(
@@ -2135,7 +2135,7 @@ pub(crate) unsafe fn int8_qkv_range_batched(
 
 /// Batched analogue of [`int8_swiglu_range`]: intermediate rows `[start, end)`
 /// for all `b` sessions.
-#[cfg(any(target_arch = "aarch64", all(test, target_arch = "x86_64")))]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn int8_swiglu_range_batched(

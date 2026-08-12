@@ -5,7 +5,7 @@ use crate::audio;
 use crate::config::*;
 use crate::context::QwenCtx;
 use crate::decoder::{self, tok_embed_bf16_to_f32, Decoder, DecoderBuffers, KvCache, RopeCache};
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use crate::decoder::{decoder_forward_verify, verify_accepted_len};
 use crate::encoder::{Encoder, EncoderBuffers};
 use crate::kernels;
@@ -483,7 +483,7 @@ fn prefill_segment_core(
 /// counts validate the B1 economics: per-draft acceptance `p` and
 /// tokens/verify-step determine how much of the ~575 MB/token decode weight
 /// stream the verifier amortizes.
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[derive(Default)]
 struct OfflineVerifyStats {
     /// Multi-token verify steps executed (`decoder_forward_verify` calls).
@@ -516,7 +516,9 @@ fn decode_segment_core(
     rope_cache: &mut RopeCache,
     dec_bufs: &mut DecoderBuffers,
     enc_bufs: &mut EncoderBuffers,
-    #[cfg(target_arch = "aarch64")] verify_pool: Option<&mut decoder::VerifyBufferPool>,
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))] verify_pool: Option<
+        &mut decoder::VerifyBufferPool,
+    >,
     tokenizer: &QwenTokenizer,
     samples: &[f32],
     past_tokens: Option<&[i32]>,
@@ -567,13 +569,13 @@ fn decode_segment_core(
     // traffic saved). Only verifier-accepted tokens are committed, so the
     // output is byte-identical to the plain greedy loop below; on the first
     // mismatch the next iteration simply re-proposes (no realignment latch).
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
     let mut verify_pool = verify_pool;
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
     let mut lookup = crate::draft::PromptLookup::new();
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
     let mut stats = OfflineVerifyStats::default();
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
     let (mut verify_embeds, mut verify_out) = if verify_pool.is_some() {
         (
             vec![0.0f32; kernels::MAX_BATCH * dim],
@@ -584,7 +586,7 @@ fn decode_segment_core(
     };
 
     while n_generated < max_tokens {
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
         if let Some(pool) = verify_pool.as_deref_mut() {
             // Mirror the sequential loop's top-of-iteration EOS handling for
             // the pending token so a pending EOS is never fed to the model.
@@ -694,7 +696,7 @@ fn decode_segment_core(
             header_bytes.extend_from_slice(piece_bytes);
         }
 
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
         if verify_pool.is_some() {
             lookup.push(token);
         }
@@ -722,7 +724,7 @@ fn decode_segment_core(
                 0.0
             }
         );
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
         if stats.verify_steps > 0 || stats.single_steps > 0 {
             // Tokens per verify step = accepted drafts + the one free token
             // each step commits; this is the B1 amortization multiplier.
@@ -812,7 +814,7 @@ fn transcribe_segment(
         // ctx-owned verify pool. Opt-in only (default OFF — measured
         // acceptance on ASR text is low, ~3% fewer decode forwards on
         // long-2min); `QWEN_ASR_VERIFY=1` enables.
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
         if offline_verify_enabled() {
             Some(&mut ctx.verify_pool)
         } else {
@@ -1547,7 +1549,7 @@ fn collect_splits_parallel(
                         &mut session.enc_bufs,
                         // Parallel workers run single-threaded by design;
                         // v1 does not speculate there.
-                        #[cfg(target_arch = "aarch64")]
+                        #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
                         None,
                         tokenizer,
                         &seg_inputs_ref[idx],
@@ -1949,7 +1951,7 @@ fn stream_verify_enabled() -> bool {
 /// two cannot be toggled independently. The streaming overlap-draft path is
 /// unaffected (its draft source is the previous chunk's tail, which DOES
 /// predict).
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 fn offline_verify_enabled() -> bool {
     std::env::var("QWEN_ASR_VERIFY")
         .map(|v| v == "1")
@@ -2012,7 +2014,7 @@ fn stream_decode_tail(
     let mut n_generated: i32 = 0;
     let mut token = first_token;
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
     {
         if verify_enabled && !prev_tail.is_empty() {
             const K_MAX: usize = kernels::MAX_BATCH;

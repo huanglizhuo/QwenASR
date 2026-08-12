@@ -2099,13 +2099,13 @@ pub fn decoder_forward_batched(
 /// hundred KB total), leaving the large prefill vectors empty. The pool grows
 /// on demand and is reused across verify steps so steady-state verification
 /// never allocates. Intended to live on the future caller (`QwenCtx`, R13-B).
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[derive(Default)]
 pub struct VerifyBufferPool {
     pool: Vec<DecoderBuffers>,
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 impl VerifyBufferPool {
     pub fn new() -> Self {
         VerifyBufferPool { pool: Vec::new() }
@@ -2167,7 +2167,7 @@ pub fn verify_accepted_len(drafts: &[i32], out_argmax: &[i32]) -> usize {
 ///
 /// `k` must be in `1..=MAX_BATCH`; `k == 1` delegates to [`decoder_forward`] to
 /// keep the tuned single-token epilogue.
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[allow(clippy::too_many_arguments)]
 pub fn decoder_forward_verify(
     decoder: &Decoder,

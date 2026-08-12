@@ -202,7 +202,7 @@ pub struct QwenCtx {
     /// One [`DecoderBuffers`] set per candidate position in a verify window;
     /// reused across chunks/steps so steady-state verification never allocates.
     /// aarch64-only (the verifier core is aarch64-only).
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
     pub verify_pool: VerifyBufferPool,
 
     // Token streaming callback
@@ -295,7 +295,7 @@ impl QwenCtx {
             dec_bufs,
             enc_bufs: EncoderBuffers::new(),
             rope_cache: RopeCache::new(),
-            #[cfg(target_arch = "aarch64")]
+            #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
             verify_pool: VerifyBufferPool::new(),
             token_cb: None,
             segment_sec: 0.0,
