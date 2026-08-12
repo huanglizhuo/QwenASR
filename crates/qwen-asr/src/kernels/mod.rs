@@ -1178,6 +1178,190 @@ pub fn matmul_t(c: &mut [f32], a: &[f32], b: &[f32], m: usize, k: usize, n: usiz
     }
 }
 
+/// Whether to slice a BLAS GEMM across our own thread pool instead of issuing
+/// one call and letting the BLAS library thread it internally.
+///
+/// This is a BLAS-backend question, not a CPU-architecture question. The real
+/// persistent-pool benchmarks show a clean vendor split: slicing is beneficial
+/// with Apple Accelerate, while the same scheduling hangs intermittently or is
+/// slower with stock OpenBLAS.
+///
+/// Slicing means N pool threads each call `cblas_sgemm` concurrently.
+///
+/// # Why OpenBLAS hates this
+///
+/// The leading explanation is **redundant B-panel packing**, not nested
+/// threading. A sliced call splits the *output rows* (`M`) and hands every
+/// slice the same full `K x N` right-hand operand. The conv stem is the extreme
+/// case: `COUT = 32` rows per slice turns one `sgemm(M=480, N=800, K=4320)`
+/// into 15 concurrent `sgemm(M=32, N=800, K=4320)` calls, and each one packs
+/// the whole 4320x800 (13.8 MB) `cols` panel into its own OpenBLAS blocking
+/// buffers. That is 15x the packing work plus 15-way contention on OpenBLAS's
+/// global `blas_memory_alloc` buffer pool, against slices too thin to amortize
+/// any of it. Accelerate evidently does not pay that cost.
+///
+/// Two observations that only this explanation covers:
+///
+/// - Issue #47's reporter saw `OPENBLAS_NUM_THREADS=1` barely help (conv2d
+///   12659 -> 11864 ms). Nested parallelism cannot explain that; redundant
+///   packing, which is per-*call* and not per-*thread*, can.
+/// - A standalone pthread repro that only oversubscribes threads does not
+///   wedge on the same runner.
+///
+/// This is still the best-supported hypothesis rather than a proven mechanism,
+/// and the shipped policy rests on the end-to-end measurements below either way.
+///
+/// # Measurements
+///
+/// ubuntu-latest / OpenBLAS 0.3.26, single caller vs pool-sliced, by pool size
+/// (`gemm_pooling_bench`, `QASR_BENCH_THREADS`):
+///
+/// | pool threads | conv stem   | linear          | prefill attn    |
+/// |--------------|-------------|-----------------|-----------------|
+/// | 4            | 940 / HANG  | 1072 / 1469 ms  | 581 / 848 ms    |
+/// | 16           | 829 / 2572  | 1146 / 1996 ms  | 577 / 2342 ms   |
+/// | 24           | 838 / HANG  | 1064 / 1986 ms  | 574 / 2104 ms   |
+///
+/// The gap widens with pool size, and the single-caller column is flat — with
+/// one caller our thread count stops mattering because BLAS does the
+/// parallelism. End-to-end on the same runner (0.6B, 28.2 s clip): offline
+/// 6398 vs 9413 ms, `--stdin --stream` 17077 vs 43624 ms (0.65x -> 1.65x
+/// realtime). On M5 Pro/Accelerate, slicing is 1.1-4.5x *faster*.
+///
+/// `default_on` is the built-in policy; the env var is an A/B override so a
+/// single binary can measure both sides on a machine we don't have.
+///
+/// Accepted values are `1`/`true`/`on`/`yes` and `0`/`false`/`off`/`no`
+/// (case-insensitive). Anything else is ignored with a warning rather than
+/// silently flipping the policy — `QASR_CONV_POOLED=false` meaning "enabled"
+/// would be a nasty way to lose an afternoon.
+#[cfg(feature = "blas")]
+fn pooled_gemm_flag(var: &str, default_on: bool) -> bool {
+    parse_pooled_gemm_flag(std::env::var(var).ok().as_deref(), var, default_on)
+}
+
+/// Pure half of [`pooled_gemm_flag`], split out so the parse can be tested
+/// without mutating the process environment (the test harness runs tests on
+/// threads, and `set_var` racing another thread's `var` lookup is exactly the
+/// kind of flake that is impossible to reproduce later).
+#[cfg(feature = "blas")]
+fn parse_pooled_gemm_flag(raw: Option<&str>, var: &str, default_on: bool) -> bool {
+    let Some(raw) = raw else {
+        return default_on;
+    };
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "on" | "yes" => true,
+        "0" | "false" | "off" | "no" => false,
+        "" => default_on,
+        other => {
+            eprintln!(
+                "warning: {var}={other:?} is not a boolean (use 1/0); \
+                 keeping the built-in default ({default_on})"
+            );
+            default_on
+        }
+    }
+}
+
+/// Whether *any* pooled-BLAS override is set in the environment. Tests that
+/// assert the shipped default must skip when one is, since the whole point of
+/// the knobs is to run the binary against the opposite policy.
+#[cfg(all(feature = "blas", test))]
+fn pooled_gemm_overridden() -> bool {
+    ["QASR_CONV_POOLED", "QASR_LINEAR_POOLED", "QASR_ATTN_POOLED"]
+        .iter()
+        .any(|v| std::env::var_os(v).is_some())
+}
+
+/// Pool-slicing policy for the encoder's conv stem GEMMs. **Apple only.**
+///
+/// This path exhibits the strongest OpenBLAS failure — see [`pooled_gemm_flag`]
+/// for the measurements. It issues the most concurrent `cblas_sgemm` calls of
+/// any path in the encoder: 87 conv invocations per 28 s clip, each sliced into
+/// `480/32 = 15` blocks. Override with `QASR_CONV_POOLED=1`/`0`.
+#[cfg(feature = "blas")]
+pub(crate) fn conv_pooled_gemm() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| pooled_gemm_flag("QASR_CONV_POOLED", cfg!(target_vendor = "apple")))
+}
+
+/// Pool-parallel head split for **multi-token** attention. **Apple only.**
+///
+/// Third of the four concurrent-BLAS-entry sites (see [`seg_parallel_blas`] for
+/// the fourth). [`causal_attention`] fans out over query heads with
+/// `parallel_for`; for `seq_q > 1` each worker issues two `cblas_sgemm` calls
+/// per head, so prefill puts up to `n_heads` threads in BLAS at once.
+///
+/// Measured on the prefill shapes (16/8 heads, head_dim 64, seq 512, 28 layers):
+/// splitting heads is **1.55x slower** on the EPYC/OpenBLAS runner (909.3 vs
+/// 586.2 ms) and **3.0x faster** on an M5 Pro (48.7 vs 144.6 ms). A clean vendor
+/// split, so it is gated rather than removed. Override with `QASR_ATTN_POOLED`.
+///
+/// Only consulted for `seq_q > 1`: single-token decode takes the BLAS-free
+/// online-softmax scan, where head parallelism is safe and valuable everywhere.
+#[cfg(feature = "blas")]
+pub(crate) fn attn_parallel_heads() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| pooled_gemm_flag("QASR_ATTN_POOLED", cfg!(target_vendor = "apple")))
+}
+
+/// No BLAS in this build, so `causal_attention_heads` runs the online-softmax
+/// scan for every `seq_q` and there is no concurrent-entry hazard to avoid.
+#[cfg(not(feature = "blas"))]
+pub(crate) fn attn_parallel_heads() -> bool {
+    true
+}
+
+/// Pool-slicing policy for the `linear` / attention-projection GEMMs.
+/// **Apple only**, for the same reason as [`conv_pooled_gemm`].
+///
+/// It has fewer slices than the conv path (`out_dim = 896` → 7), but real-pool
+/// benchmarks still make it consistently slower on OpenBLAS and faster on
+/// Accelerate. Override with `QASR_LINEAR_POOLED=1`/`0`.
+#[cfg(feature = "blas")]
+pub(crate) fn linear_pooled_gemm() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| pooled_gemm_flag("QASR_LINEAR_POOLED", cfg!(target_vendor = "apple")))
+}
+
+/// Whether segmented mode (`-S`) may run its segment workers concurrently.
+/// **Apple only** when BLAS is linked.
+///
+/// The fourth concurrent-BLAS-entry site, and the one the other three gates
+/// cannot reach. `transcribe::decode_segments_parallel` spawns K scoped threads
+/// that each call `kernels::set_thread_override(1)` and then run a whole
+/// encode+decode. Because `n_threads == 1` there, every kernel short-circuits
+/// *past* [`conv_pooled_gemm`] / [`linear_pooled_gemm`] / [`attn_parallel_heads`]
+/// straight onto the single-caller `cblas_sgemm` path — so the gates all say
+/// "one caller" while K workers are in BLAS simultaneously. The mechanism is
+/// `std::thread::scope`, not `parallel_for`, which is why an audit that walked
+/// out from the pool missed it.
+///
+/// K defaults to `get_num_threads() + min(spare_cpus, 2)`, so on the 12c/24t
+/// machine in issue #47 that is 18 concurrent OpenBLAS callers. Returning
+/// `false` collapses the schedule to serial segments, where OpenBLAS threads
+/// one segment at a time — the same trade the other three gates make.
+///
+/// Note this is orthogonal to the aarch64 lockstep batched scheduler, which is
+/// preferred over the worker pool on Apple anyway. Override with
+/// `QASR_SEG_POOLED=1`/`0`.
+#[cfg(feature = "blas")]
+pub(crate) fn seg_parallel_blas() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| pooled_gemm_flag("QASR_SEG_POOLED", cfg!(target_vendor = "apple")))
+}
+
+/// No BLAS in this build, so segment workers never enter a shared BLAS runtime
+/// and running them concurrently is safe everywhere.
+#[cfg(not(feature = "blas"))]
+pub(crate) fn seg_parallel_blas() -> bool {
+    true
+}
+
 /// Pool-parallel `y[seq,out] = x @ W^T + beta*y (+ b)`: splits the output
 /// columns across the persistent thread pool, one BLAS call per slice. Each
 /// output element is still a single full-K dot product inside one sgemm call.
@@ -1202,7 +1386,12 @@ fn sgemm_nt_pooled(
     // whole product enough MACs to amortize the pool dispatch.
     const MIN_COLS: usize = 128;
     const MIN_MACS: usize = 1 << 22;
-    if nt <= 1 || seq_len < 2 || out_dim < 2 * MIN_COLS || seq_len * in_dim * out_dim < MIN_MACS {
+    if !linear_pooled_gemm()
+        || nt <= 1
+        || seq_len < 2
+        || out_dim < 2 * MIN_COLS
+        || seq_len * in_dim * out_dim < MIN_MACS
+    {
         return false;
     }
     let y_send = y.as_mut_ptr() as usize;
@@ -2142,12 +2331,18 @@ fn conv2d_impl(
     }
 
     // GEMM: weight[c_out, patch_size] @ cols[patch_size, spatial_out] = out[c_out, spatial_out]
-    // Split output channels across the pool (one sgemm slice per thread) so
-    // the workers that just finished im2col also share the GEMM instead of
-    // idling behind a single main-thread BLAS call.
+    // On Accelerate, split output channels across the pool (one sgemm slice per
+    // thread) so the workers that just finished im2col also share the GEMM
+    // instead of idling behind a single main-thread BLAS call. The same
+    // scheduling is empirically unstable or slower with OpenBLAS, so
+    // `conv_pooled_gemm` gates it off and the single call below lets that
+    // backend manage its own parallelism.
     #[cfg(feature = "blas")]
     unsafe {
-        if n_threads > 1 && c_out >= 2 * n_threads && c_out * patch_size * spatial_out >= (1 << 22)
+        if conv_pooled_gemm()
+            && n_threads > 1
+            && c_out >= 2 * n_threads
+            && c_out * patch_size * spatial_out >= (1 << 22)
         {
             let out_send = out.as_mut_ptr() as usize;
             let w_send = weight.as_ptr() as usize;
@@ -3001,7 +3196,12 @@ pub fn causal_attention(
 ) {
     let _pg = ProfileGuard::new(&PROF.attention_causal);
     let n_threads = get_num_threads();
-    if n_threads > 1 && n_heads >= 2 {
+    // `seq_q == 1` takes the BLAS-free online-softmax branch inside
+    // `causal_attention_heads`, so splitting heads across the pool is safe on
+    // every platform. `seq_q > 1` issues two `cblas_sgemm` per head, and fanning
+    // that out means N threads inside BLAS at once — see `attn_parallel_heads`.
+    let par_heads = seq_q == 1 || attn_parallel_heads();
+    if n_threads > 1 && n_heads >= 2 && par_heads {
         let out_ptr = out.as_mut_ptr() as usize;
         let q_ptr = q.as_ptr() as usize;
         let k_ptr = k_base as usize;
@@ -3544,6 +3744,56 @@ pub fn argmax_matvec_bf16(x: &[f32], w_bf16: *const u16, in_dim: usize, out_dim:
 #[cfg(all(test, any(target_arch = "aarch64", target_arch = "x86_64")))]
 mod tests {
     use super::*;
+
+    /// The shipped policy is "pool-slice only on Accelerate". Assert it holds,
+    /// but skip when an override is set: `QASR_*_POOLED` exists so a single
+    /// binary can be run against the opposite policy, and a test that fails
+    /// under `QASR_CONV_POOLED=0 cargo test` would break the exact A/B workflow
+    /// the knobs were added for.
+    #[cfg(feature = "blas")]
+    #[test]
+    fn pooled_blas_defaults_follow_backend_policy() {
+        if pooled_gemm_overridden() || std::env::var_os("QASR_SEG_POOLED").is_some() {
+            eprintln!("skipped: QASR_*_POOLED overrides the shipped default");
+            return;
+        }
+        let expected = cfg!(target_vendor = "apple");
+        assert_eq!(conv_pooled_gemm(), expected);
+        assert_eq!(linear_pooled_gemm(), expected);
+        assert_eq!(attn_parallel_heads(), expected);
+        assert_eq!(seg_parallel_blas(), expected);
+    }
+
+    /// The default-policy test above is a `cfg!` tautology on its own — it
+    /// cannot catch a bad *parse*. This covers the part with real logic:
+    /// `QASR_CONV_POOLED=false` must mean disabled, not "any non-zero string".
+    #[cfg(feature = "blas")]
+    #[test]
+    fn pooled_gemm_flag_parses_booleans_both_ways() {
+        const VAR: &str = "QASR_CONV_POOLED";
+        for (raw, want) in [
+            ("1", true),
+            ("true", true),
+            ("ON", true),
+            ("yes", true),
+            ("0", false),
+            ("false", false),
+            ("Off", false),
+            ("no", false),
+            (" 0 ", false),
+        ] {
+            // Pass the *opposite* built-in default so a parse that silently
+            // fell through would flip the answer and fail here.
+            let got = parse_pooled_gemm_flag(Some(raw), VAR, !want);
+            assert_eq!(got, want, "parsing {raw:?}");
+        }
+        // Unset, empty and unparseable all keep the built-in default rather
+        // than picking a side.
+        for raw in [None, Some(""), Some("maybe")] {
+            assert!(parse_pooled_gemm_flag(raw, VAR, true), "{raw:?} vs true");
+            assert!(!parse_pooled_gemm_flag(raw, VAR, false), "{raw:?} vs false");
+        }
+    }
 
     // Arch alias so the exactness tests run against whichever SIMD INT8
     // backend this build dispatches to (NEON on aarch64, AVX2 on x86_64).

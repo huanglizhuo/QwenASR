@@ -268,13 +268,55 @@ pub(crate) fn parallel_for<F: Fn(usize, usize) + Send + Sync>(f: F) {
     // Main thread does tid=0
     f(0, n_threads);
 
-    // Wait for workers: spin on atomic done counter
+    // Wait for workers: spin on atomic done counter, then yield.
     let expected = n_threads - 1;
+    let mut backoff = Backoff::new();
     loop {
         if pool.done_atomic.load(Ordering::Acquire) >= expected {
             break;
         }
-        core::hint::spin_loop();
+        backoff.wait();
+    }
+}
+
+/// Bounded spin, then `sched_yield`.
+///
+/// A pure `spin_loop()` join is only correct when every participant is actually
+/// running. It is not: if the pool has more threads than the OS will schedule
+/// — `-t` above the core count, or a cgroup CPU quota below `nproc`, which
+/// [`get_num_cpus`] does not read — the joiner burns a core spinning on a
+/// worker that cannot run, and the runnable threads it is competing with are
+/// the very ones it is waiting for. Measured on a 4-core runner at `-t 16`,
+/// decode went from ~4.3 s to ~156 s (~36x) before this backoff.
+///
+/// The spin phase keeps the fast path free: a normal join resolves in far fewer
+/// than `SPIN_LIMIT` iterations and never reaches the syscall.
+struct Backoff {
+    spins: u32,
+}
+
+impl Backoff {
+    /// Long enough to cover a normal join (sub-microsecond), short enough that
+    /// a descheduled participant is not waited on for meaningfully longer than
+    /// one scheduler quantum.
+    const SPIN_LIMIT: u32 = 4096;
+
+    #[inline]
+    fn new() -> Self {
+        Backoff { spins: 0 }
+    }
+
+    #[inline]
+    fn wait(&mut self) {
+        if self.spins < Self::SPIN_LIMIT {
+            self.spins += 1;
+            core::hint::spin_loop();
+        } else {
+            // SAFETY: no arguments, no memory effects, always succeeds.
+            unsafe {
+                libc::sched_yield();
+            }
+        }
     }
 }
 
@@ -358,8 +400,11 @@ impl RegionBarrier {
             self.arrived.0.store(0, Ordering::Relaxed);
             self.generation.0.fetch_add(1, Ordering::Release);
         } else {
+            // Same oversubscription hazard as the `parallel_for` join, and
+            // worse here: a region barrier is hit once per pipeline stage.
+            let mut backoff = Backoff::new();
             while self.generation.0.load(Ordering::Acquire) == gen {
-                core::hint::spin_loop();
+                backoff.wait();
             }
         }
     }
