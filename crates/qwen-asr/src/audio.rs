@@ -459,10 +459,13 @@ fn compact_silence_with_params(
         smooth_vals[w] = smooth;
     }
 
-    // Adaptive threshold from 25th percentile
-    let mut sorted = smooth_vals.clone();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    // Adaptive threshold from 25th percentile (linear-time selection instead
+    // of a full O(n log n) sort).
     let p25 = ((n_win - 1) as f32 * 0.25) as usize;
+    let mut sorted = smooth_vals.clone();
+    sorted.select_nth_unstable_by(p25, |a, b| {
+        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+    });
     let noise_floor = sorted[p25];
     let thresh = (noise_floor * 1.8).clamp(base_thresh, max_thresh);
 

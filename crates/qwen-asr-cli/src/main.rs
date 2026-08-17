@@ -8,6 +8,7 @@ use qwen_asr::{align, audio, config, context, kernels, subtitle, transcribe};
 
 use std::io::Write;
 // Only the macOS live-capture loop uses these.
+use std::sync::atomic::AtomicUsize;
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(target_os = "macos")]
@@ -108,8 +109,12 @@ fn usage(prog: &str) {
     eprintln!("Required:");
     eprintln!("  -d <dir>      Model directory (with *.safetensors, vocab.json)");
     eprintln!(
-        "  -i <file>     Input file: WAV (16-bit PCM) or video (mp4/mkv/mov/…, requires ffmpeg)"
+        "  -i <file>     Input file: WAV (16-bit PCM) or video (mp4/mkv/mov/…, requires ffmpeg)."
     );
+    eprintln!(
+        "                Repeat -i or pass a comma-separated list to transcribe multiple files"
+    );
+    eprintln!("                in parallel (plain-text stdout only).");
     eprintln!("  --stdin       Read audio from stdin (auto-detect WAV or raw s16le 16kHz mono)");
     eprintln!("\nLive capture (macOS only):");
     eprintln!("  --live                      Capture from audio input device in real time");
@@ -183,7 +188,8 @@ fn main() {
     }
 
     let mut model_dir: Option<String> = None;
-    let mut input_wav: Option<String> = None;
+    let mut input_files: Vec<String> = Vec::new();
+    let input_wav: Option<String>;
     let mut verbosity = 1i32;
     let mut use_stdin = false;
     let mut live_mode = false;
@@ -226,7 +232,14 @@ fn main() {
             }
             "-i" => {
                 i += 1;
-                input_wav = args.get(i).cloned();
+                if let Some(arg) = args.get(i) {
+                    for part in arg.split(',') {
+                        let p = part.trim();
+                        if !p.is_empty() {
+                            input_files.push(p.to_string());
+                        }
+                    }
+                }
             }
             "-t" => {
                 i += 1;
@@ -397,6 +410,8 @@ fn main() {
         }
     }
 
+    input_wav = input_files.first().cloned();
+
     if input_wav.is_none() && !use_stdin && !live_mode {
         usage(&args[0]);
         std::process::exit(1);
@@ -413,6 +428,15 @@ fn main() {
     }
 
     let output_requested = srt_requested || vtt_requested || json_requested;
+
+    // Multi-file mode supports plain-text output only.
+    if input_files.len() > 1 && (output_requested || align_text.is_some() || stream_mode) {
+        eprintln!(
+            "Error: multiple -i inputs currently support plain-text output only \
+             (no --srt/--vtt/--json/--align/--stream)"
+        );
+        std::process::exit(1);
+    }
 
     // Resolve file output paths (structured outputs require -i)
     if output_requested && input_wav.is_none() {
@@ -457,7 +481,7 @@ fn main() {
     // need no weights, so wall time becomes roughly max(load, mel) instead of
     // load + mel.
     let audio_handle: Option<std::thread::JoinHandle<Option<Vec<f32>>>> =
-        if !use_stdin && !live_mode && input_wav.is_some() && align_text.is_none() {
+        if !use_stdin && !live_mode && input_files.len() == 1 && align_text.is_none() {
             let path = input_wav.clone().unwrap();
             Some(std::thread::spawn(move || {
                 let _pg = qwen_asr::kernels::ProfileGuard::new(&qwen_asr::kernels::PROF.audio_load);
@@ -489,8 +513,10 @@ fn main() {
         None
     };
 
-    // Apply settings
-    if segment_sec >= 0.0 {
+    // Apply settings (kept as a closure so parallel multi-file workers can
+    // configure fresh sibling sessions identically).
+    let apply_settings = |ctx: &mut QwenCtx| {
+        if segment_sec >= 0.0 {
         ctx.segment_sec = segment_sec;
     }
     if search_sec >= 0.0 {
@@ -530,9 +556,11 @@ fn main() {
     // Structured output without a forced language needs the model to emit its own
     // `language X` header for detection; this skips the default prompt preamble.
     // Plain-text runs keep the byte-identical default decode path.
-    if output_requested && force_language.is_none() {
-        ctx.want_language_detection = true;
-    }
+        if output_requested && force_language.is_none() {
+            ctx.want_language_detection = true;
+        }
+    };
+    apply_settings(&mut ctx);
 
     // Alignment mode
     if let Some(ref atext) = align_text {
@@ -619,6 +647,85 @@ fn main() {
             );
             return;
         }
+    }
+
+    // Multi-file parallel transcription. Sibling sessions share the weights
+    // through the model's Arc, so each worker only pays for its own KV cache
+    // and scratch buffers. The global kernel thread pool is shared, so the
+    // win comes from overlapping the serial parts of decode across files.
+    if input_files.len() > 1 {
+        let model = ctx.model().clone();
+        let files = &input_files;
+        let results = std::sync::Mutex::new(vec![None::<String>; files.len()]);
+        // One core per single-threaded worker (see the override note below);
+        // extra workers would only oversubscribe.
+        let n_workers = files.len().min(kernels::get_num_threads());
+        let next_file = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..n_workers)
+                .map(|_| {
+                    scope.spawn(|| {
+                        // The global kernel pool supports one dispatcher at a
+                        // time; pin this worker's kernels to inline
+                        // single-threaded execution (same pattern as the
+                        // parallel-segment decode workers) so N workers each
+                        // own one core instead of racing the pool dispatch.
+                        kernels::set_thread_override_public(1);
+                        let mut session = QwenCtx::from_model(model.clone());
+                        apply_settings(&mut session);
+                        loop {
+                            let idx = next_file.fetch_add(1, Ordering::Relaxed);
+                            if idx >= files.len() {
+                                break;
+                            }
+                            if verbosity >= 1 {
+                                eprintln!("Transcribing: {}", files[idx]);
+                            }
+                            match load_audio(&files[idx]) {
+                                Some(samples) => {
+                                    let text =
+                                        transcribe::transcribe_audio(&mut session, &samples);
+                                    if let Ok(mut guard) = results.lock() {
+                                        guard[idx] = text;
+                                    }
+                                }
+                                None => {
+                                    eprintln!("Failed to load audio from {}", files[idx]);
+                                }
+                            }
+                        }
+                    })
+                })
+                .collect();
+            for h in handles {
+                if h.join().is_err() {
+                    eprintln!("Error: worker thread panicked");
+                    std::process::exit(1);
+                }
+            }
+        });
+        let results = results.into_inner().unwrap();
+
+        let mut failed = false;
+        for (i, result) in results.into_iter().enumerate() {
+            match result {
+                Some(t) => {
+                    println!("{}", t);
+                    if i + 1 < files.len() {
+                        println!();
+                    }
+                }
+                None => failed = true,
+            }
+        }
+        if failed {
+            eprintln!("Transcription failed for one or more inputs");
+            std::process::exit(1);
+        }
+        if profile {
+            kernels::profile_report();
+        }
+        return;
     }
 
     // Structured output mode: load audio once, transcribe once, optionally align once.

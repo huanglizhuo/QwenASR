@@ -1,3 +1,7 @@
+# macOS host (Apple Silicon): schedule for the building machine
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "target-cpu=native"]
+
 # iOS targets
 [target.aarch64-apple-ios]
 rustflags = ["-C", "target-cpu=apple-a14"]

@@ -137,6 +137,16 @@ pub(crate) fn set_thread_override(n: usize) {
     THREAD_OVERRIDE.with(|c| c.set(n));
 }
 
+/// Public variant of [`set_thread_override`]: pin the *calling* thread's kernel
+/// parallelism to `n` threads. `n <= 1` makes all kernels run inline on the
+/// calling thread (they never dispatch to the shared global pool), which is
+/// required when several OS threads drive concurrent [`QwenCtx`](crate::context::QwenCtx)
+/// sessions — the global pool supports a single dispatcher at a time. Sessions
+/// on the main thread (no override) keep using the full pool as usual.
+pub fn set_thread_override_public(n: usize) {
+    set_thread_override(n.max(1));
+}
+
 pub fn get_num_threads() -> usize {
     let ov = THREAD_OVERRIDE.with(|c| c.get());
     if ov != 0 {

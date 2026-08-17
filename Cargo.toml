@@ -12,3 +12,4 @@ license = "MIT"
 opt-level = 3
 lto = "fat"
 codegen-units = 1
+panic = "abort"

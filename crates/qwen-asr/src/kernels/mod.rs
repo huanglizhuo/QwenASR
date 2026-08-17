@@ -250,7 +250,7 @@ pub(crate) use pool::parallel_for_dynamic;
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub(crate) use pool::parallel_region;
 pub(crate) use pool::set_thread_override;
-pub use pool::{get_default_threads, get_num_cpus, get_num_threads, set_threads};
+pub use pool::{get_default_threads, get_num_cpus, get_num_threads, set_thread_override_public, set_threads};
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub(crate) use pool::{range_for, MAX_THREADS};
 
