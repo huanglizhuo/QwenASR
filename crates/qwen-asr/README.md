@@ -50,7 +50,7 @@ pip install huggingface_hub
 huggingface_hub download Qwen/Qwen3-ASR-0.6B --local-dir qwen3-asr-0.6b
 
 # Download the 0.6B forced-aligner model (~1.3 GB)
-huggingface_hub download Qwen/Qwen3-ASR-0.6B-Aligner --local-dir qwen3-aligner-0.6b
+huggingface_hub download Qwen/Qwen3-ForcedAligner-0.6B --local-dir qwen3-aligner-0.6b
 ```
 
 ## Usage
@@ -129,7 +129,7 @@ stream_push_audio(&mut ctx, &all_samples, &mut state, true);
 ### Forced Alignment
 
 Produce word-level timestamps for a known transcript. Requires the
-ForcedAligner model variant (`Qwen3-ASR-0.6B-Aligner`).
+ForcedAligner model variant (`Qwen/Qwen3-ForcedAligner-0.6B`).
 
 ```rust,no_run
 use qwen_asr::context::QwenCtx;

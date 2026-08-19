@@ -36,15 +36,9 @@ pub const KNOWN_MODELS: &[ModelInfo] = &[
     },
     ModelInfo {
         name: "qwen3-aligner-0.6b",
-        repo: "Qwen/Qwen3-ASR-ForcedAligner-0.6B",
-        files: &[
-            "model.safetensors.index.json",
-            "model-00001-of-00002.safetensors",
-            "model-00002-of-00002.safetensors",
-            "vocab.json",
-            "merges.txt",
-        ],
-        description: "Qwen3-ASR ForcedAligner 0.6B — word-level timestamps, ~1.6 GB",
+        repo: "Qwen/Qwen3-ForcedAligner-0.6B",
+        files: &["model.safetensors", "vocab.json", "merges.txt"],
+        description: "Qwen3 ForcedAligner 0.6B — word-level timestamps, ~1.7 GB",
     },
 ];
 
@@ -315,4 +309,20 @@ pub fn handle_download_command(args: &[String]) -> bool {
     }
 
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_model;
+
+    #[test]
+    fn forced_aligner_download_uses_the_official_single_file_checkpoint() {
+        let model = find_model("qwen3-aligner-0.6b").expect("aligner model is registered");
+
+        assert_eq!(model.repo, "Qwen/Qwen3-ForcedAligner-0.6B");
+        assert_eq!(
+            model.files,
+            &["model.safetensors", "vocab.json", "merges.txt"]
+        );
+    }
 }
