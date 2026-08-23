@@ -8,9 +8,9 @@ use qwen_asr::{align, audio, config, context, kernels, subtitle, transcribe};
 
 use std::io::Write;
 // Only the macOS live-capture loop uses these.
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(target_os = "macos")]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 #[cfg(target_os = "macos")]
 use std::sync::Arc;
 
