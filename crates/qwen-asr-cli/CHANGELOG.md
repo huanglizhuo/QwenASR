@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.10.0](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-cli-v0.9.1...qwen-asr-cli-v0.10.0) (2026-08-27)
+
+
+### Features
+
+* **cli:** low-latency live stdin streaming (smaller chunks + provisional preview) ([dbe0ba0](https://github.com/huanglizhuo/QwenASR/commit/dbe0ba00eebddeb5dacf6329f92858affbf2f9e6))
+* **cli:** stream live transcription from stdin pipe ([0c7254b](https://github.com/huanglizhuo/QwenASR/commit/0c7254bad34d1027e1dc73dc12d5d569f5b6d5b1))
+
+
+### Bug Fixes
+
+* **cli:** live transcription from stdin pipe (--stdin --stream) ([2a59f2b](https://github.com/huanglizhuo/QwenASR/commit/2a59f2b3cf835e99d9c09ad6dd5e1b1f6f0298f1))
+* **cli:** progressive output + responsive Ctrl+C for stdin streaming ([6ce8041](https://github.com/huanglizhuo/QwenASR/commit/6ce8041ad07872074b9c0bd4e5a18f73e0642f02))
+* **review:** address PR [#52](https://github.com/huanglizhuo/QwenASR/issues/52) review — 4th BLAS site, spin-join, flag parsing ([b71f338](https://github.com/huanglizhuo/QwenASR/commit/b71f33866ae5da4311a805c97960d67e838b685e))
+* **x86:** avoid pooled OpenBLAS calls ([ee27b7c](https://github.com/huanglizhuo/QwenASR/commit/ee27b7cacdce162f01c97b1f15a0b5b26021d538))
+
+
+### Performance Improvements
+
+* **cli:** multi-file parallel transcription + macOS build tuning ([a932504](https://github.com/huanglizhuo/QwenASR/commit/a9325047805ca4a3776e15325678ed2f79b0a70f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * qwen-asr bumped from 0.11.0 to 0.11.1
+
 ## [0.9.1](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-cli-v0.9.0...qwen-asr-cli-v0.9.1) (2026-07-30)
 
 
