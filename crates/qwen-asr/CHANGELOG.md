@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.11.1](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.11.0...qwen-asr-v0.11.1) (2026-08-27)
+
+
+### Bug Fixes
+
+* **review:** address PR [#52](https://github.com/huanglizhuo/QwenASR/issues/52) review — 4th BLAS site, spin-join, flag parsing ([b71f338](https://github.com/huanglizhuo/QwenASR/commit/b71f33866ae5da4311a805c97960d67e838b685e))
+* **stream:** keep stable-token cursor in sync on degen/re-anchor reset ([1d1906d](https://github.com/huanglizhuo/QwenASR/commit/1d1906da1383241c9b612dae614be637a7af19ef))
+* **x86:** avoid pooled OpenBLAS calls ([ee27b7c](https://github.com/huanglizhuo/QwenASR/commit/ee27b7cacdce162f01c97b1f15a0b5b26021d538))
+* **x86:** avoid pooled OpenBLAS calls ([52d73c6](https://github.com/huanglizhuo/QwenASR/commit/52d73c64d59789e67c9b316276d7b00fcfe37542))
+
+
+### Performance Improvements
+
+* **cli:** multi-file parallel transcription + macOS build tuning ([a932504](https://github.com/huanglizhuo/QwenASR/commit/a9325047805ca4a3776e15325678ed2f79b0a70f))
+
 ## [0.11.0](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.10.0...qwen-asr-v0.11.0) (2026-07-30)
 
 
