@@ -1,0 +1,5294 @@
+{
+  "schema": 1,
+  "status": "failed",
+  "contract": "qwen-asr-metal-bench-v1",
+  "manifest_sha256": "8bd2519c65f2a6012e02b62796ddddc246b94a3c49f9f6dc14f80a955844ee0c",
+  "environment": {
+    "platform": "macOS-26.7-arm64-arm-64bit",
+    "machine": "arm64",
+    "macos": "26.7",
+    "chip": "Apple M5 Pro",
+    "memory_bytes": "51539607552",
+    "xcode": "Xcode 27.1\nBuild version 27A9269",
+    "commit": "a9325047805ca4a3776e15325678ed2f79b0a70f",
+    "working_tree": "?? qwen-asr-metal/"
+  },
+  "runs": 7,
+  "warmups": 1,
+  "seed": 20260919,
+  "criteria": {
+    "max_latency_ratio": 0.7,
+    "per_case_wer_cer_regression": 0,
+    "alignment_timestamp_delta_ms": 0,
+    "max_p95_ratio": 1.0,
+    "max_p95_median_spread": 1.25
+  },
+  "commands": {
+    "baseline": [
+      "/Users/lizhuo/owork/q-asr/qwen-asr-metal/target/release/qwen-asr-cpu-reference",
+      "{task}",
+      "{model}",
+      "0"
+    ],
+    "candidate": [
+      "/Users/lizhuo/owork/q-asr/qwen-asr-metal/target/release/qwen-asr-gpu",
+      "{task}",
+      "/Users/lizhuo/owork/q-asr/qwen-asr-metal/models/hybrid-profile/{task}",
+      "/Users/lizhuo/owork/q-asr/qwen-asr-metal/native"
+    ]
+  },
+  "binary_sha256": {
+    "baseline": "9c516b13da8f2ecee30c9e34c7dd6afb3e4e4ecf9e9b70d220fece93c4b38f68",
+    "candidate": "51fff0f81c9d14acef39e01172dbab17821c0319b82de351d3a03b5e28c2c570"
+  },
+  "tasks": {
+    "asr": {
+      "handshakes": {
+        "baseline": {
+          "backend": "cpu",
+          "contract": "qwen-asr-metal-bench-v1",
+          "flags": [
+            "vDSP/Accelerate",
+            "NEON",
+            "DotProd"
+          ],
+          "load_ms": 82.244,
+          "ready": true,
+          "schema": 1,
+          "task": "asr",
+          "threads": 15
+        },
+        "candidate": {
+          "backend": "metal",
+          "contract": "qwen-asr-metal-bench-v1",
+          "kernel_directory": "/Users/lizhuo/owork/q-asr/qwen-asr-metal/native",
+          "load_ms": 817.4969159999999,
+          "package_path": "/Users/lizhuo/owork/q-asr/qwen-asr-metal/models/asr-hybrid",
+          "precision": "hybrid",
+          "ready": true,
+          "schema": 1,
+          "task": "asr",
+          "weights_sha256": "93cfe619c994102a80053ddcb45448ffaa515e93e556080aa8c17099af9865db"
+        }
+      },
+      "candidate_artifacts": {
+        "/Users/lizhuo/owork/q-asr/qwen-asr-metal/models/asr-hybrid/index.json": {
+          "sha256": "1cf131eca4c8139ac520d02ffe558e563e3d32c4f8915994a39615c7cced46cf",
+          "bytes": 207173
+        },
+        "/Users/lizhuo/owork/q-asr/qwen-asr-metal/models/asr-hybrid/weights.bin": {
+          "sha256": "93cfe619c994102a80053ddcb45448ffaa515e93e556080aa8c17099af9865db",
+          "bytes": 2163408896
+        },
+        "/Users/lizhuo/owork/q-asr/qwen-asr-metal/models/asr-hybrid/vocab.json": {
+          "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+          "bytes": 2776833
+        },
+        "/Users/lizhuo/owork/q-asr/qwen-asr-metal/models/asr-hybrid/merges.txt": {
+          "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+          "bytes": 1671853
+        },
+        "/Users/lizhuo/owork/q-asr/qwen-asr-metal/models/asr-hybrid/tokenizer.json": {
+          "sha256": "47737715ec4d1b7194dab061db65f1ab1e2f1d664c489b0c72e7256ff033baf7",
+          "bytes": 11418160
+        },
+        "/Users/lizhuo/owork/q-asr/qwen-asr-metal/native/quantized.metal": {
+          "sha256": "8accce723234bbc354c7bf53e1e876e1a8b14a38f619098360e7d0eca1bc9033",
+          "bytes": 3148
+        },
+        "/Users/lizhuo/owork/q-asr/qwen-asr-metal/native/ops.metal": {
+          "sha256": "32361d6c06e7d47460367553d34f2d930ad6da1bf5343006ffe4c4e7e49c07bf",
+          "bytes": 6776
+        },
+        "/Users/lizhuo/owork/q-asr/qwen-asr-metal/native/decoder.metal": {
+          "sha256": "8d33e3ca166100fc3f995c53405e3cc6c28959573defb07e17f8ae50513afb19",
+          "bytes": 9300
+        },
+        "/Users/lizhuo/owork/q-asr/qwen-asr-metal/native/frontend.metal": {
+          "sha256": "dabbcacd307eb66889c86b9bb2e144d46bbfea9910469a6d993c7dca85310b38",
+          "bytes": 3322
+        }
+      },
+      "baseline": {
+        "cases": [
+          {
+            "id": "5338-284437-0008",
+            "text": "So they followed her through the low archway, and in a room beyond, very simply furnished, sat a young girl engaged in darning a pair of pink stockings.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 393.05670799999996,
+            "p95_ms": 463.04008400000004,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 28,
+            "char_errors": 0,
+            "reference_chars": 121
+          },
+          {
+            "id": "1988-147956-0012",
+            "text": "Even from a distance, one could see that there was something strange about this boy.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 228.08712500000001,
+            "p95_ms": 370.153167,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 15,
+            "char_errors": 0,
+            "reference_chars": 68
+          },
+          {
+            "id": "2035-147961-0022",
+            "text": "The shrieks that followed made everybody sober.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 174.58295800000002,
+            "p95_ms": 264.21325,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 7,
+            "char_errors": 0,
+            "reference_chars": 40
+          },
+          {
+            "id": "3536-23268-0026",
+            "text": "Forgive the duties of my office, and believe that no one is half so much concerned if it robs you of any degree of happiness as I myself am.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 354.51970900000003,
+            "p95_ms": 395.50712500000003,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 29,
+            "char_errors": 0,
+            "reference_chars": 110
+          },
+          {
+            "id": "6319-57405-0003",
+            "text": "But men kept on fighting and robbing, even while the rain was pouring down and the sea was coming up over the land.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 307.532875,
+            "p95_ms": 359.00320800000003,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 23,
+            "char_errors": 0,
+            "reference_chars": 91
+          },
+          {
+            "id": "7976-110523-0013",
+            "text": "Then she took up Hansel with her rough hand and shut him up in a little cage with a lattice door. And although he screamed loudly, it was of no use.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 409.643709,
+            "p95_ms": 503.70679100000007,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 31,
+            "char_errors": 0,
+            "reference_chars": 115
+          },
+          {
+            "id": "174-168635-0008",
+            "text": "Nature, a difference of fifty years, had set a profound gulf between Jean Valjean and Cosette. Destiny filled in this gulf.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 358.43075000000005,
+            "p95_ms": 396.917292,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 21,
+            "char_errors": 0,
+            "reference_chars": 99
+          },
+          {
+            "id": "5895-34622-0004",
+            "text": "The wheels were all of the same size and high as wagon wheels.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 216.905834,
+            "p95_ms": 267.839208,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 13,
+            "char_errors": 0,
+            "reference_chars": 49
+          },
+          {
+            "id": "7850-281318-0004",
+            "text": "And the poor, silly things ruffled up their feathers and looked miserable, as only a little bird can look when it is unhappy.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 310.172417,
+            "p95_ms": 329.665709,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 23,
+            "char_errors": 0,
+            "reference_chars": 100
+          },
+          {
+            "id": "1272-141231-0021",
+            "text": "Every man who entered the twenties had his own training tricks.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 208.865208,
+            "p95_ms": 242.173167,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 11,
+            "char_errors": 0,
+            "reference_chars": 52
+          },
+          {
+            "id": "3576-138058-0026",
+            "text": "O husband, whose unhappy fate in being mine hath borne thee from the marriage bed to the grave.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 277.34625,
+            "p95_ms": 340.847916,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 18,
+            "char_errors": 0,
+            "reference_chars": 76
+          },
+          {
+            "id": "6241-61943-0003",
+            "text": "My uncle was delighted, for myself, moody and dissatisfied, I appeared almost to expect a glimpse of the ghost of Hamlet.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 304.121792,
+            "p95_ms": 415.369958,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 21,
+            "char_errors": 0,
+            "reference_chars": 97
+          },
+          {
+            "id": "8842-304647-0010",
+            "text": "Well, too, if he like love would filch our hoard with pleasure to ourselves, sluicing our vain and vigor to perpetuate the strain of life by spilt of life within us stored.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 449.621958,
+            "p95_ms": 525.898334,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 3,
+            "reference_words": 32,
+            "char_errors": 3,
+            "reference_chars": 139
+          },
+          {
+            "id": "251-118436-0013",
+            "text": "By which a soul is drawn from its body and across gulfs of echoing space,\" returned the man on the mat.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 347.76475,
+            "p95_ms": 436.490542,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 21,
+            "char_errors": 0,
+            "reference_chars": 80
+          },
+          {
+            "id": "8297-275156-0002",
+            "text": "We have both seen the same newspaper, of course, and you have been the first to clear the thing up. That's it, isn't it?",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 336.55225,
+            "p95_ms": 365.53799999999995,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 24,
+            "char_errors": 0,
+            "reference_chars": 90
+          },
+          {
+            "id": "2803-161169-0011",
+            "text": "What should we have done if everybody had kept on burning wood to this day?",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 229.271708,
+            "p95_ms": 280.0795,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 15,
+            "char_errors": 0,
+            "reference_chars": 60
+          },
+          {
+            "id": "3752-4944-0057",
+            "text": "They shall not flog that boy,\" he said.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 178.289334,
+            "p95_ms": 290.74645799999996,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 8,
+            "char_errors": 0,
+            "reference_chars": 29
+          },
+          {
+            "id": "2412-153948-0005",
+            "text": "I was delighted with the country and the manner of life.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 197.857834,
+            "p95_ms": 226.93366600000002,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 11,
+            "char_errors": 0,
+            "reference_chars": 45
+          },
+          {
+            "id": "1462-170142-0038",
+            "text": "Hilda sat on the arm of it and put her hands lightly on his shoulders.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 229.86575000000002,
+            "p95_ms": 274.345083,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 15,
+            "char_errors": 0,
+            "reference_chars": 55
+          },
+          {
+            "id": "5694-64038-0001",
+            "text": "Yank says, \"What are you doing, Johnny?\"",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 198.15225,
+            "p95_ms": 266.096958,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 1,
+            "reference_words": 6,
+            "char_errors": 3,
+            "reference_chars": 26
+          }
+        ],
+        "task": "asr",
+        "role": "baseline",
+        "median_suite_ms": 5946.666039999999,
+        "p95_suite_ms": 6143.456419000001,
+        "median_request_suite_ms": 5953.92154000001,
+        "round_totals_ms": {
+          "0": 5642.684838,
+          "1": 5616.853378,
+          "2": 5671.847959000001,
+          "3": 6143.456419000001,
+          "4": 6105.565417000001,
+          "5": 6091.137540999998,
+          "6": 5946.666039999999
+        },
+        "deterministic": true,
+        "audio_duration_s": 135.26500000000001,
+        "word_errors": 4,
+        "reference_words": 372,
+        "char_errors": 6,
+        "reference_chars": 1542,
+        "rtf": 0.0439630801759509,
+        "realtime_x": 22.74635889927998,
+        "wer": 0.010752688172043012,
+        "cer": 0.0038910505836575876,
+        "alignment_issue_count": 0,
+        "timing_stable": true
+      },
+      "candidate": {
+        "cases": [
+          {
+            "id": "5338-284437-0008",
+            "text": "So they followed her through the low archway, and in a room beyond, very simply furnished, sat a young girl engaged in darning a pair of pink stockings.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 295.615167,
+            "p95_ms": 300.048875,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 28,
+            "char_errors": 0,
+            "reference_chars": 121
+          },
+          {
+            "id": "1988-147956-0012",
+            "text": "Even from a distance, one could see that there was something strange about this boy.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 144.01233299999998,
+            "p95_ms": 147.364333,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 15,
+            "char_errors": 0,
+            "reference_chars": 68
+          },
+          {
+            "id": "2035-147961-0022",
+            "text": "The shrieks that followed made everybody sober.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 83.458667,
+            "p95_ms": 83.980667,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 7,
+            "char_errors": 0,
+            "reference_chars": 40
+          },
+          {
+            "id": "3536-23268-0026",
+            "text": "Forgive the duties of my office, and believe that no one is half so much concerned if it robs you of any degree of happiness as I myself am.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 288.677,
+            "p95_ms": 294.63245900000004,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 29,
+            "char_errors": 0,
+            "reference_chars": 110
+          },
+          {
+            "id": "6319-57405-0003",
+            "text": "But men kept on fighting and robbing, even while the rain was pouring down and the sea was coming up over the land.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 228.447334,
+            "p95_ms": 239.823417,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 23,
+            "char_errors": 0,
+            "reference_chars": 91
+          },
+          {
+            "id": "7976-110523-0013",
+            "text": "Then she took up Hansel with her rough hand and shut him up in a little cage with a lattice door. And although he screamed loudly, it was of no use.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 303.848334,
+            "p95_ms": 309.119875,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 31,
+            "char_errors": 0,
+            "reference_chars": 115
+          },
+          {
+            "id": "174-168635-0008",
+            "text": "Nature, a difference of fifty years, had set a profound gulf between Jean Valjean and Cosette. Destiny filled in this gulf.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 268.733041,
+            "p95_ms": 276.387834,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 21,
+            "char_errors": 0,
+            "reference_chars": 99
+          },
+          {
+            "id": "5895-34622-0004",
+            "text": "The wheels were all of the same size and high as wagon wheels.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 125.16037499999999,
+            "p95_ms": 130.486458,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 13,
+            "char_errors": 0,
+            "reference_chars": 49
+          },
+          {
+            "id": "7850-281318-0004",
+            "text": "And the poor, silly things ruffled up their feathers and looked miserable, as only a little bird can look when it is unhappy.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 242.821,
+            "p95_ms": 249.099875,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 23,
+            "char_errors": 0,
+            "reference_chars": 100
+          },
+          {
+            "id": "1272-141231-0021",
+            "text": "Every man who entered the twenties had his own training tricks.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 104.422375,
+            "p95_ms": 110.011334,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 11,
+            "char_errors": 0,
+            "reference_chars": 52
+          },
+          {
+            "id": "3576-138058-0026",
+            "text": "O husband, whose unhappy fate in being mine hath borne thee from the marriage bed to the grave.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 183.40241600000002,
+            "p95_ms": 190.21354200000002,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 18,
+            "char_errors": 0,
+            "reference_chars": 76
+          },
+          {
+            "id": "6241-61943-0003",
+            "text": "My uncle was delighted, for myself, moody and dissatisfied, I appeared almost to expect a glimpse of the ghost of Hamlet.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 246.476625,
+            "p95_ms": 251.652,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 21,
+            "char_errors": 0,
+            "reference_chars": 97
+          },
+          {
+            "id": "8842-304647-0010",
+            "text": "Well, too, if he like love would filch our hoard with pleasure to ourselves, sluicing our vain and vigor to perpetuate the strain of life by spilt of life within us stored.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 360.730416,
+            "p95_ms": 373.115459,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 3,
+            "reference_words": 32,
+            "char_errors": 3,
+            "reference_chars": 139
+          },
+          {
+            "id": "251-118436-0013",
+            "text": "By which a soul is drawn from its body and across gulfs of echoing space,\" returned the man on the mat.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 205.626125,
+            "p95_ms": 216.995334,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 21,
+            "char_errors": 0,
+            "reference_chars": 80
+          },
+          {
+            "id": "8297-275156-0002",
+            "text": "We have both seen the same newspaper, of course, and you have been the first to clear the thing up. That's it, isn't it?",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 262.45695800000004,
+            "p95_ms": 265.676917,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 24,
+            "char_errors": 0,
+            "reference_chars": 90
+          },
+          {
+            "id": "2803-161169-0011",
+            "text": "What should we have done if everybody had kept on burning wood to this day?",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 141.706167,
+            "p95_ms": 156.31449999999998,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 15,
+            "char_errors": 0,
+            "reference_chars": 60
+          },
+          {
+            "id": "3752-4944-0057",
+            "text": "They shall not flog that boy. He said.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 97.745834,
+            "p95_ms": 106.802708,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 8,
+            "char_errors": 0,
+            "reference_chars": 29
+          },
+          {
+            "id": "2412-153948-0005",
+            "text": "I was delighted with the country and the manner of life.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 107.56670799999999,
+            "p95_ms": 117.01362499999999,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 11,
+            "char_errors": 0,
+            "reference_chars": 45
+          },
+          {
+            "id": "1462-170142-0038",
+            "text": "Hilda sat on the arm of it and put her hands lightly on his shoulders.",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 149.349208,
+            "p95_ms": 156.15495800000002,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 15,
+            "char_errors": 0,
+            "reference_chars": 55
+          },
+          {
+            "id": "5694-64038-0001",
+            "text": "Yank says, \"What are you doing, Johnny?\"",
+            "words": [],
+            "deterministic": true,
+            "median_ms": 110.385708,
+            "p95_ms": 121.17245899999999,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 1,
+            "reference_words": 6,
+            "char_errors": 3,
+            "reference_chars": 26
+          }
+        ],
+        "task": "asr",
+        "role": "candidate",
+        "median_suite_ms": 3958.5972500000003,
+        "p95_suite_ms": 4024.1614609999997,
+        "median_request_suite_ms": 3963.0709160046536,
+        "round_totals_ms": {
+          "0": 3921.2188339999993,
+          "1": 3955.3398789999997,
+          "2": 3927.1167079999996,
+          "3": 3964.031129,
+          "4": 4024.1614609999997,
+          "5": 3958.5972500000003,
+          "6": 3996.676706
+        },
+        "deterministic": true,
+        "audio_duration_s": 135.26500000000001,
+        "word_errors": 4,
+        "reference_words": 372,
+        "char_errors": 6,
+        "reference_chars": 1542,
+        "rtf": 0.029265495508816027,
+        "realtime_x": 34.16993229104072,
+        "wer": 0.010752688172043012,
+        "cer": 0.0038910505836575876,
+        "alignment_issue_count": 0,
+        "timing_stable": true
+      },
+      "comparison": {
+        "passed": true,
+        "latency_ratio": 0.6656834642087956,
+        "latency_reduction": 0.33431653579120435,
+        "ratio_bootstrap_95_ci": [
+          0.6492488178019958,
+          0.7009677117465832
+        ],
+        "alignment_mean_delta_ms": null,
+        "alignment_max_delta_ms": null,
+        "failures": []
+      }
+    },
+    "align": {
+      "handshakes": {
+        "baseline": {
+          "backend": "cpu",
+          "contract": "qwen-asr-metal-bench-v1",
+          "flags": [
+            "vDSP/Accelerate",
+            "NEON",
+            "DotProd"
+          ],
+          "load_ms": 84.115041,
+          "ready": true,
+          "schema": 1,
+          "task": "align",
+          "threads": 15
+        },
+        "candidate": {
+          "backend": "metal",
+          "contract": "qwen-asr-metal-bench-v1",
+          "kernel_directory": "/Users/lizhuo/owork/q-asr/qwen-asr-metal/native",
+          "load_ms": 1172.447125,
+          "package_path": "/Users/lizhuo/owork/q-asr/qwen-asr-metal/models/align-fp16",
+          "precision": "fp16",
+          "ready": true,
+          "schema": 1,
+          "task": "align",
+          "weights_sha256": "ec2ed94f5d5ec6679a76b19732b56eab8b8596c5fe16e7efa750e0d3962d2f37"
+        }
+      },
+      "candidate_artifacts": {
+        "/Users/lizhuo/owork/q-asr/qwen-asr-metal/models/align-fp16/index.json": {
+          "sha256": "924b35e79fcff7994982177950c4d48b03abb96d1fa88dce4e842ae6aa7d6c05",
+          "bytes": 134844
+        },
+        "/Users/lizhuo/owork/q-asr/qwen-asr-metal/models/align-fp16/weights.bin": {
+          "sha256": "ec2ed94f5d5ec6679a76b19732b56eab8b8596c5fe16e7efa750e0d3962d2f37",
+          "bytes": 1836253184
+        },
+        "/Users/lizhuo/owork/q-asr/qwen-asr-metal/models/align-fp16/vocab.json": {
+          "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+          "bytes": 2776833
+        },
+        "/Users/lizhuo/owork/q-asr/qwen-asr-metal/models/align-fp16/merges.txt": {
+          "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+          "bytes": 1671853
+        },
+        "/Users/lizhuo/owork/q-asr/qwen-asr-metal/models/align-fp16/tokenizer_config.json": {
+          "sha256": "3ab80063f8511deb9566e6ad438d17b7a6277fcffd52d92854112f19d36bd81c",
+          "bytes": 12666
+        },
+        "/Users/lizhuo/owork/q-asr/qwen-asr-metal/native/quantized.metal": {
+          "sha256": "8accce723234bbc354c7bf53e1e876e1a8b14a38f619098360e7d0eca1bc9033",
+          "bytes": 3148
+        },
+        "/Users/lizhuo/owork/q-asr/qwen-asr-metal/native/ops.metal": {
+          "sha256": "32361d6c06e7d47460367553d34f2d930ad6da1bf5343006ffe4c4e7e49c07bf",
+          "bytes": 6776
+        },
+        "/Users/lizhuo/owork/q-asr/qwen-asr-metal/native/decoder.metal": {
+          "sha256": "8d33e3ca166100fc3f995c53405e3cc6c28959573defb07e17f8ae50513afb19",
+          "bytes": 9300
+        },
+        "/Users/lizhuo/owork/q-asr/qwen-asr-metal/native/frontend.metal": {
+          "sha256": "dabbcacd307eb66889c86b9bb2e144d46bbfea9910469a6d993c7dca85310b38",
+          "bytes": 3322
+        }
+      },
+      "baseline": {
+        "cases": [
+          {
+            "id": "5338-284437-0008",
+            "text": "SO THEY FOLLOWED HER THROUGH THE LOW ARCHWAY AND IN A ROOM BEYOND VERY SIMPLY FURNISHED SAT A YOUNG GIRL ENGAGED IN DARNING A PAIR OF PINK STOCKINGS",
+            "words": [
+              {
+                "end_ms": 1440.0,
+                "start_ms": 640.0,
+                "text": "SO"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1440.0,
+                "text": "THEY"
+              },
+              {
+                "end_ms": 1520.0,
+                "start_ms": 1440.0,
+                "text": "FOLLOWED"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 1520.0,
+                "text": "HER"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2400.0,
+                "text": "THROUGH"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2400.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 2440.0,
+                "start_ms": 2420.0,
+                "text": "LOW"
+              },
+              {
+                "end_ms": 2480.0,
+                "start_ms": 2460.0,
+                "text": "ARCHWAY"
+              },
+              {
+                "end_ms": 2640.0,
+                "start_ms": 2480.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 2720.0,
+                "start_ms": 2640.0,
+                "text": "IN"
+              },
+              {
+                "end_ms": 2800.0,
+                "start_ms": 2720.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 3120.0,
+                "start_ms": 2800.0,
+                "text": "ROOM"
+              },
+              {
+                "end_ms": 3680.0,
+                "start_ms": 3120.0,
+                "text": "BEYOND"
+              },
+              {
+                "end_ms": 4160.0,
+                "start_ms": 3920.0,
+                "text": "VERY"
+              },
+              {
+                "end_ms": 4560.0,
+                "start_ms": 4160.0,
+                "text": "SIMPLY"
+              },
+              {
+                "end_ms": 5120.0,
+                "start_ms": 4560.0,
+                "text": "FURNISHED"
+              },
+              {
+                "end_ms": 5760.0,
+                "start_ms": 5600.0,
+                "text": "SAT"
+              },
+              {
+                "end_ms": 5760.0,
+                "start_ms": 5760.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 6400.0,
+                "start_ms": 5760.0,
+                "text": "YOUNG"
+              },
+              {
+                "end_ms": 6400.0,
+                "start_ms": 6400.0,
+                "text": "GIRL"
+              },
+              {
+                "end_ms": 6960.0,
+                "start_ms": 6400.0,
+                "text": "ENGAGED"
+              },
+              {
+                "end_ms": 7040.0,
+                "start_ms": 6960.0,
+                "text": "IN"
+              },
+              {
+                "end_ms": 7440.0,
+                "start_ms": 7040.0,
+                "text": "DARNING"
+              },
+              {
+                "end_ms": 7440.0,
+                "start_ms": 7440.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 7680.0,
+                "start_ms": 7440.0,
+                "text": "PAIR"
+              },
+              {
+                "end_ms": 7760.0,
+                "start_ms": 7680.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 8080.0,
+                "start_ms": 8080.0,
+                "text": "PINK"
+              },
+              {
+                "end_ms": 8960.0,
+                "start_ms": 8080.0,
+                "text": "STOCKINGS"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 284.59908299999995,
+            "p95_ms": 309.563292,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 28,
+            "char_errors": 0,
+            "reference_chars": 121
+          },
+          {
+            "id": "1988-147956-0012",
+            "text": "EVEN FROM A DISTANCE ONE COULD SEE THAT THERE WAS SOMETHING STRANGE ABOUT THIS BOY",
+            "words": [
+              {
+                "end_ms": 640.0,
+                "start_ms": 480.0,
+                "text": "EVEN"
+              },
+              {
+                "end_ms": 1600.0,
+                "start_ms": 640.0,
+                "text": "FROM"
+              },
+              {
+                "end_ms": 1600.0,
+                "start_ms": 1600.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 1600.0,
+                "start_ms": 1600.0,
+                "text": "DISTANCE"
+              },
+              {
+                "end_ms": 1600.0,
+                "start_ms": 1600.0,
+                "text": "ONE"
+              },
+              {
+                "end_ms": 2000.0,
+                "start_ms": 1600.0,
+                "text": "COULD"
+              },
+              {
+                "end_ms": 2000.0,
+                "start_ms": 2000.0,
+                "text": "SEE"
+              },
+              {
+                "end_ms": 2240.0,
+                "start_ms": 2000.0,
+                "text": "THAT"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2240.0,
+                "text": "THERE"
+              },
+              {
+                "end_ms": 2560.0,
+                "start_ms": 2400.0,
+                "text": "WAS"
+              },
+              {
+                "end_ms": 2960.0,
+                "start_ms": 2560.0,
+                "text": "SOMETHING"
+              },
+              {
+                "end_ms": 3360.0,
+                "start_ms": 2960.0,
+                "text": "STRANGE"
+              },
+              {
+                "end_ms": 3680.0,
+                "start_ms": 3440.0,
+                "text": "ABOUT"
+              },
+              {
+                "end_ms": 3840.0,
+                "start_ms": 3680.0,
+                "text": "THIS"
+              },
+              {
+                "end_ms": 4160.0,
+                "start_ms": 3840.0,
+                "text": "BOY"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 196.682792,
+            "p95_ms": 209.87408299999998,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 15,
+            "char_errors": 0,
+            "reference_chars": 68
+          },
+          {
+            "id": "2035-147961-0022",
+            "text": "THE SHRIEKS THAT FOLLOWED MADE EVERYBODY SOBER",
+            "words": [
+              {
+                "end_ms": 560.0,
+                "start_ms": 560.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 1120.0,
+                "start_ms": 560.0,
+                "text": "SHRIEKS"
+              },
+              {
+                "end_ms": 1760.0,
+                "start_ms": 1120.0,
+                "text": "THAT"
+              },
+              {
+                "end_ms": 1840.0,
+                "start_ms": 1760.0,
+                "text": "FOLLOWED"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 1840.0,
+                "text": "MADE"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2400.0,
+                "text": "EVERYBODY"
+              },
+              {
+                "end_ms": 2960.0,
+                "start_ms": 2400.0,
+                "text": "SOBER"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 167.623083,
+            "p95_ms": 175.244917,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 7,
+            "char_errors": 0,
+            "reference_chars": 40
+          },
+          {
+            "id": "3536-23268-0026",
+            "text": "FORGIVE THE DUTIES OF MY OFFICE AND BELIEVE THAT NO ONE IS HALF SO MUCH CONCERNED IF IT ROBS YOU OF ANY DEGREE OF HAPPINESS AS I MYSELF AM",
+            "words": [
+              {
+                "end_ms": 800.0,
+                "start_ms": 640.0,
+                "text": "FORGIVE"
+              },
+              {
+                "end_ms": 880.0,
+                "start_ms": 800.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 1200.0,
+                "start_ms": 880.0,
+                "text": "DUTIES"
+              },
+              {
+                "end_ms": 1280.0,
+                "start_ms": 1280.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1280.0,
+                "text": "MY"
+              },
+              {
+                "end_ms": 2160.0,
+                "start_ms": 1520.0,
+                "text": "OFFICE"
+              },
+              {
+                "end_ms": 2480.0,
+                "start_ms": 2320.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 2880.0,
+                "start_ms": 2480.0,
+                "text": "BELIEVE"
+              },
+              {
+                "end_ms": 2880.0,
+                "start_ms": 2880.0,
+                "text": "THAT"
+              },
+              {
+                "end_ms": 3360.0,
+                "start_ms": 3040.0,
+                "text": "NO"
+              },
+              {
+                "end_ms": 3360.0,
+                "start_ms": 3360.0,
+                "text": "ONE"
+              },
+              {
+                "end_ms": 3600.0,
+                "start_ms": 3360.0,
+                "text": "IS"
+              },
+              {
+                "end_ms": 3760.0,
+                "start_ms": 3600.0,
+                "text": "HALF"
+              },
+              {
+                "end_ms": 4000.0,
+                "start_ms": 3760.0,
+                "text": "SO"
+              },
+              {
+                "end_ms": 4240.0,
+                "start_ms": 4000.0,
+                "text": "MUCH"
+              },
+              {
+                "end_ms": 4800.0,
+                "start_ms": 4240.0,
+                "text": "CONCERNED"
+              },
+              {
+                "end_ms": 4960.0,
+                "start_ms": 4800.0,
+                "text": "IF"
+              },
+              {
+                "end_ms": 4960.0,
+                "start_ms": 4960.0,
+                "text": "IT"
+              },
+              {
+                "end_ms": 5360.0,
+                "start_ms": 4960.0,
+                "text": "ROBS"
+              },
+              {
+                "end_ms": 5440.0,
+                "start_ms": 5360.0,
+                "text": "YOU"
+              },
+              {
+                "end_ms": 5520.0,
+                "start_ms": 5440.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 5840.0,
+                "start_ms": 5600.0,
+                "text": "ANY"
+              },
+              {
+                "end_ms": 6240.0,
+                "start_ms": 5840.0,
+                "text": "DEGREE"
+              },
+              {
+                "end_ms": 6320.0,
+                "start_ms": 6240.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 6960.0,
+                "start_ms": 6320.0,
+                "text": "HAPPINESS"
+              },
+              {
+                "end_ms": 7280.0,
+                "start_ms": 7200.0,
+                "text": "AS"
+              },
+              {
+                "end_ms": 7600.0,
+                "start_ms": 7360.0,
+                "text": "I"
+              },
+              {
+                "end_ms": 8240.0,
+                "start_ms": 7600.0,
+                "text": "MYSELF"
+              },
+              {
+                "end_ms": 8640.0,
+                "start_ms": 8240.0,
+                "text": "AM"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 276.543291,
+            "p95_ms": 289.33825,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 29,
+            "char_errors": 0,
+            "reference_chars": 110
+          },
+          {
+            "id": "6319-57405-0003",
+            "text": "BUT MEN KEPT ON FIGHTING AND ROBBING EVEN WHILE THE RAIN WAS POURING DOWN AND THE SEA WAS COMING UP OVER THE LAND",
+            "words": [
+              {
+                "end_ms": 1120.0,
+                "start_ms": 560.0,
+                "text": "BUT"
+              },
+              {
+                "end_ms": 1120.0,
+                "start_ms": 1120.0,
+                "text": "MEN"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1120.0,
+                "text": "KEPT"
+              },
+              {
+                "end_ms": 1600.0,
+                "start_ms": 1440.0,
+                "text": "ON"
+              },
+              {
+                "end_ms": 2080.0,
+                "start_ms": 1600.0,
+                "text": "FIGHTING"
+              },
+              {
+                "end_ms": 2240.0,
+                "start_ms": 2080.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 2800.0,
+                "start_ms": 2240.0,
+                "text": "ROBBING"
+              },
+              {
+                "end_ms": 3600.0,
+                "start_ms": 3200.0,
+                "text": "EVEN"
+              },
+              {
+                "end_ms": 3840.0,
+                "start_ms": 3600.0,
+                "text": "WHILE"
+              },
+              {
+                "end_ms": 3920.0,
+                "start_ms": 3840.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 4320.0,
+                "start_ms": 3920.0,
+                "text": "RAIN"
+              },
+              {
+                "end_ms": 4560.0,
+                "start_ms": 4320.0,
+                "text": "WAS"
+              },
+              {
+                "end_ms": 4960.0,
+                "start_ms": 4560.0,
+                "text": "POURING"
+              },
+              {
+                "end_ms": 5440.0,
+                "start_ms": 4960.0,
+                "text": "DOWN"
+              },
+              {
+                "end_ms": 5760.0,
+                "start_ms": 5600.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 5840.0,
+                "start_ms": 5760.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 6320.0,
+                "start_ms": 5840.0,
+                "text": "SEA"
+              },
+              {
+                "end_ms": 6560.0,
+                "start_ms": 6320.0,
+                "text": "WAS"
+              },
+              {
+                "end_ms": 6880.0,
+                "start_ms": 6560.0,
+                "text": "COMING"
+              },
+              {
+                "end_ms": 6880.0,
+                "start_ms": 6880.0,
+                "text": "UP"
+              },
+              {
+                "end_ms": 7360.0,
+                "start_ms": 7040.0,
+                "text": "OVER"
+              },
+              {
+                "end_ms": 7440.0,
+                "start_ms": 7360.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 7920.0,
+                "start_ms": 7440.0,
+                "text": "LAND"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 258.731542,
+            "p95_ms": 287.227708,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 23,
+            "char_errors": 0,
+            "reference_chars": 91
+          },
+          {
+            "id": "7976-110523-0013",
+            "text": "THEN SHE TOOK UP HANSEL WITH HER ROUGH HAND AND SHUT HIM UP IN A LITTLE CAGE WITH A LATTICE DOOR AND ALTHOUGH HE SCREAMED LOUDLY IT WAS OF NO USE",
+            "words": [
+              {
+                "end_ms": 560.0,
+                "start_ms": 560.0,
+                "text": "THEN"
+              },
+              {
+                "end_ms": 1120.0,
+                "start_ms": 640.0,
+                "text": "SHE"
+              },
+              {
+                "end_ms": 1600.0,
+                "start_ms": 1600.0,
+                "text": "TOOK"
+              },
+              {
+                "end_ms": 1760.0,
+                "start_ms": 1600.0,
+                "text": "UP"
+              },
+              {
+                "end_ms": 2240.0,
+                "start_ms": 1760.0,
+                "text": "HANSEL"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2240.0,
+                "text": "WITH"
+              },
+              {
+                "end_ms": 2448.0,
+                "start_ms": 2400.0,
+                "text": "HER"
+              },
+              {
+                "end_ms": 2544.0,
+                "start_ms": 2496.0,
+                "text": "ROUGH"
+              },
+              {
+                "end_ms": 2640.0,
+                "start_ms": 2592.0,
+                "text": "HAND"
+              },
+              {
+                "end_ms": 3040.0,
+                "start_ms": 2960.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 3360.0,
+                "start_ms": 3040.0,
+                "text": "SHUT"
+              },
+              {
+                "end_ms": 3520.0,
+                "start_ms": 3360.0,
+                "text": "HIM"
+              },
+              {
+                "end_ms": 3520.0,
+                "start_ms": 3520.0,
+                "text": "UP"
+              },
+              {
+                "end_ms": 3760.0,
+                "start_ms": 3520.0,
+                "text": "IN"
+              },
+              {
+                "end_ms": 4080.0,
+                "start_ms": 3760.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 4160.0,
+                "start_ms": 4080.0,
+                "text": "LITTLE"
+              },
+              {
+                "end_ms": 4560.0,
+                "start_ms": 4160.0,
+                "text": "CAGE"
+              },
+              {
+                "end_ms": 4720.0,
+                "start_ms": 4560.0,
+                "text": "WITH"
+              },
+              {
+                "end_ms": 4720.0,
+                "start_ms": 4720.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 4720.0,
+                "start_ms": 4720.0,
+                "text": "LATTICE"
+              },
+              {
+                "end_ms": 5520.0,
+                "start_ms": 5280.0,
+                "text": "DOOR"
+              },
+              {
+                "end_ms": 6160.0,
+                "start_ms": 6000.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 7040.0,
+                "start_ms": 6160.0,
+                "text": "ALTHOUGH"
+              },
+              {
+                "end_ms": 7040.0,
+                "start_ms": 7040.0,
+                "text": "HE"
+              },
+              {
+                "end_ms": 7040.0,
+                "start_ms": 7040.0,
+                "text": "SCREAMED"
+              },
+              {
+                "end_ms": 7440.0,
+                "start_ms": 7040.0,
+                "text": "LOUDLY"
+              },
+              {
+                "end_ms": 8000.0,
+                "start_ms": 7440.0,
+                "text": "IT"
+              },
+              {
+                "end_ms": 8000.0,
+                "start_ms": 8000.0,
+                "text": "WAS"
+              },
+              {
+                "end_ms": 8240.0,
+                "start_ms": 8160.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 8960.0,
+                "start_ms": 8240.0,
+                "text": "NO"
+              },
+              {
+                "end_ms": 8960.0,
+                "start_ms": 8960.0,
+                "text": "USE"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 287.711333,
+            "p95_ms": 289.504417,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 31,
+            "char_errors": 0,
+            "reference_chars": 115
+          },
+          {
+            "id": "174-168635-0008",
+            "text": "NATURE A DIFFERENCE OF FIFTY YEARS HAD SET A PROFOUND GULF BETWEEN JEAN VALJEAN AND COSETTE DESTINY FILLED IN THIS GULF",
+            "words": [
+              {
+                "end_ms": 1120.0,
+                "start_ms": 640.0,
+                "text": "NATURE"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1360.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 1920.0,
+                "start_ms": 1440.0,
+                "text": "DIFFERENCE"
+              },
+              {
+                "end_ms": 2080.0,
+                "start_ms": 1920.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2080.0,
+                "text": "FIFTY"
+              },
+              {
+                "end_ms": 3040.0,
+                "start_ms": 2400.0,
+                "text": "YEARS"
+              },
+              {
+                "end_ms": 3600.0,
+                "start_ms": 3280.0,
+                "text": "HAD"
+              },
+              {
+                "end_ms": 3600.0,
+                "start_ms": 3600.0,
+                "text": "SET"
+              },
+              {
+                "end_ms": 3600.0,
+                "start_ms": 3600.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 4240.0,
+                "start_ms": 3600.0,
+                "text": "PROFOUND"
+              },
+              {
+                "end_ms": 4720.0,
+                "start_ms": 4240.0,
+                "text": "GULF"
+              },
+              {
+                "end_ms": 5280.0,
+                "start_ms": 4720.0,
+                "text": "BETWEEN"
+              },
+              {
+                "end_ms": 5520.0,
+                "start_ms": 5280.0,
+                "text": "JEAN"
+              },
+              {
+                "end_ms": 6000.0,
+                "start_ms": 5520.0,
+                "text": "VALJEAN"
+              },
+              {
+                "end_ms": 6160.0,
+                "start_ms": 6000.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 6640.0,
+                "start_ms": 6160.0,
+                "text": "COSETTE"
+              },
+              {
+                "end_ms": 8480.0,
+                "start_ms": 7760.0,
+                "text": "DESTINY"
+              },
+              {
+                "end_ms": 8960.0,
+                "start_ms": 8480.0,
+                "text": "FILLED"
+              },
+              {
+                "end_ms": 9120.0,
+                "start_ms": 8960.0,
+                "text": "IN"
+              },
+              {
+                "end_ms": 9360.0,
+                "start_ms": 9120.0,
+                "text": "THIS"
+              },
+              {
+                "end_ms": 9760.0,
+                "start_ms": 9360.0,
+                "text": "GULF"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 287.744334,
+            "p95_ms": 291.708625,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 21,
+            "char_errors": 0,
+            "reference_chars": 99
+          },
+          {
+            "id": "5895-34622-0004",
+            "text": "THE WHEELS WERE ALL OF THE SAME SIZE AND HIGH AS WAGON WHEELS",
+            "words": [
+              {
+                "end_ms": 640.0,
+                "start_ms": 640.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 640.0,
+                "text": "WHEELS"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1440.0,
+                "text": "WERE"
+              },
+              {
+                "end_ms": 1920.0,
+                "start_ms": 1600.0,
+                "text": "ALL"
+              },
+              {
+                "end_ms": 1920.0,
+                "start_ms": 1920.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 1920.0,
+                "start_ms": 1920.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 1920.0,
+                "text": "SAME"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2400.0,
+                "text": "SIZE"
+              },
+              {
+                "end_ms": 3280.0,
+                "start_ms": 2560.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 3520.0,
+                "start_ms": 3280.0,
+                "text": "HIGH"
+              },
+              {
+                "end_ms": 3520.0,
+                "start_ms": 3520.0,
+                "text": "AS"
+              },
+              {
+                "end_ms": 3600.0,
+                "start_ms": 3520.0,
+                "text": "WAGON"
+              },
+              {
+                "end_ms": 4640.0,
+                "start_ms": 3600.0,
+                "text": "WHEELS"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 184.627667,
+            "p95_ms": 190.087584,
+            "runs": 7,
+            "alignment_issues": [
+              {
+                "word": 12,
+                "reason": "out_of_audio",
+                "end_ms": 4640.0,
+                "audio_ms": 4290.0
+              }
+            ],
+            "word_errors": 0,
+            "reference_words": 13,
+            "char_errors": 0,
+            "reference_chars": 49
+          },
+          {
+            "id": "7850-281318-0004",
+            "text": "AND THE POOR SILLY THINGS RUFFLED UP THEIR FEATHERS AND LOOKED MISERABLE AS ONLY A LITTLE BIRD CAN LOOK WHEN IT IS UNHAPPY",
+            "words": [
+              {
+                "end_ms": 640.0,
+                "start_ms": 560.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 720.0,
+                "start_ms": 640.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 1120.0,
+                "start_ms": 720.0,
+                "text": "POOR"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1120.0,
+                "text": "SILLY"
+              },
+              {
+                "end_ms": 1840.0,
+                "start_ms": 1440.0,
+                "text": "THINGS"
+              },
+              {
+                "end_ms": 1840.0,
+                "start_ms": 1840.0,
+                "text": "RUFFLED"
+              },
+              {
+                "end_ms": 2320.0,
+                "start_ms": 1920.0,
+                "text": "UP"
+              },
+              {
+                "end_ms": 2320.0,
+                "start_ms": 2320.0,
+                "text": "THEIR"
+              },
+              {
+                "end_ms": 3120.0,
+                "start_ms": 2400.0,
+                "text": "FEATHERS"
+              },
+              {
+                "end_ms": 3440.0,
+                "start_ms": 3360.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 3760.0,
+                "start_ms": 3440.0,
+                "text": "LOOKED"
+              },
+              {
+                "end_ms": 4560.0,
+                "start_ms": 4080.0,
+                "text": "MISERABLE"
+              },
+              {
+                "end_ms": 4960.0,
+                "start_ms": 4720.0,
+                "text": "AS"
+              },
+              {
+                "end_ms": 5440.0,
+                "start_ms": 4960.0,
+                "text": "ONLY"
+              },
+              {
+                "end_ms": 5520.0,
+                "start_ms": 5440.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 5840.0,
+                "start_ms": 5520.0,
+                "text": "LITTLE"
+              },
+              {
+                "end_ms": 6400.0,
+                "start_ms": 5840.0,
+                "text": "BIRD"
+              },
+              {
+                "end_ms": 6400.0,
+                "start_ms": 6400.0,
+                "text": "CAN"
+              },
+              {
+                "end_ms": 6640.0,
+                "start_ms": 6400.0,
+                "text": "LOOK"
+              },
+              {
+                "end_ms": 6880.0,
+                "start_ms": 6640.0,
+                "text": "WHEN"
+              },
+              {
+                "end_ms": 7120.0,
+                "start_ms": 6960.0,
+                "text": "IT"
+              },
+              {
+                "end_ms": 7280.0,
+                "start_ms": 7120.0,
+                "text": "IS"
+              },
+              {
+                "end_ms": 8000.0,
+                "start_ms": 7280.0,
+                "text": "UNHAPPY"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 264.4535,
+            "p95_ms": 280.78925,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 23,
+            "char_errors": 0,
+            "reference_chars": 100
+          },
+          {
+            "id": "1272-141231-0021",
+            "text": "EVERY MAN WHO ENTERED THE TWENTIES HAD HIS OWN TRAINING TRICKS",
+            "words": [
+              {
+                "end_ms": 1120.0,
+                "start_ms": 640.0,
+                "text": "EVERY"
+              },
+              {
+                "end_ms": 1120.0,
+                "start_ms": 1120.0,
+                "text": "MAN"
+              },
+              {
+                "end_ms": 1280.0,
+                "start_ms": 1120.0,
+                "text": "WHO"
+              },
+              {
+                "end_ms": 1600.0,
+                "start_ms": 1280.0,
+                "text": "ENTERED"
+              },
+              {
+                "end_ms": 1760.0,
+                "start_ms": 1600.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 1760.0,
+                "text": "TWENTIES"
+              },
+              {
+                "end_ms": 2880.0,
+                "start_ms": 2720.0,
+                "text": "HAD"
+              },
+              {
+                "end_ms": 3040.0,
+                "start_ms": 2880.0,
+                "text": "HIS"
+              },
+              {
+                "end_ms": 3200.0,
+                "start_ms": 3040.0,
+                "text": "OWN"
+              },
+              {
+                "end_ms": 3680.0,
+                "start_ms": 3200.0,
+                "text": "TRAINING"
+              },
+              {
+                "end_ms": 4240.0,
+                "start_ms": 3680.0,
+                "text": "TRICKS"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 185.4975,
+            "p95_ms": 193.387625,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 11,
+            "char_errors": 0,
+            "reference_chars": 52
+          },
+          {
+            "id": "3576-138058-0026",
+            "text": "O HUSBAND WHOSE UNHAPPY FATE IN BEING MINE HATH BORNE THEE FROM THE MARRIAGE BED TO THE GRAVE",
+            "words": [
+              {
+                "end_ms": 2320.0,
+                "start_ms": 2240.0,
+                "text": "O"
+              },
+              {
+                "end_ms": 2320.0,
+                "start_ms": 2320.0,
+                "text": "HUSBAND"
+              },
+              {
+                "end_ms": 2720.0,
+                "start_ms": 2320.0,
+                "text": "WHOSE"
+              },
+              {
+                "end_ms": 3440.0,
+                "start_ms": 2720.0,
+                "text": "UNHAPPY"
+              },
+              {
+                "end_ms": 3520.0,
+                "start_ms": 3440.0,
+                "text": "FATE"
+              },
+              {
+                "end_ms": 3600.0,
+                "start_ms": 3520.0,
+                "text": "IN"
+              },
+              {
+                "end_ms": 3920.0,
+                "start_ms": 3600.0,
+                "text": "BEING"
+              },
+              {
+                "end_ms": 4480.0,
+                "start_ms": 3920.0,
+                "text": "MINE"
+              },
+              {
+                "end_ms": 4720.0,
+                "start_ms": 4480.0,
+                "text": "HATH"
+              },
+              {
+                "end_ms": 5440.0,
+                "start_ms": 4720.0,
+                "text": "BORNE"
+              },
+              {
+                "end_ms": 5520.0,
+                "start_ms": 5440.0,
+                "text": "THEE"
+              },
+              {
+                "end_ms": 5760.0,
+                "start_ms": 5520.0,
+                "text": "FROM"
+              },
+              {
+                "end_ms": 5920.0,
+                "start_ms": 5760.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 6480.0,
+                "start_ms": 5920.0,
+                "text": "MARRIAGE"
+              },
+              {
+                "end_ms": 6720.0,
+                "start_ms": 6480.0,
+                "text": "BED"
+              },
+              {
+                "end_ms": 6960.0,
+                "start_ms": 6800.0,
+                "text": "TO"
+              },
+              {
+                "end_ms": 7120.0,
+                "start_ms": 6960.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 7680.0,
+                "start_ms": 7120.0,
+                "text": "GRAVE"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 249.587333,
+            "p95_ms": 255.93016699999998,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 18,
+            "char_errors": 0,
+            "reference_chars": 76
+          },
+          {
+            "id": "6241-61943-0003",
+            "text": "MY UNCLE WAS DELIGHTED FOR MYSELF MOODY AND DISSATISFIED I APPEARED ALMOST TO EXPECT A GLIMPSE OF THE GHOST OF HAMLET",
+            "words": [
+              {
+                "end_ms": 1600.0,
+                "start_ms": 480.0,
+                "text": "MY"
+              },
+              {
+                "end_ms": 1600.0,
+                "start_ms": 1600.0,
+                "text": "UNCLE"
+              },
+              {
+                "end_ms": 1600.0,
+                "start_ms": 1600.0,
+                "text": "WAS"
+              },
+              {
+                "end_ms": 1600.0,
+                "start_ms": 1600.0,
+                "text": "DELIGHTED"
+              },
+              {
+                "end_ms": 2080.0,
+                "start_ms": 1920.0,
+                "text": "FOR"
+              },
+              {
+                "end_ms": 2640.0,
+                "start_ms": 2080.0,
+                "text": "MYSELF"
+              },
+              {
+                "end_ms": 3360.0,
+                "start_ms": 3040.0,
+                "text": "MOODY"
+              },
+              {
+                "end_ms": 3440.0,
+                "start_ms": 3360.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 4240.0,
+                "start_ms": 3440.0,
+                "text": "DISSATISFIED"
+              },
+              {
+                "end_ms": 4720.0,
+                "start_ms": 4640.0,
+                "text": "I"
+              },
+              {
+                "end_ms": 5120.0,
+                "start_ms": 4720.0,
+                "text": "APPEARED"
+              },
+              {
+                "end_ms": 5440.0,
+                "start_ms": 5120.0,
+                "text": "ALMOST"
+              },
+              {
+                "end_ms": 5520.0,
+                "start_ms": 5440.0,
+                "text": "TO"
+              },
+              {
+                "end_ms": 5840.0,
+                "start_ms": 5520.0,
+                "text": "EXPECT"
+              },
+              {
+                "end_ms": 6000.0,
+                "start_ms": 5920.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 6400.0,
+                "start_ms": 6000.0,
+                "text": "GLIMPSE"
+              },
+              {
+                "end_ms": 6400.0,
+                "start_ms": 6400.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 6560.0,
+                "start_ms": 6400.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 6800.0,
+                "start_ms": 6560.0,
+                "text": "GHOST"
+              },
+              {
+                "end_ms": 7040.0,
+                "start_ms": 6800.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 7280.0,
+                "start_ms": 7040.0,
+                "text": "HAMLET"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 257.461792,
+            "p95_ms": 274.121167,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 21,
+            "char_errors": 0,
+            "reference_chars": 97
+          },
+          {
+            "id": "8842-304647-0010",
+            "text": "WELL TOO IF HE LIKE LOVE WOULD FILCH OUR HOARD WITH PLEASURE TO OURSELVES SLUICING OUR VEIN AND VIGOUR TO PERPETUATE THE STRAIN OF LIFE BY SPILTH OF LIFE WITHIN US STORED",
+            "words": [
+              {
+                "end_ms": 1120.0,
+                "start_ms": 560.0,
+                "text": "WELL"
+              },
+              {
+                "end_ms": 1120.0,
+                "start_ms": 1120.0,
+                "text": "TOO"
+              },
+              {
+                "end_ms": 1280.0,
+                "start_ms": 1120.0,
+                "text": "IF"
+              },
+              {
+                "end_ms": 1520.0,
+                "start_ms": 1280.0,
+                "text": "HE"
+              },
+              {
+                "end_ms": 1760.0,
+                "start_ms": 1600.0,
+                "text": "LIKE"
+              },
+              {
+                "end_ms": 2240.0,
+                "start_ms": 1760.0,
+                "text": "LOVE"
+              },
+              {
+                "end_ms": 2320.0,
+                "start_ms": 2320.0,
+                "text": "WOULD"
+              },
+              {
+                "end_ms": 2880.0,
+                "start_ms": 2400.0,
+                "text": "FILCH"
+              },
+              {
+                "end_ms": 3360.0,
+                "start_ms": 2880.0,
+                "text": "OUR"
+              },
+              {
+                "end_ms": 3360.0,
+                "start_ms": 3360.0,
+                "text": "HOARD"
+              },
+              {
+                "end_ms": 3920.0,
+                "start_ms": 3680.0,
+                "text": "WITH"
+              },
+              {
+                "end_ms": 4320.0,
+                "start_ms": 3920.0,
+                "text": "PLEASURE"
+              },
+              {
+                "end_ms": 4560.0,
+                "start_ms": 4320.0,
+                "text": "TO"
+              },
+              {
+                "end_ms": 5280.0,
+                "start_ms": 4560.0,
+                "text": "OURSELVES"
+              },
+              {
+                "end_ms": 6160.0,
+                "start_ms": 5600.0,
+                "text": "SLUICING"
+              },
+              {
+                "end_ms": 6320.0,
+                "start_ms": 6160.0,
+                "text": "OUR"
+              },
+              {
+                "end_ms": 6720.0,
+                "start_ms": 6320.0,
+                "text": "VEIN"
+              },
+              {
+                "end_ms": 6880.0,
+                "start_ms": 6720.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 7280.0,
+                "start_ms": 6880.0,
+                "text": "VIGOUR"
+              },
+              {
+                "end_ms": 7440.0,
+                "start_ms": 7280.0,
+                "text": "TO"
+              },
+              {
+                "end_ms": 8160.0,
+                "start_ms": 7440.0,
+                "text": "PERPETUATE"
+              },
+              {
+                "end_ms": 8320.0,
+                "start_ms": 8160.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 8960.0,
+                "start_ms": 8320.0,
+                "text": "STRAIN"
+              },
+              {
+                "end_ms": 9200.0,
+                "start_ms": 9040.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 9600.0,
+                "start_ms": 9200.0,
+                "text": "LIFE"
+              },
+              {
+                "end_ms": 9760.0,
+                "start_ms": 9600.0,
+                "text": "BY"
+              },
+              {
+                "end_ms": 10240.0,
+                "start_ms": 9760.0,
+                "text": "SPILTH"
+              },
+              {
+                "end_ms": 10400.0,
+                "start_ms": 10400.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 10880.0,
+                "start_ms": 10400.0,
+                "text": "LIFE"
+              },
+              {
+                "end_ms": 10880.0,
+                "start_ms": 10880.0,
+                "text": "WITHIN"
+              },
+              {
+                "end_ms": 11280.0,
+                "start_ms": 11200.0,
+                "text": "US"
+              },
+              {
+                "end_ms": 11760.0,
+                "start_ms": 11280.0,
+                "text": "STORED"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 335.923375,
+            "p95_ms": 348.724875,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 32,
+            "char_errors": 0,
+            "reference_chars": 139
+          },
+          {
+            "id": "251-118436-0013",
+            "text": "BY WHICH A SOUL IS DRAWN FROM ITS BODY AND ACROSS GULFS OF ECHOING SPACE RETURNED THE MAN ON THE MAT",
+            "words": [
+              {
+                "end_ms": 560.0,
+                "start_ms": 560.0,
+                "text": "BY"
+              },
+              {
+                "end_ms": 1120.0,
+                "start_ms": 640.0,
+                "text": "WHICH"
+              },
+              {
+                "end_ms": 1840.0,
+                "start_ms": 1760.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 1840.0,
+                "text": "SOUL"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2400.0,
+                "text": "IS"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2400.0,
+                "text": "DRAWN"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2400.0,
+                "text": "FROM"
+              },
+              {
+                "end_ms": 3360.0,
+                "start_ms": 2400.0,
+                "text": "ITS"
+              },
+              {
+                "end_ms": 3360.0,
+                "start_ms": 3360.0,
+                "text": "BODY"
+              },
+              {
+                "end_ms": 3520.0,
+                "start_ms": 3360.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 4080.0,
+                "start_ms": 3520.0,
+                "text": "ACROSS"
+              },
+              {
+                "end_ms": 4640.0,
+                "start_ms": 4080.0,
+                "text": "GULFS"
+              },
+              {
+                "end_ms": 4640.0,
+                "start_ms": 4640.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 5120.0,
+                "start_ms": 4640.0,
+                "text": "ECHOING"
+              },
+              {
+                "end_ms": 5760.0,
+                "start_ms": 5120.0,
+                "text": "SPACE"
+              },
+              {
+                "end_ms": 6880.0,
+                "start_ms": 6480.0,
+                "text": "RETURNED"
+              },
+              {
+                "end_ms": 7040.0,
+                "start_ms": 6880.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 7360.0,
+                "start_ms": 7040.0,
+                "text": "MAN"
+              },
+              {
+                "end_ms": 7440.0,
+                "start_ms": 7360.0,
+                "text": "ON"
+              },
+              {
+                "end_ms": 7440.0,
+                "start_ms": 7440.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 8320.0,
+                "start_ms": 7440.0,
+                "text": "MAT"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 256.745542,
+            "p95_ms": 257.5105,
+            "runs": 7,
+            "alignment_issues": [
+              {
+                "word": 20,
+                "reason": "out_of_audio",
+                "end_ms": 8320.0,
+                "audio_ms": 8225.0
+              }
+            ],
+            "word_errors": 0,
+            "reference_words": 21,
+            "char_errors": 0,
+            "reference_chars": 80
+          },
+          {
+            "id": "8297-275156-0002",
+            "text": "WE HAVE BOTH SEEN THE SAME NEWSPAPER OF COURSE AND YOU HAVE BEEN THE FIRST TO CLEAR THE THING UP THAT'S IT ISN'T IT",
+            "words": [
+              {
+                "end_ms": 720.0,
+                "start_ms": 560.0,
+                "text": "WE"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 720.0,
+                "text": "HAVE"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1440.0,
+                "text": "BOTH"
+              },
+              {
+                "end_ms": 1840.0,
+                "start_ms": 1600.0,
+                "text": "SEEN"
+              },
+              {
+                "end_ms": 1920.0,
+                "start_ms": 1840.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 2320.0,
+                "start_ms": 1920.0,
+                "text": "SAME"
+              },
+              {
+                "end_ms": 2320.0,
+                "start_ms": 2320.0,
+                "text": "NEWSPAPER"
+              },
+              {
+                "end_ms": 2560.0,
+                "start_ms": 2400.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 3200.0,
+                "start_ms": 2560.0,
+                "text": "COURSE"
+              },
+              {
+                "end_ms": 3200.0,
+                "start_ms": 3200.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 3680.0,
+                "start_ms": 3200.0,
+                "text": "YOU"
+              },
+              {
+                "end_ms": 3840.0,
+                "start_ms": 3680.0,
+                "text": "HAVE"
+              },
+              {
+                "end_ms": 3920.0,
+                "start_ms": 3840.0,
+                "text": "BEEN"
+              },
+              {
+                "end_ms": 4000.0,
+                "start_ms": 4000.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 4000.0,
+                "start_ms": 4000.0,
+                "text": "FIRST"
+              },
+              {
+                "end_ms": 4480.0,
+                "start_ms": 4400.0,
+                "text": "TO"
+              },
+              {
+                "end_ms": 4720.0,
+                "start_ms": 4480.0,
+                "text": "CLEAR"
+              },
+              {
+                "end_ms": 5360.0,
+                "start_ms": 4720.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 5400.0,
+                "start_ms": 5380.0,
+                "text": "THING"
+              },
+              {
+                "end_ms": 5440.0,
+                "start_ms": 5420.0,
+                "text": "UP"
+              },
+              {
+                "end_ms": 7040.0,
+                "start_ms": 5440.0,
+                "text": "THAT'S"
+              },
+              {
+                "end_ms": 7040.0,
+                "start_ms": 7040.0,
+                "text": "IT"
+              },
+              {
+                "end_ms": 7360.0,
+                "start_ms": 7200.0,
+                "text": "ISN'T"
+              },
+              {
+                "end_ms": 8000.0,
+                "start_ms": 7360.0,
+                "text": "IT"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 256.119792,
+            "p95_ms": 263.55424999999997,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 24,
+            "char_errors": 0,
+            "reference_chars": 90
+          },
+          {
+            "id": "2803-161169-0011",
+            "text": "WHAT SHOULD WE HAVE DONE IF EVERYBODY HAD KEPT ON BURNING WOOD TO THIS DAY",
+            "words": [
+              {
+                "end_ms": 640.0,
+                "start_ms": 560.0,
+                "text": "WHAT"
+              },
+              {
+                "end_ms": 640.0,
+                "start_ms": 640.0,
+                "text": "SHOULD"
+              },
+              {
+                "end_ms": 880.0,
+                "start_ms": 880.0,
+                "text": "WE"
+              },
+              {
+                "end_ms": 1280.0,
+                "start_ms": 960.0,
+                "text": "HAVE"
+              },
+              {
+                "end_ms": 1760.0,
+                "start_ms": 1280.0,
+                "text": "DONE"
+              },
+              {
+                "end_ms": 2000.0,
+                "start_ms": 1840.0,
+                "text": "IF"
+              },
+              {
+                "end_ms": 2880.0,
+                "start_ms": 2080.0,
+                "text": "EVERYBODY"
+              },
+              {
+                "end_ms": 3600.0,
+                "start_ms": 2880.0,
+                "text": "HAD"
+              },
+              {
+                "end_ms": 4080.0,
+                "start_ms": 3600.0,
+                "text": "KEPT"
+              },
+              {
+                "end_ms": 4080.0,
+                "start_ms": 4080.0,
+                "text": "ON"
+              },
+              {
+                "end_ms": 4080.0,
+                "start_ms": 4080.0,
+                "text": "BURNING"
+              },
+              {
+                "end_ms": 4480.0,
+                "start_ms": 4080.0,
+                "text": "WOOD"
+              },
+              {
+                "end_ms": 4560.0,
+                "start_ms": 4480.0,
+                "text": "TO"
+              },
+              {
+                "end_ms": 4800.0,
+                "start_ms": 4560.0,
+                "text": "THIS"
+              },
+              {
+                "end_ms": 5360.0,
+                "start_ms": 4800.0,
+                "text": "DAY"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 207.246709,
+            "p95_ms": 211.126333,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 15,
+            "char_errors": 0,
+            "reference_chars": 60
+          },
+          {
+            "id": "3752-4944-0057",
+            "text": "THEY SHALL NOT FLOG THAT BOY HE SAID",
+            "words": [
+              {
+                "end_ms": 560.0,
+                "start_ms": 480.0,
+                "text": "THEY"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 560.0,
+                "text": "SHALL"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1440.0,
+                "text": "NOT"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1440.0,
+                "text": "FLOG"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1440.0,
+                "text": "THAT"
+              },
+              {
+                "end_ms": 1920.0,
+                "start_ms": 1760.0,
+                "text": "BOY"
+              },
+              {
+                "end_ms": 2480.0,
+                "start_ms": 2000.0,
+                "text": "HE"
+              },
+              {
+                "end_ms": 2480.0,
+                "start_ms": 2480.0,
+                "text": "SAID"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 153.935542,
+            "p95_ms": 183.486208,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 8,
+            "char_errors": 0,
+            "reference_chars": 29
+          },
+          {
+            "id": "2412-153948-0005",
+            "text": "I WAS DELIGHTED WITH THE COUNTRY AND THE MANNER OF LIFE",
+            "words": [
+              {
+                "end_ms": 640.0,
+                "start_ms": 560.0,
+                "text": "I"
+              },
+              {
+                "end_ms": 800.0,
+                "start_ms": 640.0,
+                "text": "WAS"
+              },
+              {
+                "end_ms": 1280.0,
+                "start_ms": 800.0,
+                "text": "DELIGHTED"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1280.0,
+                "text": "WITH"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1440.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 1920.0,
+                "start_ms": 1440.0,
+                "text": "COUNTRY"
+              },
+              {
+                "end_ms": 2080.0,
+                "start_ms": 1920.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 2160.0,
+                "start_ms": 2080.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 2480.0,
+                "start_ms": 2160.0,
+                "text": "MANNER"
+              },
+              {
+                "end_ms": 2640.0,
+                "start_ms": 2480.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 3040.0,
+                "start_ms": 2640.0,
+                "text": "LIFE"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 166.54225,
+            "p95_ms": 178.762083,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 11,
+            "char_errors": 0,
+            "reference_chars": 45
+          },
+          {
+            "id": "1462-170142-0038",
+            "text": "HILDA SAT ON THE ARM OF IT AND PUT HER HANDS LIGHTLY ON HIS SHOULDERS",
+            "words": [
+              {
+                "end_ms": 1120.0,
+                "start_ms": 640.0,
+                "text": "HILDA"
+              },
+              {
+                "end_ms": 1120.0,
+                "start_ms": 1120.0,
+                "text": "SAT"
+              },
+              {
+                "end_ms": 1280.0,
+                "start_ms": 1120.0,
+                "text": "ON"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1280.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 1760.0,
+                "start_ms": 1440.0,
+                "text": "ARM"
+              },
+              {
+                "end_ms": 2000.0,
+                "start_ms": 1760.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 2080.0,
+                "start_ms": 2000.0,
+                "text": "IT"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2240.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 2640.0,
+                "start_ms": 2400.0,
+                "text": "PUT"
+              },
+              {
+                "end_ms": 2800.0,
+                "start_ms": 2640.0,
+                "text": "HER"
+              },
+              {
+                "end_ms": 3120.0,
+                "start_ms": 2800.0,
+                "text": "HANDS"
+              },
+              {
+                "end_ms": 3440.0,
+                "start_ms": 3120.0,
+                "text": "LIGHTLY"
+              },
+              {
+                "end_ms": 3680.0,
+                "start_ms": 3440.0,
+                "text": "ON"
+              },
+              {
+                "end_ms": 3760.0,
+                "start_ms": 3680.0,
+                "text": "HIS"
+              },
+              {
+                "end_ms": 4320.0,
+                "start_ms": 3840.0,
+                "text": "SHOULDERS"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 194.510875,
+            "p95_ms": 209.79108399999998,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 15,
+            "char_errors": 0,
+            "reference_chars": 55
+          },
+          {
+            "id": "5694-64038-0001",
+            "text": "YANK SAYS WHAT YOU DOING JOHNNY",
+            "words": [
+              {
+                "end_ms": 880.0,
+                "start_ms": 640.0,
+                "text": "YANK"
+              },
+              {
+                "end_ms": 1280.0,
+                "start_ms": 880.0,
+                "text": "SAYS"
+              },
+              {
+                "end_ms": 2320.0,
+                "start_ms": 2240.0,
+                "text": "WHAT"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2320.0,
+                "text": "YOU"
+              },
+              {
+                "end_ms": 2800.0,
+                "start_ms": 2400.0,
+                "text": "DOING"
+              },
+              {
+                "end_ms": 3280.0,
+                "start_ms": 2800.0,
+                "text": "JOHNNY"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 166.459709,
+            "p95_ms": 175.40225,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 6,
+            "char_errors": 0,
+            "reference_chars": 26
+          }
+        ],
+        "task": "align",
+        "role": "baseline",
+        "median_suite_ms": 4640.908709,
+        "p95_suite_ms": 4752.704834,
+        "median_request_suite_ms": 4645.784624004591,
+        "round_totals_ms": {
+          "0": 4638.003707,
+          "1": 4669.410291,
+          "2": 4752.704834,
+          "3": 4722.277251,
+          "4": 4640.908709,
+          "5": 4638.353124,
+          "6": 4630.39879
+        },
+        "deterministic": true,
+        "audio_duration_s": 135.26500000000001,
+        "word_errors": 0,
+        "reference_words": 372,
+        "char_errors": 0,
+        "reference_chars": 1542,
+        "rtf": 0.03430975277418401,
+        "realtime_x": 29.14623158556942,
+        "wer": 0.0,
+        "cer": 0.0,
+        "alignment_issue_count": 2,
+        "timing_stable": true
+      },
+      "candidate": {
+        "cases": [
+          {
+            "id": "5338-284437-0008",
+            "text": "SO THEY FOLLOWED HER THROUGH THE LOW ARCHWAY AND IN A ROOM BEYOND VERY SIMPLY FURNISHED SAT A YOUNG GIRL ENGAGED IN DARNING A PAIR OF PINK STOCKINGS",
+            "words": [
+              {
+                "end_ms": 1440.0,
+                "start_ms": 640.0,
+                "text": "SO"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1440.0,
+                "text": "THEY"
+              },
+              {
+                "end_ms": 1520.0,
+                "start_ms": 1440.0,
+                "text": "FOLLOWED"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 1520.0,
+                "text": "HER"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2400.0,
+                "text": "THROUGH"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2400.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 2440.0,
+                "start_ms": 2420.0,
+                "text": "LOW"
+              },
+              {
+                "end_ms": 2480.0,
+                "start_ms": 2460.0,
+                "text": "ARCHWAY"
+              },
+              {
+                "end_ms": 2640.0,
+                "start_ms": 2480.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 2720.0,
+                "start_ms": 2640.0,
+                "text": "IN"
+              },
+              {
+                "end_ms": 2800.0,
+                "start_ms": 2720.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 3120.0,
+                "start_ms": 2800.0,
+                "text": "ROOM"
+              },
+              {
+                "end_ms": 3680.0,
+                "start_ms": 3120.0,
+                "text": "BEYOND"
+              },
+              {
+                "end_ms": 4160.0,
+                "start_ms": 3920.0,
+                "text": "VERY"
+              },
+              {
+                "end_ms": 4560.0,
+                "start_ms": 4160.0,
+                "text": "SIMPLY"
+              },
+              {
+                "end_ms": 5120.0,
+                "start_ms": 4560.0,
+                "text": "FURNISHED"
+              },
+              {
+                "end_ms": 5760.0,
+                "start_ms": 5600.0,
+                "text": "SAT"
+              },
+              {
+                "end_ms": 5760.0,
+                "start_ms": 5760.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 6400.0,
+                "start_ms": 5760.0,
+                "text": "YOUNG"
+              },
+              {
+                "end_ms": 6400.0,
+                "start_ms": 6400.0,
+                "text": "GIRL"
+              },
+              {
+                "end_ms": 6960.0,
+                "start_ms": 6400.0,
+                "text": "ENGAGED"
+              },
+              {
+                "end_ms": 7040.0,
+                "start_ms": 6960.0,
+                "text": "IN"
+              },
+              {
+                "end_ms": 7440.0,
+                "start_ms": 7040.0,
+                "text": "DARNING"
+              },
+              {
+                "end_ms": 7440.0,
+                "start_ms": 7440.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 7680.0,
+                "start_ms": 7440.0,
+                "text": "PAIR"
+              },
+              {
+                "end_ms": 7760.0,
+                "start_ms": 7680.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 8080.0,
+                "start_ms": 8080.0,
+                "text": "PINK"
+              },
+              {
+                "end_ms": 8960.0,
+                "start_ms": 8080.0,
+                "text": "STOCKINGS"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 68.717791,
+            "p95_ms": 73.411125,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 28,
+            "char_errors": 0,
+            "reference_chars": 121
+          },
+          {
+            "id": "1988-147956-0012",
+            "text": "EVEN FROM A DISTANCE ONE COULD SEE THAT THERE WAS SOMETHING STRANGE ABOUT THIS BOY",
+            "words": [
+              {
+                "end_ms": 640.0,
+                "start_ms": 480.0,
+                "text": "EVEN"
+              },
+              {
+                "end_ms": 1600.0,
+                "start_ms": 640.0,
+                "text": "FROM"
+              },
+              {
+                "end_ms": 1600.0,
+                "start_ms": 1600.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 1600.0,
+                "start_ms": 1600.0,
+                "text": "DISTANCE"
+              },
+              {
+                "end_ms": 1600.0,
+                "start_ms": 1600.0,
+                "text": "ONE"
+              },
+              {
+                "end_ms": 2000.0,
+                "start_ms": 1600.0,
+                "text": "COULD"
+              },
+              {
+                "end_ms": 2000.0,
+                "start_ms": 2000.0,
+                "text": "SEE"
+              },
+              {
+                "end_ms": 2240.0,
+                "start_ms": 2000.0,
+                "text": "THAT"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2240.0,
+                "text": "THERE"
+              },
+              {
+                "end_ms": 2560.0,
+                "start_ms": 2400.0,
+                "text": "WAS"
+              },
+              {
+                "end_ms": 2960.0,
+                "start_ms": 2560.0,
+                "text": "SOMETHING"
+              },
+              {
+                "end_ms": 3360.0,
+                "start_ms": 2960.0,
+                "text": "STRANGE"
+              },
+              {
+                "end_ms": 3680.0,
+                "start_ms": 3440.0,
+                "text": "ABOUT"
+              },
+              {
+                "end_ms": 3840.0,
+                "start_ms": 3680.0,
+                "text": "THIS"
+              },
+              {
+                "end_ms": 4160.0,
+                "start_ms": 3840.0,
+                "text": "BOY"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 41.228666999999994,
+            "p95_ms": 50.098166,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 15,
+            "char_errors": 0,
+            "reference_chars": 68
+          },
+          {
+            "id": "2035-147961-0022",
+            "text": "THE SHRIEKS THAT FOLLOWED MADE EVERYBODY SOBER",
+            "words": [
+              {
+                "end_ms": 560.0,
+                "start_ms": 560.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 1120.0,
+                "start_ms": 560.0,
+                "text": "SHRIEKS"
+              },
+              {
+                "end_ms": 1760.0,
+                "start_ms": 1120.0,
+                "text": "THAT"
+              },
+              {
+                "end_ms": 1840.0,
+                "start_ms": 1760.0,
+                "text": "FOLLOWED"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 1840.0,
+                "text": "MADE"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2400.0,
+                "text": "EVERYBODY"
+              },
+              {
+                "end_ms": 2960.0,
+                "start_ms": 2400.0,
+                "text": "SOBER"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 35.136291,
+            "p95_ms": 40.248959,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 7,
+            "char_errors": 0,
+            "reference_chars": 40
+          },
+          {
+            "id": "3536-23268-0026",
+            "text": "FORGIVE THE DUTIES OF MY OFFICE AND BELIEVE THAT NO ONE IS HALF SO MUCH CONCERNED IF IT ROBS YOU OF ANY DEGREE OF HAPPINESS AS I MYSELF AM",
+            "words": [
+              {
+                "end_ms": 800.0,
+                "start_ms": 640.0,
+                "text": "FORGIVE"
+              },
+              {
+                "end_ms": 880.0,
+                "start_ms": 800.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 1200.0,
+                "start_ms": 880.0,
+                "text": "DUTIES"
+              },
+              {
+                "end_ms": 1280.0,
+                "start_ms": 1280.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1280.0,
+                "text": "MY"
+              },
+              {
+                "end_ms": 2160.0,
+                "start_ms": 1520.0,
+                "text": "OFFICE"
+              },
+              {
+                "end_ms": 2480.0,
+                "start_ms": 2320.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 2880.0,
+                "start_ms": 2480.0,
+                "text": "BELIEVE"
+              },
+              {
+                "end_ms": 2880.0,
+                "start_ms": 2880.0,
+                "text": "THAT"
+              },
+              {
+                "end_ms": 3360.0,
+                "start_ms": 3040.0,
+                "text": "NO"
+              },
+              {
+                "end_ms": 3360.0,
+                "start_ms": 3360.0,
+                "text": "ONE"
+              },
+              {
+                "end_ms": 3600.0,
+                "start_ms": 3360.0,
+                "text": "IS"
+              },
+              {
+                "end_ms": 3760.0,
+                "start_ms": 3600.0,
+                "text": "HALF"
+              },
+              {
+                "end_ms": 4000.0,
+                "start_ms": 3760.0,
+                "text": "SO"
+              },
+              {
+                "end_ms": 4240.0,
+                "start_ms": 4000.0,
+                "text": "MUCH"
+              },
+              {
+                "end_ms": 4800.0,
+                "start_ms": 4240.0,
+                "text": "CONCERNED"
+              },
+              {
+                "end_ms": 4960.0,
+                "start_ms": 4800.0,
+                "text": "IF"
+              },
+              {
+                "end_ms": 4960.0,
+                "start_ms": 4960.0,
+                "text": "IT"
+              },
+              {
+                "end_ms": 5360.0,
+                "start_ms": 4960.0,
+                "text": "ROBS"
+              },
+              {
+                "end_ms": 5440.0,
+                "start_ms": 5360.0,
+                "text": "YOU"
+              },
+              {
+                "end_ms": 5520.0,
+                "start_ms": 5440.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 5840.0,
+                "start_ms": 5600.0,
+                "text": "ANY"
+              },
+              {
+                "end_ms": 6240.0,
+                "start_ms": 5840.0,
+                "text": "DEGREE"
+              },
+              {
+                "end_ms": 6320.0,
+                "start_ms": 6240.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 6960.0,
+                "start_ms": 6320.0,
+                "text": "HAPPINESS"
+              },
+              {
+                "end_ms": 7280.0,
+                "start_ms": 7200.0,
+                "text": "AS"
+              },
+              {
+                "end_ms": 7600.0,
+                "start_ms": 7360.0,
+                "text": "I"
+              },
+              {
+                "end_ms": 8240.0,
+                "start_ms": 7600.0,
+                "text": "MYSELF"
+              },
+              {
+                "end_ms": 8640.0,
+                "start_ms": 8240.0,
+                "text": "AM"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 71.86099999999999,
+            "p95_ms": 75.844708,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 29,
+            "char_errors": 0,
+            "reference_chars": 110
+          },
+          {
+            "id": "6319-57405-0003",
+            "text": "BUT MEN KEPT ON FIGHTING AND ROBBING EVEN WHILE THE RAIN WAS POURING DOWN AND THE SEA WAS COMING UP OVER THE LAND",
+            "words": [
+              {
+                "end_ms": 1120.0,
+                "start_ms": 560.0,
+                "text": "BUT"
+              },
+              {
+                "end_ms": 1120.0,
+                "start_ms": 1120.0,
+                "text": "MEN"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1120.0,
+                "text": "KEPT"
+              },
+              {
+                "end_ms": 1600.0,
+                "start_ms": 1440.0,
+                "text": "ON"
+              },
+              {
+                "end_ms": 2080.0,
+                "start_ms": 1600.0,
+                "text": "FIGHTING"
+              },
+              {
+                "end_ms": 2240.0,
+                "start_ms": 2080.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 2800.0,
+                "start_ms": 2240.0,
+                "text": "ROBBING"
+              },
+              {
+                "end_ms": 3600.0,
+                "start_ms": 3200.0,
+                "text": "EVEN"
+              },
+              {
+                "end_ms": 3840.0,
+                "start_ms": 3600.0,
+                "text": "WHILE"
+              },
+              {
+                "end_ms": 3920.0,
+                "start_ms": 3840.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 4320.0,
+                "start_ms": 3920.0,
+                "text": "RAIN"
+              },
+              {
+                "end_ms": 4560.0,
+                "start_ms": 4320.0,
+                "text": "WAS"
+              },
+              {
+                "end_ms": 4960.0,
+                "start_ms": 4560.0,
+                "text": "POURING"
+              },
+              {
+                "end_ms": 5440.0,
+                "start_ms": 4960.0,
+                "text": "DOWN"
+              },
+              {
+                "end_ms": 5760.0,
+                "start_ms": 5600.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 5840.0,
+                "start_ms": 5760.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 6320.0,
+                "start_ms": 5840.0,
+                "text": "SEA"
+              },
+              {
+                "end_ms": 6560.0,
+                "start_ms": 6320.0,
+                "text": "WAS"
+              },
+              {
+                "end_ms": 6880.0,
+                "start_ms": 6560.0,
+                "text": "COMING"
+              },
+              {
+                "end_ms": 6880.0,
+                "start_ms": 6880.0,
+                "text": "UP"
+              },
+              {
+                "end_ms": 7360.0,
+                "start_ms": 7040.0,
+                "text": "OVER"
+              },
+              {
+                "end_ms": 7440.0,
+                "start_ms": 7360.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 7920.0,
+                "start_ms": 7440.0,
+                "text": "LAND"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 70.547416,
+            "p95_ms": 86.015958,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 23,
+            "char_errors": 0,
+            "reference_chars": 91
+          },
+          {
+            "id": "7976-110523-0013",
+            "text": "THEN SHE TOOK UP HANSEL WITH HER ROUGH HAND AND SHUT HIM UP IN A LITTLE CAGE WITH A LATTICE DOOR AND ALTHOUGH HE SCREAMED LOUDLY IT WAS OF NO USE",
+            "words": [
+              {
+                "end_ms": 560.0,
+                "start_ms": 560.0,
+                "text": "THEN"
+              },
+              {
+                "end_ms": 1120.0,
+                "start_ms": 640.0,
+                "text": "SHE"
+              },
+              {
+                "end_ms": 1600.0,
+                "start_ms": 1600.0,
+                "text": "TOOK"
+              },
+              {
+                "end_ms": 1760.0,
+                "start_ms": 1600.0,
+                "text": "UP"
+              },
+              {
+                "end_ms": 2240.0,
+                "start_ms": 1760.0,
+                "text": "HANSEL"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2240.0,
+                "text": "WITH"
+              },
+              {
+                "end_ms": 2448.0,
+                "start_ms": 2400.0,
+                "text": "HER"
+              },
+              {
+                "end_ms": 2544.0,
+                "start_ms": 2496.0,
+                "text": "ROUGH"
+              },
+              {
+                "end_ms": 2640.0,
+                "start_ms": 2592.0,
+                "text": "HAND"
+              },
+              {
+                "end_ms": 3040.0,
+                "start_ms": 2960.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 3360.0,
+                "start_ms": 3040.0,
+                "text": "SHUT"
+              },
+              {
+                "end_ms": 3520.0,
+                "start_ms": 3360.0,
+                "text": "HIM"
+              },
+              {
+                "end_ms": 3520.0,
+                "start_ms": 3520.0,
+                "text": "UP"
+              },
+              {
+                "end_ms": 3760.0,
+                "start_ms": 3520.0,
+                "text": "IN"
+              },
+              {
+                "end_ms": 4080.0,
+                "start_ms": 3760.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 4160.0,
+                "start_ms": 4080.0,
+                "text": "LITTLE"
+              },
+              {
+                "end_ms": 4560.0,
+                "start_ms": 4160.0,
+                "text": "CAGE"
+              },
+              {
+                "end_ms": 4720.0,
+                "start_ms": 4560.0,
+                "text": "WITH"
+              },
+              {
+                "end_ms": 4720.0,
+                "start_ms": 4720.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 4720.0,
+                "start_ms": 4720.0,
+                "text": "LATTICE"
+              },
+              {
+                "end_ms": 5520.0,
+                "start_ms": 5280.0,
+                "text": "DOOR"
+              },
+              {
+                "end_ms": 6160.0,
+                "start_ms": 6000.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 7040.0,
+                "start_ms": 6160.0,
+                "text": "ALTHOUGH"
+              },
+              {
+                "end_ms": 7040.0,
+                "start_ms": 7040.0,
+                "text": "HE"
+              },
+              {
+                "end_ms": 7040.0,
+                "start_ms": 7040.0,
+                "text": "SCREAMED"
+              },
+              {
+                "end_ms": 7440.0,
+                "start_ms": 7040.0,
+                "text": "LOUDLY"
+              },
+              {
+                "end_ms": 8000.0,
+                "start_ms": 7440.0,
+                "text": "IT"
+              },
+              {
+                "end_ms": 8000.0,
+                "start_ms": 8000.0,
+                "text": "WAS"
+              },
+              {
+                "end_ms": 8240.0,
+                "start_ms": 8160.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 8960.0,
+                "start_ms": 8240.0,
+                "text": "NO"
+              },
+              {
+                "end_ms": 8960.0,
+                "start_ms": 8960.0,
+                "text": "USE"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 45.045791,
+            "p95_ms": 54.527208,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 31,
+            "char_errors": 0,
+            "reference_chars": 115
+          },
+          {
+            "id": "174-168635-0008",
+            "text": "NATURE A DIFFERENCE OF FIFTY YEARS HAD SET A PROFOUND GULF BETWEEN JEAN VALJEAN AND COSETTE DESTINY FILLED IN THIS GULF",
+            "words": [
+              {
+                "end_ms": 1120.0,
+                "start_ms": 640.0,
+                "text": "NATURE"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1360.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 1920.0,
+                "start_ms": 1440.0,
+                "text": "DIFFERENCE"
+              },
+              {
+                "end_ms": 2080.0,
+                "start_ms": 1920.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2080.0,
+                "text": "FIFTY"
+              },
+              {
+                "end_ms": 3040.0,
+                "start_ms": 2400.0,
+                "text": "YEARS"
+              },
+              {
+                "end_ms": 3600.0,
+                "start_ms": 3280.0,
+                "text": "HAD"
+              },
+              {
+                "end_ms": 3600.0,
+                "start_ms": 3600.0,
+                "text": "SET"
+              },
+              {
+                "end_ms": 3600.0,
+                "start_ms": 3600.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 4240.0,
+                "start_ms": 3600.0,
+                "text": "PROFOUND"
+              },
+              {
+                "end_ms": 4720.0,
+                "start_ms": 4240.0,
+                "text": "GULF"
+              },
+              {
+                "end_ms": 5280.0,
+                "start_ms": 4720.0,
+                "text": "BETWEEN"
+              },
+              {
+                "end_ms": 5520.0,
+                "start_ms": 5280.0,
+                "text": "JEAN"
+              },
+              {
+                "end_ms": 6000.0,
+                "start_ms": 5520.0,
+                "text": "VALJEAN"
+              },
+              {
+                "end_ms": 6160.0,
+                "start_ms": 6000.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 6640.0,
+                "start_ms": 6160.0,
+                "text": "COSETTE"
+              },
+              {
+                "end_ms": 8480.0,
+                "start_ms": 7760.0,
+                "text": "DESTINY"
+              },
+              {
+                "end_ms": 8960.0,
+                "start_ms": 8480.0,
+                "text": "FILLED"
+              },
+              {
+                "end_ms": 9120.0,
+                "start_ms": 8960.0,
+                "text": "IN"
+              },
+              {
+                "end_ms": 9360.0,
+                "start_ms": 9120.0,
+                "text": "THIS"
+              },
+              {
+                "end_ms": 9760.0,
+                "start_ms": 9360.0,
+                "text": "GULF"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 78.43424999999999,
+            "p95_ms": 80.217042,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 21,
+            "char_errors": 0,
+            "reference_chars": 99
+          },
+          {
+            "id": "5895-34622-0004",
+            "text": "THE WHEELS WERE ALL OF THE SAME SIZE AND HIGH AS WAGON WHEELS",
+            "words": [
+              {
+                "end_ms": 640.0,
+                "start_ms": 640.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 640.0,
+                "text": "WHEELS"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1440.0,
+                "text": "WERE"
+              },
+              {
+                "end_ms": 1920.0,
+                "start_ms": 1600.0,
+                "text": "ALL"
+              },
+              {
+                "end_ms": 1920.0,
+                "start_ms": 1920.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 1920.0,
+                "start_ms": 1920.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 1920.0,
+                "text": "SAME"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2400.0,
+                "text": "SIZE"
+              },
+              {
+                "end_ms": 3280.0,
+                "start_ms": 2560.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 3520.0,
+                "start_ms": 3280.0,
+                "text": "HIGH"
+              },
+              {
+                "end_ms": 3520.0,
+                "start_ms": 3520.0,
+                "text": "AS"
+              },
+              {
+                "end_ms": 3600.0,
+                "start_ms": 3520.0,
+                "text": "WAGON"
+              },
+              {
+                "end_ms": 4640.0,
+                "start_ms": 3600.0,
+                "text": "WHEELS"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 26.885541,
+            "p95_ms": 36.747958,
+            "runs": 7,
+            "alignment_issues": [
+              {
+                "word": 12,
+                "reason": "out_of_audio",
+                "end_ms": 4640.0,
+                "audio_ms": 4290.0
+              }
+            ],
+            "word_errors": 0,
+            "reference_words": 13,
+            "char_errors": 0,
+            "reference_chars": 49
+          },
+          {
+            "id": "7850-281318-0004",
+            "text": "AND THE POOR SILLY THINGS RUFFLED UP THEIR FEATHERS AND LOOKED MISERABLE AS ONLY A LITTLE BIRD CAN LOOK WHEN IT IS UNHAPPY",
+            "words": [
+              {
+                "end_ms": 640.0,
+                "start_ms": 560.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 720.0,
+                "start_ms": 640.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 1120.0,
+                "start_ms": 720.0,
+                "text": "POOR"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1120.0,
+                "text": "SILLY"
+              },
+              {
+                "end_ms": 1840.0,
+                "start_ms": 1440.0,
+                "text": "THINGS"
+              },
+              {
+                "end_ms": 1840.0,
+                "start_ms": 1840.0,
+                "text": "RUFFLED"
+              },
+              {
+                "end_ms": 2320.0,
+                "start_ms": 1920.0,
+                "text": "UP"
+              },
+              {
+                "end_ms": 2320.0,
+                "start_ms": 2320.0,
+                "text": "THEIR"
+              },
+              {
+                "end_ms": 3120.0,
+                "start_ms": 2400.0,
+                "text": "FEATHERS"
+              },
+              {
+                "end_ms": 3440.0,
+                "start_ms": 3360.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 3760.0,
+                "start_ms": 3440.0,
+                "text": "LOOKED"
+              },
+              {
+                "end_ms": 4560.0,
+                "start_ms": 4080.0,
+                "text": "MISERABLE"
+              },
+              {
+                "end_ms": 4960.0,
+                "start_ms": 4720.0,
+                "text": "AS"
+              },
+              {
+                "end_ms": 5440.0,
+                "start_ms": 4960.0,
+                "text": "ONLY"
+              },
+              {
+                "end_ms": 5520.0,
+                "start_ms": 5440.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 5840.0,
+                "start_ms": 5520.0,
+                "text": "LITTLE"
+              },
+              {
+                "end_ms": 6400.0,
+                "start_ms": 5840.0,
+                "text": "BIRD"
+              },
+              {
+                "end_ms": 6400.0,
+                "start_ms": 6400.0,
+                "text": "CAN"
+              },
+              {
+                "end_ms": 6640.0,
+                "start_ms": 6400.0,
+                "text": "LOOK"
+              },
+              {
+                "end_ms": 6880.0,
+                "start_ms": 6640.0,
+                "text": "WHEN"
+              },
+              {
+                "end_ms": 7120.0,
+                "start_ms": 6960.0,
+                "text": "IT"
+              },
+              {
+                "end_ms": 7280.0,
+                "start_ms": 7120.0,
+                "text": "IS"
+              },
+              {
+                "end_ms": 8000.0,
+                "start_ms": 7280.0,
+                "text": "UNHAPPY"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 68.683875,
+            "p95_ms": 74.881084,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 23,
+            "char_errors": 0,
+            "reference_chars": 100
+          },
+          {
+            "id": "1272-141231-0021",
+            "text": "EVERY MAN WHO ENTERED THE TWENTIES HAD HIS OWN TRAINING TRICKS",
+            "words": [
+              {
+                "end_ms": 1120.0,
+                "start_ms": 640.0,
+                "text": "EVERY"
+              },
+              {
+                "end_ms": 1120.0,
+                "start_ms": 1120.0,
+                "text": "MAN"
+              },
+              {
+                "end_ms": 1280.0,
+                "start_ms": 1120.0,
+                "text": "WHO"
+              },
+              {
+                "end_ms": 1600.0,
+                "start_ms": 1280.0,
+                "text": "ENTERED"
+              },
+              {
+                "end_ms": 1760.0,
+                "start_ms": 1600.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 1760.0,
+                "text": "TWENTIES"
+              },
+              {
+                "end_ms": 2880.0,
+                "start_ms": 2720.0,
+                "text": "HAD"
+              },
+              {
+                "end_ms": 3040.0,
+                "start_ms": 2880.0,
+                "text": "HIS"
+              },
+              {
+                "end_ms": 3200.0,
+                "start_ms": 3040.0,
+                "text": "OWN"
+              },
+              {
+                "end_ms": 3680.0,
+                "start_ms": 3200.0,
+                "text": "TRAINING"
+              },
+              {
+                "end_ms": 4240.0,
+                "start_ms": 3680.0,
+                "text": "TRICKS"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 27.659125,
+            "p95_ms": 30.302540999999998,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 11,
+            "char_errors": 0,
+            "reference_chars": 52
+          },
+          {
+            "id": "3576-138058-0026",
+            "text": "O HUSBAND WHOSE UNHAPPY FATE IN BEING MINE HATH BORNE THEE FROM THE MARRIAGE BED TO THE GRAVE",
+            "words": [
+              {
+                "end_ms": 2320.0,
+                "start_ms": 2240.0,
+                "text": "O"
+              },
+              {
+                "end_ms": 2320.0,
+                "start_ms": 2320.0,
+                "text": "HUSBAND"
+              },
+              {
+                "end_ms": 2720.0,
+                "start_ms": 2320.0,
+                "text": "WHOSE"
+              },
+              {
+                "end_ms": 3440.0,
+                "start_ms": 2720.0,
+                "text": "UNHAPPY"
+              },
+              {
+                "end_ms": 3520.0,
+                "start_ms": 3440.0,
+                "text": "FATE"
+              },
+              {
+                "end_ms": 3600.0,
+                "start_ms": 3520.0,
+                "text": "IN"
+              },
+              {
+                "end_ms": 3920.0,
+                "start_ms": 3600.0,
+                "text": "BEING"
+              },
+              {
+                "end_ms": 4480.0,
+                "start_ms": 3920.0,
+                "text": "MINE"
+              },
+              {
+                "end_ms": 4720.0,
+                "start_ms": 4480.0,
+                "text": "HATH"
+              },
+              {
+                "end_ms": 5440.0,
+                "start_ms": 4720.0,
+                "text": "BORNE"
+              },
+              {
+                "end_ms": 5520.0,
+                "start_ms": 5440.0,
+                "text": "THEE"
+              },
+              {
+                "end_ms": 5760.0,
+                "start_ms": 5520.0,
+                "text": "FROM"
+              },
+              {
+                "end_ms": 5920.0,
+                "start_ms": 5760.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 6480.0,
+                "start_ms": 5920.0,
+                "text": "MARRIAGE"
+              },
+              {
+                "end_ms": 6720.0,
+                "start_ms": 6480.0,
+                "text": "BED"
+              },
+              {
+                "end_ms": 6960.0,
+                "start_ms": 6800.0,
+                "text": "TO"
+              },
+              {
+                "end_ms": 7120.0,
+                "start_ms": 6960.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 7680.0,
+                "start_ms": 7120.0,
+                "text": "GRAVE"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 60.873833000000005,
+            "p95_ms": 67.072333,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 18,
+            "char_errors": 0,
+            "reference_chars": 76
+          },
+          {
+            "id": "6241-61943-0003",
+            "text": "MY UNCLE WAS DELIGHTED FOR MYSELF MOODY AND DISSATISFIED I APPEARED ALMOST TO EXPECT A GLIMPSE OF THE GHOST OF HAMLET",
+            "words": [
+              {
+                "end_ms": 1600.0,
+                "start_ms": 480.0,
+                "text": "MY"
+              },
+              {
+                "end_ms": 1600.0,
+                "start_ms": 1600.0,
+                "text": "UNCLE"
+              },
+              {
+                "end_ms": 1600.0,
+                "start_ms": 1600.0,
+                "text": "WAS"
+              },
+              {
+                "end_ms": 1600.0,
+                "start_ms": 1600.0,
+                "text": "DELIGHTED"
+              },
+              {
+                "end_ms": 2080.0,
+                "start_ms": 1920.0,
+                "text": "FOR"
+              },
+              {
+                "end_ms": 2640.0,
+                "start_ms": 2080.0,
+                "text": "MYSELF"
+              },
+              {
+                "end_ms": 3360.0,
+                "start_ms": 3040.0,
+                "text": "MOODY"
+              },
+              {
+                "end_ms": 3440.0,
+                "start_ms": 3360.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 4240.0,
+                "start_ms": 3440.0,
+                "text": "DISSATISFIED"
+              },
+              {
+                "end_ms": 4720.0,
+                "start_ms": 4640.0,
+                "text": "I"
+              },
+              {
+                "end_ms": 5120.0,
+                "start_ms": 4720.0,
+                "text": "APPEARED"
+              },
+              {
+                "end_ms": 5440.0,
+                "start_ms": 5120.0,
+                "text": "ALMOST"
+              },
+              {
+                "end_ms": 5520.0,
+                "start_ms": 5440.0,
+                "text": "TO"
+              },
+              {
+                "end_ms": 5840.0,
+                "start_ms": 5520.0,
+                "text": "EXPECT"
+              },
+              {
+                "end_ms": 6000.0,
+                "start_ms": 5920.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 6400.0,
+                "start_ms": 6000.0,
+                "text": "GLIMPSE"
+              },
+              {
+                "end_ms": 6400.0,
+                "start_ms": 6400.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 6560.0,
+                "start_ms": 6400.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 6800.0,
+                "start_ms": 6560.0,
+                "text": "GHOST"
+              },
+              {
+                "end_ms": 7040.0,
+                "start_ms": 6800.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 7280.0,
+                "start_ms": 7040.0,
+                "text": "HAMLET"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 66.81845799999999,
+            "p95_ms": 68.674875,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 21,
+            "char_errors": 0,
+            "reference_chars": 97
+          },
+          {
+            "id": "8842-304647-0010",
+            "text": "WELL TOO IF HE LIKE LOVE WOULD FILCH OUR HOARD WITH PLEASURE TO OURSELVES SLUICING OUR VEIN AND VIGOUR TO PERPETUATE THE STRAIN OF LIFE BY SPILTH OF LIFE WITHIN US STORED",
+            "words": [
+              {
+                "end_ms": 1120.0,
+                "start_ms": 560.0,
+                "text": "WELL"
+              },
+              {
+                "end_ms": 1120.0,
+                "start_ms": 1120.0,
+                "text": "TOO"
+              },
+              {
+                "end_ms": 1280.0,
+                "start_ms": 1120.0,
+                "text": "IF"
+              },
+              {
+                "end_ms": 1520.0,
+                "start_ms": 1280.0,
+                "text": "HE"
+              },
+              {
+                "end_ms": 1760.0,
+                "start_ms": 1600.0,
+                "text": "LIKE"
+              },
+              {
+                "end_ms": 2240.0,
+                "start_ms": 1760.0,
+                "text": "LOVE"
+              },
+              {
+                "end_ms": 2320.0,
+                "start_ms": 2320.0,
+                "text": "WOULD"
+              },
+              {
+                "end_ms": 2880.0,
+                "start_ms": 2400.0,
+                "text": "FILCH"
+              },
+              {
+                "end_ms": 3360.0,
+                "start_ms": 2880.0,
+                "text": "OUR"
+              },
+              {
+                "end_ms": 3360.0,
+                "start_ms": 3360.0,
+                "text": "HOARD"
+              },
+              {
+                "end_ms": 3920.0,
+                "start_ms": 3680.0,
+                "text": "WITH"
+              },
+              {
+                "end_ms": 4320.0,
+                "start_ms": 3920.0,
+                "text": "PLEASURE"
+              },
+              {
+                "end_ms": 4560.0,
+                "start_ms": 4320.0,
+                "text": "TO"
+              },
+              {
+                "end_ms": 5280.0,
+                "start_ms": 4560.0,
+                "text": "OURSELVES"
+              },
+              {
+                "end_ms": 6160.0,
+                "start_ms": 5600.0,
+                "text": "SLUICING"
+              },
+              {
+                "end_ms": 6320.0,
+                "start_ms": 6160.0,
+                "text": "OUR"
+              },
+              {
+                "end_ms": 6720.0,
+                "start_ms": 6320.0,
+                "text": "VEIN"
+              },
+              {
+                "end_ms": 6880.0,
+                "start_ms": 6720.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 7280.0,
+                "start_ms": 6880.0,
+                "text": "VIGOUR"
+              },
+              {
+                "end_ms": 7440.0,
+                "start_ms": 7280.0,
+                "text": "TO"
+              },
+              {
+                "end_ms": 8160.0,
+                "start_ms": 7440.0,
+                "text": "PERPETUATE"
+              },
+              {
+                "end_ms": 8320.0,
+                "start_ms": 8160.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 8960.0,
+                "start_ms": 8320.0,
+                "text": "STRAIN"
+              },
+              {
+                "end_ms": 9200.0,
+                "start_ms": 9040.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 9600.0,
+                "start_ms": 9200.0,
+                "text": "LIFE"
+              },
+              {
+                "end_ms": 9760.0,
+                "start_ms": 9600.0,
+                "text": "BY"
+              },
+              {
+                "end_ms": 10240.0,
+                "start_ms": 9760.0,
+                "text": "SPILTH"
+              },
+              {
+                "end_ms": 10400.0,
+                "start_ms": 10400.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 10880.0,
+                "start_ms": 10400.0,
+                "text": "LIFE"
+              },
+              {
+                "end_ms": 10880.0,
+                "start_ms": 10880.0,
+                "text": "WITHIN"
+              },
+              {
+                "end_ms": 11280.0,
+                "start_ms": 11200.0,
+                "text": "US"
+              },
+              {
+                "end_ms": 11760.0,
+                "start_ms": 11280.0,
+                "text": "STORED"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 87.331292,
+            "p95_ms": 93.330042,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 32,
+            "char_errors": 0,
+            "reference_chars": 139
+          },
+          {
+            "id": "251-118436-0013",
+            "text": "BY WHICH A SOUL IS DRAWN FROM ITS BODY AND ACROSS GULFS OF ECHOING SPACE RETURNED THE MAN ON THE MAT",
+            "words": [
+              {
+                "end_ms": 560.0,
+                "start_ms": 560.0,
+                "text": "BY"
+              },
+              {
+                "end_ms": 1120.0,
+                "start_ms": 640.0,
+                "text": "WHICH"
+              },
+              {
+                "end_ms": 1840.0,
+                "start_ms": 1760.0,
+                "text": "A"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 1840.0,
+                "text": "SOUL"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2400.0,
+                "text": "IS"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2400.0,
+                "text": "DRAWN"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2400.0,
+                "text": "FROM"
+              },
+              {
+                "end_ms": 3360.0,
+                "start_ms": 2400.0,
+                "text": "ITS"
+              },
+              {
+                "end_ms": 3360.0,
+                "start_ms": 3360.0,
+                "text": "BODY"
+              },
+              {
+                "end_ms": 3520.0,
+                "start_ms": 3360.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 4080.0,
+                "start_ms": 3520.0,
+                "text": "ACROSS"
+              },
+              {
+                "end_ms": 4640.0,
+                "start_ms": 4080.0,
+                "text": "GULFS"
+              },
+              {
+                "end_ms": 4640.0,
+                "start_ms": 4640.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 5120.0,
+                "start_ms": 4640.0,
+                "text": "ECHOING"
+              },
+              {
+                "end_ms": 5760.0,
+                "start_ms": 5120.0,
+                "text": "SPACE"
+              },
+              {
+                "end_ms": 6880.0,
+                "start_ms": 6480.0,
+                "text": "RETURNED"
+              },
+              {
+                "end_ms": 7040.0,
+                "start_ms": 6880.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 7360.0,
+                "start_ms": 7040.0,
+                "text": "MAN"
+              },
+              {
+                "end_ms": 7440.0,
+                "start_ms": 7360.0,
+                "text": "ON"
+              },
+              {
+                "end_ms": 7440.0,
+                "start_ms": 7440.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 8320.0,
+                "start_ms": 7440.0,
+                "text": "MAT"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 39.685583,
+            "p95_ms": 41.523208,
+            "runs": 7,
+            "alignment_issues": [
+              {
+                "word": 20,
+                "reason": "out_of_audio",
+                "end_ms": 8320.0,
+                "audio_ms": 8225.0
+              }
+            ],
+            "word_errors": 0,
+            "reference_words": 21,
+            "char_errors": 0,
+            "reference_chars": 80
+          },
+          {
+            "id": "8297-275156-0002",
+            "text": "WE HAVE BOTH SEEN THE SAME NEWSPAPER OF COURSE AND YOU HAVE BEEN THE FIRST TO CLEAR THE THING UP THAT'S IT ISN'T IT",
+            "words": [
+              {
+                "end_ms": 720.0,
+                "start_ms": 560.0,
+                "text": "WE"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 720.0,
+                "text": "HAVE"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1440.0,
+                "text": "BOTH"
+              },
+              {
+                "end_ms": 1840.0,
+                "start_ms": 1600.0,
+                "text": "SEEN"
+              },
+              {
+                "end_ms": 1920.0,
+                "start_ms": 1840.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 2320.0,
+                "start_ms": 1920.0,
+                "text": "SAME"
+              },
+              {
+                "end_ms": 2320.0,
+                "start_ms": 2320.0,
+                "text": "NEWSPAPER"
+              },
+              {
+                "end_ms": 2560.0,
+                "start_ms": 2400.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 3200.0,
+                "start_ms": 2560.0,
+                "text": "COURSE"
+              },
+              {
+                "end_ms": 3200.0,
+                "start_ms": 3200.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 3680.0,
+                "start_ms": 3200.0,
+                "text": "YOU"
+              },
+              {
+                "end_ms": 3840.0,
+                "start_ms": 3680.0,
+                "text": "HAVE"
+              },
+              {
+                "end_ms": 3920.0,
+                "start_ms": 3840.0,
+                "text": "BEEN"
+              },
+              {
+                "end_ms": 4000.0,
+                "start_ms": 4000.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 4000.0,
+                "start_ms": 4000.0,
+                "text": "FIRST"
+              },
+              {
+                "end_ms": 4480.0,
+                "start_ms": 4400.0,
+                "text": "TO"
+              },
+              {
+                "end_ms": 4720.0,
+                "start_ms": 4480.0,
+                "text": "CLEAR"
+              },
+              {
+                "end_ms": 5360.0,
+                "start_ms": 4720.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 5400.0,
+                "start_ms": 5380.0,
+                "text": "THING"
+              },
+              {
+                "end_ms": 5440.0,
+                "start_ms": 5420.0,
+                "text": "UP"
+              },
+              {
+                "end_ms": 7040.0,
+                "start_ms": 5440.0,
+                "text": "THAT'S"
+              },
+              {
+                "end_ms": 7040.0,
+                "start_ms": 7040.0,
+                "text": "IT"
+              },
+              {
+                "end_ms": 7360.0,
+                "start_ms": 7200.0,
+                "text": "ISN'T"
+              },
+              {
+                "end_ms": 8000.0,
+                "start_ms": 7360.0,
+                "text": "IT"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 62.124167,
+            "p95_ms": 71.19916599999999,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 24,
+            "char_errors": 0,
+            "reference_chars": 90
+          },
+          {
+            "id": "2803-161169-0011",
+            "text": "WHAT SHOULD WE HAVE DONE IF EVERYBODY HAD KEPT ON BURNING WOOD TO THIS DAY",
+            "words": [
+              {
+                "end_ms": 640.0,
+                "start_ms": 560.0,
+                "text": "WHAT"
+              },
+              {
+                "end_ms": 640.0,
+                "start_ms": 640.0,
+                "text": "SHOULD"
+              },
+              {
+                "end_ms": 880.0,
+                "start_ms": 880.0,
+                "text": "WE"
+              },
+              {
+                "end_ms": 1280.0,
+                "start_ms": 960.0,
+                "text": "HAVE"
+              },
+              {
+                "end_ms": 1760.0,
+                "start_ms": 1280.0,
+                "text": "DONE"
+              },
+              {
+                "end_ms": 2000.0,
+                "start_ms": 1840.0,
+                "text": "IF"
+              },
+              {
+                "end_ms": 2880.0,
+                "start_ms": 2080.0,
+                "text": "EVERYBODY"
+              },
+              {
+                "end_ms": 3600.0,
+                "start_ms": 2880.0,
+                "text": "HAD"
+              },
+              {
+                "end_ms": 4080.0,
+                "start_ms": 3600.0,
+                "text": "KEPT"
+              },
+              {
+                "end_ms": 4080.0,
+                "start_ms": 4080.0,
+                "text": "ON"
+              },
+              {
+                "end_ms": 4080.0,
+                "start_ms": 4080.0,
+                "text": "BURNING"
+              },
+              {
+                "end_ms": 4480.0,
+                "start_ms": 4080.0,
+                "text": "WOOD"
+              },
+              {
+                "end_ms": 4560.0,
+                "start_ms": 4480.0,
+                "text": "TO"
+              },
+              {
+                "end_ms": 4800.0,
+                "start_ms": 4560.0,
+                "text": "THIS"
+              },
+              {
+                "end_ms": 5360.0,
+                "start_ms": 4800.0,
+                "text": "DAY"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 51.131542,
+            "p95_ms": 52.822125,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 15,
+            "char_errors": 0,
+            "reference_chars": 60
+          },
+          {
+            "id": "3752-4944-0057",
+            "text": "THEY SHALL NOT FLOG THAT BOY HE SAID",
+            "words": [
+              {
+                "end_ms": 560.0,
+                "start_ms": 480.0,
+                "text": "THEY"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 560.0,
+                "text": "SHALL"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1440.0,
+                "text": "NOT"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1440.0,
+                "text": "FLOG"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1440.0,
+                "text": "THAT"
+              },
+              {
+                "end_ms": 1920.0,
+                "start_ms": 1760.0,
+                "text": "BOY"
+              },
+              {
+                "end_ms": 2480.0,
+                "start_ms": 2000.0,
+                "text": "HE"
+              },
+              {
+                "end_ms": 2480.0,
+                "start_ms": 2480.0,
+                "text": "SAID"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 33.769625,
+            "p95_ms": 39.697041000000006,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 8,
+            "char_errors": 0,
+            "reference_chars": 29
+          },
+          {
+            "id": "2412-153948-0005",
+            "text": "I WAS DELIGHTED WITH THE COUNTRY AND THE MANNER OF LIFE",
+            "words": [
+              {
+                "end_ms": 640.0,
+                "start_ms": 560.0,
+                "text": "I"
+              },
+              {
+                "end_ms": 800.0,
+                "start_ms": 640.0,
+                "text": "WAS"
+              },
+              {
+                "end_ms": 1280.0,
+                "start_ms": 800.0,
+                "text": "DELIGHTED"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1280.0,
+                "text": "WITH"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1440.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 1920.0,
+                "start_ms": 1440.0,
+                "text": "COUNTRY"
+              },
+              {
+                "end_ms": 2080.0,
+                "start_ms": 1920.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 2160.0,
+                "start_ms": 2080.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 2480.0,
+                "start_ms": 2160.0,
+                "text": "MANNER"
+              },
+              {
+                "end_ms": 2640.0,
+                "start_ms": 2480.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 3040.0,
+                "start_ms": 2640.0,
+                "text": "LIFE"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 35.778208,
+            "p95_ms": 40.131875,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 11,
+            "char_errors": 0,
+            "reference_chars": 45
+          },
+          {
+            "id": "1462-170142-0038",
+            "text": "HILDA SAT ON THE ARM OF IT AND PUT HER HANDS LIGHTLY ON HIS SHOULDERS",
+            "words": [
+              {
+                "end_ms": 1120.0,
+                "start_ms": 640.0,
+                "text": "HILDA"
+              },
+              {
+                "end_ms": 1120.0,
+                "start_ms": 1120.0,
+                "text": "SAT"
+              },
+              {
+                "end_ms": 1280.0,
+                "start_ms": 1120.0,
+                "text": "ON"
+              },
+              {
+                "end_ms": 1440.0,
+                "start_ms": 1280.0,
+                "text": "THE"
+              },
+              {
+                "end_ms": 1760.0,
+                "start_ms": 1440.0,
+                "text": "ARM"
+              },
+              {
+                "end_ms": 2000.0,
+                "start_ms": 1760.0,
+                "text": "OF"
+              },
+              {
+                "end_ms": 2080.0,
+                "start_ms": 2000.0,
+                "text": "IT"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2240.0,
+                "text": "AND"
+              },
+              {
+                "end_ms": 2640.0,
+                "start_ms": 2400.0,
+                "text": "PUT"
+              },
+              {
+                "end_ms": 2800.0,
+                "start_ms": 2640.0,
+                "text": "HER"
+              },
+              {
+                "end_ms": 3120.0,
+                "start_ms": 2800.0,
+                "text": "HANDS"
+              },
+              {
+                "end_ms": 3440.0,
+                "start_ms": 3120.0,
+                "text": "LIGHTLY"
+              },
+              {
+                "end_ms": 3680.0,
+                "start_ms": 3440.0,
+                "text": "ON"
+              },
+              {
+                "end_ms": 3760.0,
+                "start_ms": 3680.0,
+                "text": "HIS"
+              },
+              {
+                "end_ms": 4320.0,
+                "start_ms": 3840.0,
+                "text": "SHOULDERS"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 46.925542,
+            "p95_ms": 49.303292,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 15,
+            "char_errors": 0,
+            "reference_chars": 55
+          },
+          {
+            "id": "5694-64038-0001",
+            "text": "YANK SAYS WHAT YOU DOING JOHNNY",
+            "words": [
+              {
+                "end_ms": 880.0,
+                "start_ms": 640.0,
+                "text": "YANK"
+              },
+              {
+                "end_ms": 1280.0,
+                "start_ms": 880.0,
+                "text": "SAYS"
+              },
+              {
+                "end_ms": 2320.0,
+                "start_ms": 2240.0,
+                "text": "WHAT"
+              },
+              {
+                "end_ms": 2400.0,
+                "start_ms": 2320.0,
+                "text": "YOU"
+              },
+              {
+                "end_ms": 2800.0,
+                "start_ms": 2400.0,
+                "text": "DOING"
+              },
+              {
+                "end_ms": 3280.0,
+                "start_ms": 2800.0,
+                "text": "JOHNNY"
+              }
+            ],
+            "deterministic": true,
+            "median_ms": 24.668959,
+            "p95_ms": 26.325208,
+            "runs": 7,
+            "alignment_issues": [],
+            "word_errors": 0,
+            "reference_words": 6,
+            "char_errors": 0,
+            "reference_chars": 26
+          }
+        ],
+        "task": "align",
+        "role": "candidate",
+        "median_suite_ms": 1052.4518739999999,
+        "p95_suite_ms": 1068.15175,
+        "median_request_suite_ms": 1057.1785409956647,
+        "round_totals_ms": {
+          "0": 1048.1498729999998,
+          "1": 1057.762459,
+          "2": 1060.3542060000002,
+          "3": 1040.633416,
+          "4": 1052.4518739999999,
+          "5": 1068.15175,
+          "6": 1039.9027099999998
+        },
+        "deterministic": true,
+        "audio_duration_s": 135.26500000000001,
+        "word_errors": 0,
+        "reference_words": 372,
+        "char_errors": 0,
+        "reference_chars": 1542,
+        "rtf": 0.007780666646952278,
+        "realtime_x": 128.52369152606025,
+        "wer": 0.0,
+        "cer": 0.0,
+        "alignment_issue_count": 2,
+        "timing_stable": true
+      },
+      "comparison": {
+        "passed": false,
+        "latency_ratio": 0.22677711198218697,
+        "latency_reduction": 0.773222888017813,
+        "ratio_bootstrap_95_ci": [
+          0.22036686130185026,
+          0.22860575244119774
+        ],
+        "alignment_mean_delta_ms": 0.0,
+        "alignment_max_delta_ms": 0.0,
+        "failures": [
+          "CPU alignment requires boundary review before acceptance: 5895-34622-0004",
+          "candidate alignment contains invalid boundaries: 5895-34622-0004",
+          "CPU alignment requires boundary review before acceptance: 251-118436-0013",
+          "candidate alignment contains invalid boundaries: 251-118436-0013"
+        ]
+      }
+    }
+  },
+  "runner_sha256": "37e146937b1e7b8139ba0ea21f77c170d232f909a88d7ad6aa5f21ec58d268a1",
+  "models": {
+    "asr": {
+      "model.safetensors": {
+        "sha256": "79d6cbd4c98c7bbffe9db2edac07f56cd6637d0d5944b27f6c2b8353840323ea",
+        "bytes": 1876091704
+      },
+      "config.json": {
+        "sha256": "76d3ae4601ce939830b2517f4a6cadb86cc51316c3900af6b020b051c21a478c",
+        "bytes": 6193
+      },
+      "vocab.json": {
+        "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+        "bytes": 2776833
+      },
+      "merges.txt": {
+        "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+        "bytes": 1671853
+      },
+      "tokenizer.json": {
+        "sha256": "47737715ec4d1b7194dab061db65f1ab1e2f1d664c489b0c72e7256ff033baf7",
+        "bytes": 11418160
+      },
+      "generation_config.json": {
+        "sha256": "1da527824d81e07118facff437e03f2e24a23311e3bdeb2368973fe77e5f275c",
+        "bytes": 142
+      }
+    },
+    "align": {
+      "model.safetensors": {
+        "sha256": "47831d0e82f96b20e9034dba01a075ee06436654719f6a68289e49f1b65ce0e7",
+        "bytes": 1835544544
+      },
+      "config.json": {
+        "sha256": "d616c65d46c4b90bdc651b0a0963ea932732241140f337f9bb6b0335a9c8ef09",
+        "bytes": 5982
+      },
+      "vocab.json": {
+        "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+        "bytes": 2776833
+      },
+      "merges.txt": {
+        "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+        "bytes": 1671853
+      },
+      "tokenizer_config.json": {
+        "sha256": "3ab80063f8511deb9566e6ad438d17b7a6277fcffd52d92854112f19d36bd81c",
+        "bytes": 12666
+      },
+      "generation_config.json": {
+        "sha256": "948d089b23bca1d214e768d59c4438365665f52ec6d33678f4062206b3fbbb8c",
+        "bytes": 115
+      }
+    }
+  }
+}

@@ -1,0 +1,109 @@
+{
+  "end_to_end_goal_verified": false,
+  "reports": {
+    "align-fp16": {
+      "scope": "single_audio_encoder_only",
+      "task": "align",
+      "precision": "fp16",
+      "finite_and_shape_checks_passed": true,
+      "end_to_end_goal_verified": false,
+      "max_abs_error": 0.0016716234385967255,
+      "relative_l2": 0.0002550014510789944,
+      "cosine": 0.9999999677954464,
+      "reference": {
+        "audio": "/Users/lizhuo/owork/q-asr/qwen-asr-metal/bench/data/5338-284437-0008.wav",
+        "cpu_encoder_ms": 94.380417,
+        "frames": 925,
+        "hidden": 1024,
+        "model": "/Users/lizhuo/owork/q-asr/qwen3-aligner-0.6b",
+        "tokens": 121
+      },
+      "gpu": {
+        "gpu_encoder_ms": 18.823708,
+        "host_encoder_ms": 43.279,
+        "warmups": 2,
+        "tokens": 121,
+        "hidden": 1024
+      },
+      "note": "CPU features supplied to isolate encoder; quality and 30% end-to-end speedup are not certified."
+    },
+    "align-int8": {
+      "scope": "single_audio_encoder_only",
+      "task": "align",
+      "precision": "int8",
+      "finite_and_shape_checks_passed": true,
+      "end_to_end_goal_verified": false,
+      "max_abs_error": 0.041969239711761475,
+      "relative_l2": 0.007651885101978674,
+      "cosine": 0.9999708981303125,
+      "reference": {
+        "audio": "/Users/lizhuo/owork/q-asr/qwen-asr-metal/bench/data/5338-284437-0008.wav",
+        "cpu_encoder_ms": 91.25274999999999,
+        "frames": 925,
+        "hidden": 1024,
+        "model": "/Users/lizhuo/owork/q-asr/qwen3-aligner-0.6b",
+        "tokens": 121
+      },
+      "gpu": {
+        "gpu_encoder_ms": 17.546125,
+        "host_encoder_ms": 39.890458,
+        "warmups": 2,
+        "tokens": 121,
+        "hidden": 1024
+      },
+      "note": "CPU features supplied to isolate encoder; quality and 30% end-to-end speedup are not certified."
+    },
+    "asr-int8": {
+      "scope": "single_audio_encoder_only",
+      "task": "asr",
+      "precision": "int8",
+      "finite_and_shape_checks_passed": true,
+      "end_to_end_goal_verified": false,
+      "max_abs_error": 0.005437139421701431,
+      "relative_l2": 0.027693797921877282,
+      "cosine": 0.9996164707115287,
+      "reference": {
+        "audio": "/Users/lizhuo/owork/q-asr/qwen-asr-metal/bench/data/5338-284437-0008.wav",
+        "cpu_encoder_ms": 63.68,
+        "frames": 925,
+        "hidden": 1024,
+        "model": "/Users/lizhuo/owork/q-asr/qwen3-asr-0.6b",
+        "tokens": 121
+      },
+      "gpu": {
+        "gpu_encoder_ms": 13.93475,
+        "host_encoder_ms": 33.845833,
+        "warmups": 2,
+        "tokens": 121,
+        "hidden": 1024
+      },
+      "note": "CPU features supplied to isolate encoder; quality and 30% end-to-end speedup are not certified."
+    },
+    "asr-fp16": {
+      "scope": "single_audio_encoder_only",
+      "task": "asr",
+      "precision": "fp16",
+      "finite_and_shape_checks_passed": true,
+      "end_to_end_goal_verified": false,
+      "max_abs_error": 0.00012881308794021606,
+      "relative_l2": 0.0005820444252429995,
+      "cosine": 0.9999998308497307,
+      "reference": {
+        "audio": "/Users/lizhuo/owork/q-asr/qwen-asr-metal/bench/data/5338-284437-0008.wav",
+        "cpu_encoder_ms": 65.097084,
+        "frames": 925,
+        "hidden": 1024,
+        "model": "/Users/lizhuo/owork/q-asr/qwen3-asr-0.6b",
+        "tokens": 121
+      },
+      "gpu": {
+        "gpu_encoder_ms": 14.693625,
+        "host_encoder_ms": 35.769666,
+        "warmups": 2,
+        "tokens": 121,
+        "hidden": 1024
+      },
+      "note": "CPU features supplied to isolate encoder; quality and 30% end-to-end speedup are not certified."
+    }
+  }
+}

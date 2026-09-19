@@ -1,0 +1,38 @@
+[workspace]
+
+[package]
+name = "qwen-asr-metal-bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+gpu = []
+
+[[bin]]
+name = "qwen-asr-cpu-reference"
+path = "src/cpu_reference.rs"
+
+[[bin]]
+name = "qwen-asr-encoder-reference"
+path = "src/encoder_reference.rs"
+
+[dependencies]
+qwen-asr = { path = "../crates/qwen-asr" }
+serde_json = "1"
+base64 = "0.22"
+
+[[bin]]
+name = "qwen-asr-decoder-reference"
+path = "src/decoder_reference.rs"
+
+[[bin]]
+name = "qwen-asr-gpu"
+path = "src/gpu_candidate.rs"
+required-features = ["gpu"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"

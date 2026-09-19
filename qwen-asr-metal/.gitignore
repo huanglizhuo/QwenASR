@@ -1,0 +1,12 @@
+/target/
+/bench/data/
+/bench/runs/
+/build/
+/models/
+__pycache__/
+*.pyc
+
+bench/podbench/
+server/assets/*.onnx
+server/target/
+bench/build/

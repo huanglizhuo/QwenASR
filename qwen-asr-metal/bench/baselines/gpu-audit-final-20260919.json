@@ -1,0 +1,25 @@
+{
+  "scope": "latest_native_gpu_execution_audit",
+  "source_benchmark": "gpu-hybrid-clean-20260919",
+  "binary_sha256": "51fff0f81c9d14acef39e01172dbab17821c0319b82de351d3a03b5e28c2c570",
+  "tasks": {
+    "asr": {
+      "complete_inferences": 4,
+      "target_compute_intervals": 146,
+      "target_compute_duration_ms": 1064.98787,
+      "matches_clean_benchmark_output": true,
+      "profiling_time_not_used_for_acceptance": true,
+      "time_limit_seconds": 8,
+      "shader_timeline_enabled": false
+    },
+    "align": {
+      "complete_inferences": 3,
+      "target_compute_intervals": 4,
+      "target_compute_duration_ms": 124.071999,
+      "matches_clean_benchmark_output": true,
+      "profiling_time_not_used_for_acceptance": true,
+      "time_limit_seconds": 8,
+      "shader_timeline_enabled": false
+    }
+  }
+}

@@ -1,0 +1,309 @@
+{
+  "end_to_end_goal_verified": false,
+  "experiments": [
+    {
+      "name": "gpu-int8-initial-20260919",
+      "status": "failed",
+      "runs": 3,
+      "binary_sha256": {
+        "baseline": "9c516b13da8f2ecee30c9e34c7dd6afb3e4e4ecf9e9b70d220fece93c4b38f68",
+        "candidate": "2c1df3ee0df56c135bcb086e26f473118265bca9b689bf20c159709362775836"
+      },
+      "tasks": {
+        "asr": {
+          "comparison": {
+            "passed": false,
+            "latency_ratio": 0.8625506076775513,
+            "latency_reduction": 0.13744939232244868,
+            "ratio_bootstrap_95_ci": [
+              0.8034364539175494,
+              0.8693434317976906
+            ],
+            "alignment_mean_delta_ms": null,
+            "alignment_max_delta_ms": null,
+            "failures": [
+              "median suite latency is above 70% of CPU",
+              "host-observed request latency did not improve by 30%",
+              "recognition accuracy regressed: 8842-304647-0010",
+              "recognition accuracy regressed: 251-118436-0013"
+            ]
+          },
+          "baseline": {
+            "median_suite_ms": 6551.284874999999,
+            "p95_suite_ms": 7076.854334,
+            "wer": 0.010752688172043012,
+            "cer": 0.0038910505836575876,
+            "deterministic": true
+          },
+          "candidate": {
+            "median_suite_ms": 5650.8147500000005,
+            "p95_suite_ms": 5685.802751,
+            "wer": 0.016129032258064516,
+            "cer": 0.005188067444876783,
+            "deterministic": true
+          }
+        },
+        "align": {
+          "comparison": {
+            "passed": false,
+            "latency_ratio": 0.278849678064425,
+            "latency_reduction": 0.721150321935575,
+            "ratio_bootstrap_95_ci": [
+              0.27309865347292284,
+              0.278849678064425
+            ],
+            "alignment_mean_delta_ms": 1.3978494623655915,
+            "alignment_max_delta_ms": 400.0,
+            "failures": [
+              "CPU alignment requires boundary review before acceptance: 5895-34622-0004",
+              "candidate alignment contains invalid boundaries: 5895-34622-0004",
+              "CPU alignment requires boundary review before acceptance: 251-118436-0013",
+              "candidate alignment contains invalid boundaries: 251-118436-0013",
+              "alignment timestamps differ from CPU (strict 0 ms regression budget)"
+            ]
+          },
+          "baseline": {
+            "median_suite_ms": 4777.799875,
+            "p95_suite_ms": 5027.43325,
+            "wer": 0.0,
+            "cer": 0.0,
+            "deterministic": true
+          },
+          "candidate": {
+            "median_suite_ms": 1332.287957,
+            "p95_suite_ms": 1372.9852510000003,
+            "wer": 0.0,
+            "cer": 0.0,
+            "deterministic": true
+          }
+        }
+      }
+    },
+    {
+      "name": "gpu-fp16-pooled-20260919",
+      "status": "failed",
+      "runs": 3,
+      "binary_sha256": {
+        "baseline": "9c516b13da8f2ecee30c9e34c7dd6afb3e4e4ecf9e9b70d220fece93c4b38f68",
+        "candidate": "15b0ceedec5edd4ec84f92ce4bac74225517e5fe1ef42b01fda1d0e91367ddf1"
+      },
+      "tasks": {
+        "asr": {
+          "comparison": {
+            "passed": false,
+            "latency_ratio": 0.9480368539523074,
+            "latency_reduction": 0.05196314604769259,
+            "ratio_bootstrap_95_ci": [
+              0.9163283781071306,
+              0.9499999862844387
+            ],
+            "alignment_mean_delta_ms": null,
+            "alignment_max_delta_ms": null,
+            "failures": [
+              "median suite latency is above 70% of CPU",
+              "host-observed request latency did not improve by 30%",
+              "recognition accuracy regressed: 251-118436-0013"
+            ]
+          },
+          "baseline": {
+            "median_suite_ms": 6608.3550000000005,
+            "p95_suite_ms": 7572.400626,
+            "wer": 0.010752688172043012,
+            "cer": 0.0038910505836575876,
+            "deterministic": true
+          },
+          "candidate": {
+            "median_suite_ms": 6264.964084000001,
+            "p95_suite_ms": 6938.805584000001,
+            "wer": 0.013440860215053764,
+            "cer": 0.004539559014267186,
+            "deterministic": true
+          }
+        },
+        "align": {
+          "comparison": {
+            "passed": false,
+            "latency_ratio": 0.21991907419939655,
+            "latency_reduction": 0.7800809258006034,
+            "ratio_bootstrap_95_ci": [
+              0.204701556031752,
+              0.22664772737274824
+            ],
+            "alignment_mean_delta_ms": 0.0,
+            "alignment_max_delta_ms": 0.0,
+            "failures": [
+              "CPU alignment requires boundary review before acceptance: 5895-34622-0004",
+              "candidate alignment contains invalid boundaries: 5895-34622-0004",
+              "CPU alignment requires boundary review before acceptance: 251-118436-0013",
+              "candidate alignment contains invalid boundaries: 251-118436-0013"
+            ]
+          },
+          "baseline": {
+            "median_suite_ms": 5940.904834,
+            "p95_suite_ms": 6318.8493339999995,
+            "wer": 0.0,
+            "cer": 0.0,
+            "deterministic": true
+          },
+          "candidate": {
+            "median_suite_ms": 1306.5182909999996,
+            "p95_suite_ms": 1341.061334,
+            "wer": 0.0,
+            "cer": 0.0,
+            "deterministic": true
+          }
+        }
+      }
+    },
+    {
+      "name": "gpu-hybrid-initial-20260919",
+      "status": "failed",
+      "runs": 3,
+      "binary_sha256": {
+        "baseline": "9c516b13da8f2ecee30c9e34c7dd6afb3e4e4ecf9e9b70d220fece93c4b38f68",
+        "candidate": "f2a411db49fcc229136d66af3aa77d585ed3e5f8ea863c2e7f875dc254aae19c"
+      },
+      "tasks": {
+        "asr": {
+          "comparison": {
+            "passed": false,
+            "latency_ratio": 0.7071745882837263,
+            "latency_reduction": 0.29282541171627374,
+            "ratio_bootstrap_95_ci": [
+              0.6004254111669559,
+              0.7184201153715428
+            ],
+            "alignment_mean_delta_ms": null,
+            "alignment_max_delta_ms": null,
+            "failures": [
+              "median suite latency is above 70% of CPU",
+              "host-observed request latency did not improve by 30%"
+            ]
+          },
+          "baseline": {
+            "median_suite_ms": 7039.571749999999,
+            "p95_suite_ms": 8639.506166,
+            "wer": 0.010752688172043012,
+            "cer": 0.0038910505836575876,
+            "deterministic": true
+          },
+          "candidate": {
+            "median_suite_ms": 4978.206254,
+            "p95_suite_ms": 5187.3790420000005,
+            "wer": 0.010752688172043012,
+            "cer": 0.0038910505836575876,
+            "deterministic": true
+          }
+        },
+        "align": {
+          "comparison": {
+            "passed": false,
+            "latency_ratio": 0.22411784642811888,
+            "latency_reduction": 0.7758821535718812,
+            "ratio_bootstrap_95_ci": [
+              0.2203341841714853,
+              0.22822762029193816
+            ],
+            "alignment_mean_delta_ms": 0.0,
+            "alignment_max_delta_ms": 0.0,
+            "failures": [
+              "CPU alignment requires boundary review before acceptance: 5895-34622-0004",
+              "candidate alignment contains invalid boundaries: 5895-34622-0004",
+              "CPU alignment requires boundary review before acceptance: 251-118436-0013",
+              "candidate alignment contains invalid boundaries: 251-118436-0013"
+            ]
+          },
+          "baseline": {
+            "median_suite_ms": 4789.5893750000005,
+            "p95_suite_ms": 4835.115418,
+            "wer": 0.0,
+            "cer": 0.0,
+            "deterministic": true
+          },
+          "candidate": {
+            "median_suite_ms": 1073.432456,
+            "p95_suite_ms": 1087.83846,
+            "wer": 0.0,
+            "cer": 0.0,
+            "deterministic": true
+          }
+        }
+      }
+    },
+    {
+      "name": "gpu-hybrid-fused-20260919",
+      "status": "failed",
+      "runs": 7,
+      "binary_sha256": {
+        "baseline": "9c516b13da8f2ecee30c9e34c7dd6afb3e4e4ecf9e9b70d220fece93c4b38f68",
+        "candidate": "f1141fb885d2f96d1adfdd6f026b10f0485c01313cb7ad24745258a1218b0c7a"
+      },
+      "tasks": {
+        "asr": {
+          "comparison": {
+            "passed": false,
+            "latency_ratio": 0.7789073633050392,
+            "latency_reduction": 0.22109263669496082,
+            "ratio_bootstrap_95_ci": [
+              0.7612367816435046,
+              0.7816700839157009
+            ],
+            "alignment_mean_delta_ms": null,
+            "alignment_max_delta_ms": null,
+            "failures": [
+              "median suite latency is above 70% of CPU",
+              "host-observed request latency did not improve by 30%"
+            ]
+          },
+          "baseline": {
+            "median_suite_ms": 5981.243417999999,
+            "p95_suite_ms": 6282.392708,
+            "wer": 0.010752688172043012,
+            "cer": 0.0038910505836575876,
+            "deterministic": true
+          },
+          "candidate": {
+            "median_suite_ms": 4658.83454,
+            "p95_suite_ms": 4692.6683299999995,
+            "wer": 0.010752688172043012,
+            "cer": 0.0038910505836575876,
+            "deterministic": true
+          }
+        },
+        "align": {
+          "comparison": {
+            "passed": false,
+            "latency_ratio": 0.2239078162856029,
+            "latency_reduction": 0.776092183714397,
+            "ratio_bootstrap_95_ci": [
+              0.22127986048094367,
+              0.22526550671603385
+            ],
+            "alignment_mean_delta_ms": 0.0,
+            "alignment_max_delta_ms": 0.0,
+            "failures": [
+              "CPU alignment requires boundary review before acceptance: 5895-34622-0004",
+              "candidate alignment contains invalid boundaries: 5895-34622-0004",
+              "CPU alignment requires boundary review before acceptance: 251-118436-0013",
+              "candidate alignment contains invalid boundaries: 251-118436-0013"
+            ]
+          },
+          "baseline": {
+            "median_suite_ms": 4720.8427090000005,
+            "p95_suite_ms": 4850.6258339999995,
+            "wer": 0.0,
+            "cer": 0.0,
+            "deterministic": true
+          },
+          "candidate": {
+            "median_suite_ms": 1057.033582,
+            "p95_suite_ms": 1075.588664,
+            "wer": 0.0,
+            "cer": 0.0,
+            "deterministic": true
+          }
+        }
+      }
+    }
+  ]
+}

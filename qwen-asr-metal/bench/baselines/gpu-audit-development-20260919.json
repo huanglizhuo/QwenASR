@@ -1,0 +1,29 @@
+{
+  "scope": "development_gpu_execution_and_stage_counter_audit",
+  "acceptance_timing": false,
+  "metal_trace": {
+    "successful_inferences": 4,
+    "target_compute_intervals": 152,
+    "target_compute_duration_ms": 1195.511706,
+    "shader_timeline_enabled": false,
+    "end_reason": "15 second time limit; target was awaiting additional input"
+  },
+  "stage_probe": {
+    "iterations_after_warmup": 3,
+    "uses_one_encoder_per_kernel": true,
+    "kernel_tick_fractions": {
+      "causal_attention_f32": 0.19341185362621952,
+      "quantize_activation_i8": 0.18846303020927072,
+      "argmax_f32": 0.16049848451800125,
+      "gemv_w8a8": 0.15649925458985844,
+      "norm_f32": 0.09744200073374476,
+      "gate_up_w8a8": 0.09233303274747014,
+      "qkv_w8a8": 0.06341905014971619,
+      "head_norm_rope_f32": 0.022849588431197023,
+      "add_f32": 0.012965251094627863,
+      "copy_f32": 0.012118453899894103
+    },
+    "finding": "vocabulary argmax was serialized on one SIMD group; replaced with hierarchical reduction after this capture"
+  },
+  "privacy": "Only target-process aggregates exported. Raw Instruments metadata stays in ignored local build/audit."
+}

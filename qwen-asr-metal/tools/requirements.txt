@@ -1,0 +1,2 @@
+# Offline conversion and differential tests only. No production Python runtime.
+numpy>=1.24
