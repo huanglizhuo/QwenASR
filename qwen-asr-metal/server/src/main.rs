@@ -145,6 +145,7 @@ async fn transcriptions(app: Arc<App>, token: String, headers: HeaderMap, mut mu
     let mut audio: Option<Vec<u8>> = None;
     let mut audio_url: Option<String> = None;
     let mut format = "verbose_json".to_string();
+    let mut heartbeat = false;
     loop {
         let field = match multipart.next_field().await {
             Ok(Some(f)) => f,
@@ -166,6 +167,7 @@ async fn transcriptions(app: Arc<App>, token: String, headers: HeaderMap, mut mu
             }
             "response_format" => if let Some(v) = field.text().await.ok() { format = v.trim().to_ascii_lowercase(); },
             "url" => if let Some(v) = field.text().await.ok() { if !v.trim().is_empty() { audio_url = Some(v.trim().to_string()); } },
+            "heartbeat" => if field.text().await.unwrap_or_default().trim() == "1" { heartbeat = true; },
             // `model`, `language`, `timestamp_granularities[]`, `prompt`,
             // `temperature` are accepted; only model/language are echoed.
             _ => {}
@@ -186,6 +188,42 @@ async fn transcriptions(app: Arc<App>, token: String, headers: HeaderMap, mut mu
         Ok(Ok(p)) => p,
         _ => return (StatusCode::TOO_MANY_REQUESTS, Json(json!({"error":{"message":"server busy, retry later","type":"rate_limit_error"}}))).into_response(),
     };
+    if heartbeat {
+        // SSE-shaped response: ':' comment heartbeats every 10s keep the
+        // origin connection alive under Cloudflare's ~100s first-byte limit;
+        // the payload arrives as one `data: {json}` line at the end.
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(8);
+        let result_tx = tx.clone();
+        let (done_tx, mut done_rx) = tokio::sync::watch::channel(false);
+        let app2 = app.clone();
+        let fmt = format.clone();
+        tokio::spawn(async move {
+            let out = tokio::time::timeout(std::time::Duration::from_secs(30 * 60), transcribe(&app2, &audio)).await;
+            let payload = match out {
+                Ok(Ok(v)) => render(v, &fmt),
+                Ok(Err(msg)) => ("application/json".into(), json!({"error":{"message":msg,"type":"server_error"}}).to_string()),
+                Err(_) => ("application/json".into(), json!({"error":{"message":"request timed out","type":"server_error"}}).to_string()),
+            };
+            let single = payload.1.replace('\n', " ");
+            let _ = result_tx.send(Ok(format!("event: done\ndata: {single}\n\n").into_bytes())).await;
+            let _ = done_tx.send(true);
+        });
+        let beat_tx = tx;
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
+                        if beat_tx.send(Ok(b": keepalive\n\n".to_vec())).await.is_err() { break; }
+                    }
+                    _ = done_rx.changed() => break,
+                }
+            }
+        });
+        use tokio_stream::wrappers::ReceiverStream;
+        let stream = ReceiverStream::new(rx);
+        return (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
+                axum::body::Body::from_stream(stream)).into_response();
+    }
     let result = tokio::time::timeout(std::time::Duration::from_secs(30 * 60), transcribe(&app, &audio)).await;
     match format.as_str() {
         "verbose_json" | "json" | "text" | "vtt" => {}
@@ -259,14 +297,18 @@ async fn download_checked(url: &str) -> Result<Vec<u8>, String> {
     Err("download: too many redirects".into())
 }
 
+fn render(out: Value, format: &str) -> (String, String) {
+    match format {
+        "text" => ("text/plain; charset=utf-8".into(), out["text"].as_str().unwrap_or("").to_string()),
+        "vtt" => ("text/vtt; charset=utf-8".into(), out["vtt"].as_str().unwrap_or("WEBVTT\n").to_string()),
+        "json" => ("application/json".into(), json!({"text": out["text"]}).to_string()),
+        _ => ("application/json".into(), out.to_string()),
+    }
+}
+
 fn respond(out: Value, format: &str) -> axum::response::Response {
-    let (ct, body) = match format {
-        "text" => ("text/plain; charset=utf-8", out["text"].as_str().unwrap_or("").to_string()),
-        "vtt" => ("text/vtt; charset=utf-8", out["vtt"].as_str().unwrap_or("WEBVTT\n").to_string()),
-        "json" => ("application/json", json!({"text": out["text"]}).to_string()),
-        _ => ("application/json", out.to_string()),
-    };
-    (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, ct)], body).into_response()
+    let (ct, body) = render(out, format);
+    (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, ct.as_str())], body).into_response()
 }
 
 struct Word { word: String, start: f64, end: f64 }
