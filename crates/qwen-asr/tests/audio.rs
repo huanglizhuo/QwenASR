@@ -130,3 +130,72 @@ fn test_compact_silence() {
         "Compacted audio should keep at least the tone regions"
     );
 }
+
+/// Serial reference: the original single-threaded resampler loop, verbatim.
+fn resample_reference(samples: &[f32], from_rate: i32, to_rate: i32) -> Vec<f32> {
+    fn bessel_i0(x: f64) -> f64 {
+        let (mut sum, mut term, xx) = (1.0, 1.0, x * x);
+        for k in 1..=20 {
+            term *= xx / (4.0 * k as f64 * k as f64);
+            sum += term;
+        }
+        sum
+    }
+    let n_frames = samples.len();
+    let new_n = (n_frames as i64 * to_rate as i64 / from_rate as i64) as usize;
+    let (sinc_half, kaiser_beta) = (16, 6.0f64);
+    let ratio = to_rate as f64 / from_rate as f64;
+    let cutoff = if ratio < 1.0 { ratio } else { 1.0 };
+    let inv_i0_beta = 1.0 / bessel_i0(kaiser_beta);
+    (0..new_n)
+        .map(|i| {
+            let src_pos = i as f64 / ratio;
+            let center = src_pos as i32;
+            let (mut acc, mut wsum) = (0.0f64, 0.0f64);
+            for j in (center - sinc_half + 1)..=(center + sinc_half) {
+                let d = j as f64 - src_pos;
+                let x = d * cutoff;
+                let s = if x.abs() < 1e-9 {
+                    1.0
+                } else {
+                    (std::f64::consts::PI * x).sin() / (std::f64::consts::PI * x)
+                };
+                let npos = d / sinc_half as f64;
+                let w = if npos <= -1.0 || npos >= 1.0 {
+                    0.0
+                } else {
+                    bessel_i0(kaiser_beta * (1.0 - npos * npos).sqrt()) * inv_i0_beta
+                };
+                let coeff = s * w * cutoff;
+                if j >= 0 && (j as usize) < n_frames {
+                    acc += samples[j as usize] as f64 * coeff;
+                }
+                wsum += coeff;
+            }
+            if wsum > 1e-9 {
+                (acc / wsum) as f32
+            } else {
+                0.0
+            }
+        })
+        .collect()
+}
+
+/// The parallel resampler path (long inputs) must be bit-identical to the
+/// original serial loop.
+#[test]
+fn test_resample_parallel_bit_identical() {
+    let n = 44_100 * 3; // 3 s @ 44.1 kHz -> 48k outputs, takes the parallel path
+    let x: Vec<f32> = (0..n)
+        .map(|i| ((i as f32) * 0.013).sin() * 0.5 + ((i as f32) * 0.0007).cos() * 0.25)
+        .collect();
+    for (from, to) in [(44_100, 16_000), (48_000, 16_000), (8_000, 16_000)] {
+        let got = audio::resample(&x, from, to);
+        let want = resample_reference(&x, from, to);
+        assert_eq!(got.len(), want.len());
+        assert!(
+            got.iter().zip(&want).all(|(a, b)| a.to_bits() == b.to_bits()),
+            "resample {from}->{to} diverged from the serial reference"
+        );
+    }
+}

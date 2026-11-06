@@ -21,6 +21,7 @@ This file collects the optimization experiment diaries.
 - [Speed Improvement Experiments — Round 12](#speed-improvement-experiments--round-12)
 - [Speed Improvement Experiments — Round 13 (multi-token greedy verifier)](#speed-improvement-experiments--round-13-multi-token-greedy-verifier)
 - [Speed Improvement Experiments — Round 14 (A-layer micro-opts + B1 offline speculative decode)](#speed-improvement-experiments--round-14-a-layer-micro-opts--b1-offline-speculative-decode)
+- [Speed Improvement Experiments — Round 15 (exact-only audit follow-up)](#speed-improvement-experiments--round-15-exact-only-audit-follow-up)
 - [Autoresearch Program Baseline Experiments](#autoresearch-program-baseline-experiments)
 - [Historical Commit Ledger (perf-opt-1 branch)](#historical-commit-ledger-perf-opt-1-branch)
 - [Opportunity Backlog](#opportunity-backlog)
@@ -7911,6 +7912,57 @@ Task ledger:
   numbers): speech transcripts have little exploitable token-level n-gram
   repetition. Note `QWEN_ASR_VERIFY` is shared with the streaming verifier
   whose default is the opposite; the two cannot be toggled independently.
+
+---
+
+## Speed Improvement Experiments — Round 15 (exact-only audit follow-up)
+
+Branch `r15-speedups`. Source: the 2026-11 read-only audit (CPU read-bandwidth
+probe ~200–240 GB/s at 8–12 threads vs the "115 GB/s" effective decode figure;
+decode fragile under background load; long-context single-token attention
+gated by E-core stragglers; wall-time costs outside the bench "Inference"
+metric). Scope: **only changes whose output is byte-identical by construction**
+— no quantization, no shortlist/early-stop/token-cap, no FP-reorder changes
+without the R12-B3 full-set gate.
+
+Method (every item):
+- Byte-identity: the 7-case set (`audio.wav` offline / -S30 / --stream;
+  long-2min offline / -S30; long-10min offline / -S30) must match the previous
+  kept binary exactly.
+- Speed: interleaved A/B (ABBA order, one discarded warm-up per binary/case),
+  previous kept binary = A. Phase timings from `--debug`.
+- Conditions: M5 Pro 5P/10E, battery power, `BTLEServer` pinning ~1 core
+  throughout. Calibration control (identical binaries, 14 runs, `audio.wav`
+  offline): wall −1.8%, inference −3.0%, decode −6.2% median delta — i.e.
+  the noise floor is ~±3% on inference and ~±6% on decode medians, so
+  decisions use the metric the item targets and repeat runs when close.
+
+### R15-1: bit-exact parallel resampler — KEPT
+
+- `Change`: `audio::resample` (Kaiser-windowed sinc, per-tap `sin` + 20-term
+  Bessel in f64, ~0.45 µs/output) computed every output on one thread:
+  ~176–202 ms for the 28.2 s 44.1 kHz bench sample. Round 3 A2 hid it behind
+  model load (then ~249 ms), but R12-H1 cut warm model load to ~74 ms, so ~100+
+  ms of resampling was back on the CLI critical path. Outputs are independent
+  functions of their index, so long inputs (≥ 32768 outputs) are now split into
+  4096-output chunks pulled from a shared stack by scoped threads (not the
+  global kernel pool — the CLI resamples on a side thread during model load and
+  the pool supports one dispatcher). Per-output code unchanged.
+- `Exactness`: new `test_resample_parallel_bit_identical` compares against the
+  verbatim serial loop for 44.1k/48k/8k → 16k (bit-for-bit). 7/7 transcripts
+  identical.
+- `Results`: `audio_load` 176 → 23 ms (now fully hidden behind model load).
+  A/B (8 runs): wall `audio.wav` offline 813.7 → 744.2 ms (−8.5%), -S30
+  831.9 → 756.7 (−9.0%), --stream 821.1 → 749.7 (−8.7%); repeat (14 runs)
+  877.9 → 816.9 (−6.9%) vs the identical-binary control's −1.8%. Inference
+  deltas (+0.8…+3.1%) sit inside the control's ±3% band; the inference code
+  path is untouched. 16 kHz inputs never call the resampler.
+- `Note`: a polyphase table version (160 phases × 32 taps) ran in 6.6 ms vs
+  202 ms but is not bit-identical (241/450560 samples differ by ≤ 7.5e-9 —
+  the per-output `i / ratio` rounding differs from exact rational phases); not
+  adopted because the parallel exact version is already hidden behind model
+  load in the CLI.
+- `Decision`: kept.
 
 ---
 
