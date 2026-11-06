@@ -59,15 +59,15 @@ fn extract_audio_from_video(path: &str) -> Option<Vec<f32>> {
         return None;
     }
 
-    let raw = &output.stdout;
-    if raw.len() % 2 != 0 {
+    let (pcm, remainder) = output.stdout.as_chunks::<2>();
+    if !remainder.is_empty() {
         eprintln!("Error: ffmpeg returned odd number of bytes");
         return None;
     }
 
-    let samples: Vec<f32> = raw
-        .chunks_exact(2)
-        .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
+    let samples: Vec<f32> = pcm
+        .iter()
+        .map(|&bytes| i16::from_le_bytes(bytes) as f32 / 32768.0)
         .collect();
     Some(samples)
 }
