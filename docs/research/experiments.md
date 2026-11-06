@@ -8074,6 +8074,45 @@ Method (every item):
   noise.
 - `Decision`: kept.
 
+### R15-6: overlap the forced aligner with ASR decode — Skipped (no exact form)
+
+- `Idea`: `transcribe_full` (`--srt/--vtt/--json` + `--aligner-dir`) runs
+  `forced_align` serially after all ASR segments (long-2min -S30: ~3.4 s of
+  aligner after ~2.9 s of ASR); aligner work is AMX encoder/prefill, ASR decode
+  is NEON, and R12-F2 showed AMX/NEON overlap is free.
+- `Why not done`: the global kernel pool supports one dispatcher, and the ASR
+  lockstep decode already drives it from the caller thread. A concurrent
+  aligner would have to run its GEMMs on the nt=1 (single `cblas_sgemm` call)
+  path instead of the pooled 128-column slices, which changes its float
+  summation grouping and therefore the timestamps — not byte-identical. The
+  remaining exact sub-idea (project only timestamp positions through the
+  5000-class head) saves ~3 ms of ~680 ms per segment (< 0.5%) and changes the
+  GEMM's M (bit risk) — not worth it. R15-2 already removed the per-segment
+  tokenizer re-parse (−3.2% on this path). Revisit only with a second
+  dispatcher-capable pool or an R12-B3-gated numerics change.
+
+### R15-7: longer idle spin for pool workers — Rejected
+
+- `Change tested`: idle workers spun only 512 `spin_loop` iterations (< 5 µs)
+  before parking on the condvar; a dispatch to parked workers measured ~25 µs
+  (10 threads) vs ~4 µs when they are still spinning. Replaced with a
+  wall-clock spin window (`QWEN_ASR_POOL_SPIN_US`, default 50 µs) checked every
+  64 iterations. Scheduling-only → byte-identical (verified).
+- `Microbenchmark` (dispatch of a 2^18-element pooled conversion after an idle
+  gap): gap ≤ window → 3.6–4.5 µs instead of 23–27 µs, as intended.
+- `End-to-end` (A = R15-5, 8 runs): 50 µs — `audio.wav` inference +2.5%,
+  4 s clip −0.7%, push streaming +0.5%, long-2min -S30 −0.1% (flat to worse);
+  200 µs — `audio.wav` +8.6%, 4 s clip +5.4%, push streaming +7.1%, -S30 +0.6%
+  (clearly worse; encoder and prefill phases both slower).
+- `Why`: faster wake-ups do not pay for 11 cores spinning through every serial
+  gap — on Apple Silicon the spinning cores draw from the clusters' shared
+  power/frequency budget while the thread doing the serial (and AMX) work runs
+  slower. Same lesson as E9 from the other side.
+- `Also dropped`: fusing the bf16→f32 conversion and the GEMM into one dispatch
+  (R11-B, bit-identical) — those two dispatches are back-to-back, so the second
+  already finds the workers spinning (~4 µs); ≈ 0.8 ms per prefill call.
+- `Decision`: rejected; code reverted.
+
 ---
 
 ## Autoresearch Program Baseline Experiments
