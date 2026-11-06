@@ -48,6 +48,9 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    # Match the release binaries even when a hosted VM reports a generic CPU.
+    env:
+      RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C target-cpu=apple-m1' || '-C target-cpu=x86-64-v3' }}
 
     steps:
       - name: Checkout code
@@ -64,13 +67,6 @@ jobs:
       - name: Install OpenBLAS (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libopenblas-dev
-
-      # Exercise the AVX2+FMA kernels (compile-time gated, same target-cpu as
-      # the released Linux binaries in build-binaries.yml). x86-64-v3 is not a
-      # valid target CPU on aarch64, so this is Linux-only.
-      - name: Set target-cpu (Linux)
-        if: runner.os == 'Linux'
-        run: echo "RUSTFLAGS=-C target-cpu=x86-64-v3" >> "$GITHUB_ENV"
 
       - name: Build (default features)
         run: cargo build --release
@@ -98,6 +94,9 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    # Match the release binaries even when a hosted VM reports a generic CPU.
+    env:
+      RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C target-cpu=apple-m1' || '-C target-cpu=x86-64-v3' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -111,10 +110,6 @@ jobs:
       - name: Install OpenBLAS (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libopenblas-dev
-
-      - name: Set target-cpu (Linux)
-        if: runner.os == 'Linux'
-        run: echo "RUSTFLAGS=-C target-cpu=x86-64-v3" >> "$GITHUB_ENV"
 
       - name: Report machine
         run: |
