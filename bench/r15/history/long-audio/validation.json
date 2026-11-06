@@ -1,0 +1,32 @@
+{
+  "default_release_workspace": {
+    "passed": 95,
+    "failed": 0,
+    "ignored": 3
+  },
+  "selected_no_default_release_suites": {
+    "passed": 61,
+    "failed": 0,
+    "ignored": 0
+  },
+  "python_harness": {
+    "passed": 6
+  },
+  "fmt": "passed",
+  "clippy_default_all_targets_warnings_denied": "passed",
+  "clippy_no_default_all_targets_warnings_denied": "passed",
+  "yield_frequency_red_green": "old behavior fails; restored fix passes",
+  "not_run": [
+    "idle-machine performance acceptance",
+    "Linux/x86 CI",
+    "2703-item WER"
+  ],
+  "final_main_comparison": {
+    "measured_pairs": 3,
+    "transcripts_identical": true,
+    "max_decode_regression_pct": 6,
+    "exit_code": 0,
+    "median_decode_delta_pct": -0.2671595088656664,
+    "classification": "loaded and noisy; not idle acceptance"
+  }
+}

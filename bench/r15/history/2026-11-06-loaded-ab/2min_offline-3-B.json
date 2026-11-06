@@ -1,0 +1,45 @@
+{
+  "cmd": [
+    "/Users/lizhuo/owork/q-asr/tmp/r15/bin/head",
+    "-d",
+    "/Users/lizhuo/owork/q-asr/qwen3-asr-0.6b",
+    "-i",
+    "/Users/lizhuo/owork/q-asr/bench/long/samples/long-2min.wav",
+    "-t",
+    "12",
+    "--debug"
+  ],
+  "before": {
+    "time": 1793969835.5531561,
+    "loadavg": [
+      11.9287109375,
+      7.2978515625,
+      6.13134765625
+    ],
+    "processes": "  PID  %CPU COMM\n48257 132.0 /Users/lizhuo/tools/flutter/bin/cache/dart-sdk/bin/dartaotruntime\n  444  95.5 /usr/sbin/BTLEServer\n46287  87.2 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)\n  169  44.6 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer\n47462  42.3 node (vitest 1)\n84433  19.8 /Applications/Brave Browser.app/Contents/MacOS/Brave Browser\n48265  19.0 /Users/lizhuo/owork/PodParrot/worker4pod/node_modules/@cloudflare/workerd-darwin-arm64/bin/workerd\n84447  15.8 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper.app/Contents/MacOS/Brave Browser Helper\n38432  12.2 /Applications/AeroSpace.app/Contents/MacOS/AeroSpace\n48204  10.8 /Users/lizhuo/tools/flutter/bin/cache/dart-sdk/bin/dartvm\n95573   8.0 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/156.0.8078.48/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)\n95024   6.5 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/156.0.8078.48/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)\n  139   5.8 /System/Library/CoreServices/launchservicesd\n94911   3.5 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (GPU).app/Contents/MacOS/Google Chrome Helper (GPU)\n  180   2.4 /usr/sbin/coreaudiod",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7209059)\t100%; finishing charge; 0:00 remaining present: true",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded"
+  },
+  "after": {
+    "time": 1793969841.065414,
+    "loadavg": [
+      12.73486328125,
+      7.54150390625,
+      6.22412109375
+    ],
+    "processes": "  PID  %CPU COMM\n48396 134.6 node (vitest)\n  444  96.6 /usr/sbin/BTLEServer\n48398  23.6 /Users/lizhuo/owork/PodParrot/worker4pod/node_modules/@esbuild/darwin-arm64/bin/esbuild\n  169  23.1 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer\n48402  17.1 /Users/lizhuo/owork/PodParrot/worker4pod/node_modules/@cloudflare/workerd-darwin-arm64/bin/workerd\n48400  16.7 /Users/lizhuo/owork/PodParrot/worker4pod/node_modules/@cloudflare/workerd-darwin-arm64/bin/workerd\n48401  16.7 /Users/lizhuo/owork/PodParrot/worker4pod/node_modules/@cloudflare/workerd-darwin-arm64/bin/workerd\n48404  16.6 /Users/lizhuo/owork/PodParrot/worker4pod/node_modules/@cloudflare/workerd-darwin-arm64/bin/workerd\n48403  16.4 /Users/lizhuo/owork/PodParrot/worker4pod/node_modules/@cloudflare/workerd-darwin-arm64/bin/workerd\n84447   9.2 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper.app/Contents/MacOS/Brave Browser Helper\n  181   6.5 /usr/sbin/mDNSResponder\n94911   3.9 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (GPU).app/Contents/MacOS/Google Chrome Helper (GPU)\n95024   3.7 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/156.0.8078.48/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)\n46287   3.4 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)\n95573   3.2 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/156.0.8078.48/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7209059)\t100%; finishing charge; 0:00 remaining present: true",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded"
+  },
+  "returncode": 0,
+  "stdout_sha256": "8f4be6e5e5ee19a61aac69c98e3d355275d670ae458b5c210e034d79f5a5d508",
+  "metrics": {
+    "infer": 5308.0,
+    "prefill": 1069.0,
+    "encoder": 898.0,
+    "dec_ms": 3322.0,
+    "dec_tok": 373,
+    "ms_tok": 8.906166219839141,
+    "wall": 5444.634375162423
+  }
+}

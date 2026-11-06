@@ -1,0 +1,16 @@
+{
+  "main_revision": "37c1e35b",
+  "main_binary_sha256": "2f5efa342bde2be7f1230cac18b915fa57239332371dea68a1b794b6f2da10dd",
+  "current_binary_sha256": "de15033ee6e7034f46264ac6fea7cec16789d7845e3950c6fdefa9e3298845e6",
+  "items": 2703,
+  "matching_ids_and_references": true,
+  "main_corpus_wer": 0.02759089739347818,
+  "candidate_corpus_wer": 0.02759089739347818,
+  "raw_hypothesis_mismatches": [
+    "1272-141231-0009"
+  ],
+  "normalized_hypothesis_mismatches": [],
+  "main_hypotheses_sha256": "048a3244d82c2c111f45a3c11b2b9247d2d9c124ee8e5a36f58a3ae682a63815",
+  "candidate_hypotheses_sha256": "42416d8e1e9ae2a42de25c256f038710d00a97f3e70a166b29b0278d4c81c796",
+  "digest_format": "SHA256 of UTF-8 JSON arrays [id,hypothesis], sorted by id, compact separators, newline after every row. The WER runner strips surrounding whitespace before recording hypotheses."
+}

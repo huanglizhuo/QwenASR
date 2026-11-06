@@ -1,0 +1,123 @@
+{
+  "version": "qwen-asr-bench-v1",
+  "label": "comprehensive-2026-11-06-short",
+  "binary": "tmp/r15/comprehensive/qwen-asr",
+  "git_rev": "ef62a79d",
+  "timestamp": "2026-11-06T15:31:35Z",
+  "file": "audio.wav",
+  "mode": "streaming",
+  "threads": 12,
+  "system": {
+    "os": "Darwin",
+    "os_release": "25.6.0",
+    "machine": "arm64",
+    "cpu_brand": "Apple M5 Pro",
+    "logical_cpus": 15,
+    "performance_cores": 5,
+    "efficiency_cores": 10,
+    "features": [
+      "NEON",
+      "DotProd",
+      "I8MM"
+    ]
+  },
+  "config": {
+    "segment_sec": 0,
+    "model_dir": "/Users/lizhuo/owork/q-asr/qwen3-asr-0.6b",
+    "run_isolation": "new_process_per_run",
+    "cache_state": "os_page_cache_uncontrolled"
+  },
+  "audio_duration_s": 28.16,
+  "transcript": "Shenyang, a city with its own small secrets. Since you are going there, I expect you to keep your eyes open. Some things are worth bringing",
+  "reference": "Shenyang, a city with its own small secrets. Since you are going there, I expect you to keep your eyes open. Some things are worth bringing back, and you know disappointing me is rarely a wise decision.",
+  "timing": {
+    "wall_ms": 641.95,
+    "total_ms": 534.0,
+    "encode_ms": 199.0,
+    "decode_ms": 320.0,
+    "tokens": 32,
+    "tokens_per_sec": 60.03,
+    "realtime_factor": 52.734,
+    "statistic": "median",
+    "inference_mean_ms": 537.6,
+    "inference_best_ms": 527.0,
+    "wall_mean_ms": 646.21,
+    "wall_best_ms": 635.4,
+    "peak_rss_median_kb": 3420696,
+    "peak_rss_max_kb": 3427472,
+    "runs": [
+      {
+        "run": 2,
+        "total_ms": 527.0,
+        "wall_ms": 635.4,
+        "peak_rss_kb": 3427472
+      },
+      {
+        "run": 8,
+        "total_ms": 530.0,
+        "wall_ms": 637.1,
+        "peak_rss_kb": 3418368
+      },
+      {
+        "run": 1,
+        "total_ms": 531.0,
+        "wall_ms": 638.1,
+        "peak_rss_kb": 3420720
+      },
+      {
+        "run": 6,
+        "total_ms": 532.0,
+        "wall_ms": 642.8,
+        "peak_rss_kb": 3420672
+      },
+      {
+        "run": 4,
+        "total_ms": 533.0,
+        "wall_ms": 645.7,
+        "peak_rss_kb": 3418768
+      },
+      {
+        "run": 7,
+        "total_ms": 535.0,
+        "wall_ms": 637.6,
+        "peak_rss_kb": 3422304
+      },
+      {
+        "run": 9,
+        "total_ms": 536.0,
+        "wall_ms": 641.1,
+        "peak_rss_kb": 3423856
+      },
+      {
+        "run": 5,
+        "total_ms": 538.0,
+        "wall_ms": 646.4,
+        "peak_rss_kb": 3420784
+      },
+      {
+        "run": 10,
+        "total_ms": 556.0,
+        "wall_ms": 671.1,
+        "peak_rss_kb": 3419120
+      },
+      {
+        "run": 3,
+        "total_ms": 558.0,
+        "wall_ms": 666.8,
+        "peak_rss_kb": 3419648
+      }
+    ]
+  },
+  "profile": {},
+  "accuracy": {
+    "wer": 0.2973,
+    "cer": 0.3119,
+    "levenshtein_words": 11,
+    "levenshtein_chars": 63,
+    "exact_match": false
+  },
+  "reported_audio_duration_s": 28.2,
+  "duration_source": "WAV frame count / sample rate; derived timing fields corrected after measurement",
+  "binary_sha256": "de15033ee6e7034f46264ac6fea7cec16789d7845e3950c6fdefa9e3298845e6",
+  "source_kind": "working_tree_snapshot"
+}

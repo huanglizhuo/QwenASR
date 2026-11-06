@@ -1,0 +1,40 @@
+{
+  "cmd": [
+    "/Users/lizhuo/owork/q-asr/tmp/r15/bin/head",
+    "-d",
+    "/Users/lizhuo/owork/q-asr/qwen3-asr-0.6b",
+    "-i",
+    "/Users/lizhuo/owork/q-asr/bench/long/samples/long-10min.wav",
+    "-t",
+    "12",
+    "--debug"
+  ],
+  "before": {
+    "time": 1793970037.501919,
+    "loadavg": [
+      15.48193359375,
+      11.02490234375,
+      7.94921875
+    ],
+    "processes": "  PID  %CPU COMM\n  444  99.0 /usr/sbin/BTLEServer\n  169  18.3 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer\n95573  13.2 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/156.0.8078.48/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)\n81235   6.8 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)\n  489   6.6 /Library/Input Methods/WeType.app/Contents/MacOS/WeType\n84447   4.7 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper.app/Contents/MacOS/Brave Browser Helper\n95024   4.5 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/156.0.8078.48/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)\n94911   3.7 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (GPU).app/Contents/MacOS/Google Chrome Helper (GPU)\n  180   3.5 /usr/sbin/coreaudiod\n31144   1.9 /Applications/cmux.app/Contents/MacOS/cmux\n22051   1.9 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)\n  487   1.7 /System/Library/CoreServices/WindowManager.app/Contents/MacOS/WindowManager\n94983   1.7 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT\n88344   1.2 /System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService\n  384   0.9 /System/Library/DriverExtensions/AppleCentauriAlpha.dext/AppleCentauriAlpha",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7209059)\t100%; finishing charge; 0:00 remaining present: true",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded"
+  },
+  "after": {
+    "time": 1793970047.5436192,
+    "loadavg": [
+      14.04931640625,
+      10.8603515625,
+      7.92626953125
+    ],
+    "processes": "  PID  %CPU COMM\n  444 100.0 /usr/sbin/BTLEServer\n  169  14.2 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer\n95573   8.0 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/156.0.8078.48/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)\n81235   6.8 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)\n84447   4.4 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper.app/Contents/MacOS/Brave Browser Helper\n94911   3.2 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (GPU).app/Contents/MacOS/Google Chrome Helper (GPU)\n95024   3.1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/156.0.8078.48/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)\n95574   2.7 /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex\n  180   2.6 /usr/sbin/coreaudiod\n  489   2.4 /Library/Input Methods/WeType.app/Contents/MacOS/WeType\n22051   1.6 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)\n88344   1.3 /System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService\n94983   1.3 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT\n  384   1.0 /System/Library/DriverExtensions/AppleCentauriAlpha.dext/AppleCentauriAlpha\n10765   0.7 /Users/lizhuo/.local/bin/codebase-memory-mcp",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7209059)\t100%; finishing charge; 0:00 remaining present: true",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded"
+  },
+  "returncode": -15,
+  "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "metrics": {
+    "encoder": 4289.0,
+    "wall": 9966.530957724899
+  }
+}

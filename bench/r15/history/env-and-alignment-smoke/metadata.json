@@ -1,0 +1,30 @@
+{
+  "platform": "macOS-26.7-arm64-arm-64bit",
+  "model": "/Users/lizhuo/owork/q-asr/qwen3-asr-0.6b",
+  "cases": [
+    "wav_offline",
+    "srt_2min"
+  ],
+  "fixtures": "/Users/lizhuo/owork/q-asr/bench/r15/fixtures",
+  "aligner": "/Users/lizhuo/owork/q-asr/qwen3-aligner-0.6b",
+  "binaries": {
+    "A": "/Users/lizhuo/owork/q-asr/tmp/r15/bin/head",
+    "B": "/Users/lizhuo/owork/q-asr/tmp/r15/bin/head"
+  },
+  "binary_sha256": {
+    "A": "dbe12044dd76d2825beb46574a87e407810c4a2cfc987fb8601b825c213ccd11",
+    "B": "dbe12044dd76d2825beb46574a87e407810c4a2cfc987fb8601b825c213ccd11"
+  },
+  "threads": 12,
+  "runs": 1,
+  "overrides": {
+    "common": [],
+    "A": [
+      "QWEN_ASR_DECODE_THREADS=12"
+    ],
+    "B": [
+      "QWEN_ASR_DECODE_THREADS=10"
+    ]
+  },
+  "git_head": "ef62a79d4a46e4847ca1041803f1fdfd678d1b6f"
+}

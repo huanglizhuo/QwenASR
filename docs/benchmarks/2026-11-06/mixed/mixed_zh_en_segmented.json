@@ -1,0 +1,81 @@
+{
+  "version": "qwen-asr-bench-v1",
+  "label": "comprehensive-2026-11-06-mixed",
+  "binary": "tmp/r15/comprehensive/qwen-asr",
+  "git_rev": "ef62a79d",
+  "timestamp": "2026-11-06T15:31:57Z",
+  "file": "mixed_zh_en.wav",
+  "mode": "segmented",
+  "threads": 12,
+  "system": {
+    "os": "Darwin",
+    "os_release": "25.6.0",
+    "machine": "arm64",
+    "cpu_brand": "Apple M5 Pro",
+    "logical_cpus": 15,
+    "performance_cores": 5,
+    "efficiency_cores": 10,
+    "features": [
+      "NEON",
+      "DotProd",
+      "I8MM"
+    ]
+  },
+  "config": {
+    "segment_sec": 30,
+    "model_dir": "/Users/lizhuo/owork/q-asr/qwen3-asr-0.6b",
+    "run_isolation": "new_process_per_run",
+    "cache_state": "os_page_cache_uncontrolled"
+  },
+  "audio_duration_s": 37.1881875,
+  "transcript": "Today, the weather is very good. Let's go out and walk. The city. This restaurant's food is really good. I expect you to keep your. I expect you to keep your. I expect you to keep your. I expect you to keep your. I expect you to keep your. I expect you to keep your. I expect you to keep your. I expect you to keep your. I expect you to keep your.Bringing back, and you know, disappointment.谢谢你的帮助，我非常感激。 ",
+  "reference": "",
+  "timing": {
+    "wall_ms": 1334.0,
+    "total_ms": 1226.0,
+    "encode_ms": 652.0,
+    "decode_ms": 997.0,
+    "tokens": 107,
+    "tokens_per_sec": 87.31,
+    "realtime_factor": 30.333,
+    "statistic": "median",
+    "inference_mean_ms": 1233.333,
+    "inference_best_ms": 1205.0,
+    "wall_mean_ms": 1342.3,
+    "wall_best_ms": 1314.3,
+    "peak_rss_median_kb": 4391344,
+    "peak_rss_max_kb": 4395488,
+    "runs": [
+      {
+        "run": 1,
+        "total_ms": 1205.0,
+        "wall_ms": 1314.3,
+        "peak_rss_kb": 4387632
+      },
+      {
+        "run": 2,
+        "total_ms": 1226.0,
+        "wall_ms": 1334.0,
+        "peak_rss_kb": 4395488
+      },
+      {
+        "run": 3,
+        "total_ms": 1269.0,
+        "wall_ms": 1378.6,
+        "peak_rss_kb": 4391344
+      }
+    ]
+  },
+  "profile": {},
+  "accuracy": {
+    "wer": null,
+    "cer": null,
+    "levenshtein_words": null,
+    "levenshtein_chars": null,
+    "exact_match": null
+  },
+  "reported_audio_duration_s": 37.2,
+  "duration_source": "WAV frame count / sample rate; derived timing fields corrected after measurement",
+  "binary_sha256": "de15033ee6e7034f46264ac6fea7cec16789d7845e3950c6fdefa9e3298845e6",
+  "source_kind": "working_tree_snapshot"
+}

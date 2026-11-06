@@ -188,7 +188,6 @@ fn main() {
 
     let mut model_dir: Option<String> = None;
     let mut input_files: Vec<String> = Vec::new();
-    let input_wav: Option<String>;
     let mut verbosity = 1i32;
     let mut use_stdin = false;
     let mut live_mode = false;
@@ -409,7 +408,7 @@ fn main() {
         }
     }
 
-    input_wav = input_files.first().cloned();
+    let input_wav = input_files.first().cloned();
 
     if input_wav.is_none() && !use_stdin && !live_mode {
         usage(&args[0]);
@@ -516,45 +515,45 @@ fn main() {
     // configure fresh sibling sessions identically).
     let apply_settings = |ctx: &mut QwenCtx| {
         if segment_sec >= 0.0 {
-        ctx.segment_sec = segment_sec;
-    }
-    if search_sec >= 0.0 {
-        ctx.search_sec = search_sec;
-    }
-    if enc_window_sec >= 0.0 {
-        let window_frames = (enc_window_sec * 100.0 + 0.5) as usize;
-        ctx.config.enc_n_window_infer = window_frames.clamp(100, 800);
-    }
-    if stream_max_new_tokens > 0 {
-        ctx.stream_max_new_tokens = stream_max_new_tokens;
-    }
-    if stream_chunk_sec > 0.0 {
-        ctx.stream_chunk_sec = stream_chunk_sec;
-    }
-    if past_text_mode >= 0 {
-        ctx.past_text_conditioning = past_text_mode == 1;
-    } else if stream_mode {
-        ctx.past_text_conditioning = true;
-    }
-    if skip_silence {
-        ctx.skip_silence = true;
-    }
-    if let Some(ref prompt) = prompt_text {
-        if ctx.set_prompt(prompt).is_err() {
-            eprintln!("Failed to set --prompt text");
-            std::process::exit(1);
+            ctx.segment_sec = segment_sec;
         }
-    }
-    if let Some(ref lang) = force_language {
-        if ctx.set_force_language(lang).is_err() {
-            eprintln!("Unsupported language for --language: {}", lang);
-            eprintln!("Supported languages: {}", SUPPORTED_LANGUAGES.join(","));
-            std::process::exit(1);
+        if search_sec >= 0.0 {
+            ctx.search_sec = search_sec;
         }
-    }
-    // Structured output without a forced language needs the model to emit its own
-    // `language X` header for detection; this skips the default prompt preamble.
-    // Plain-text runs keep the byte-identical default decode path.
+        if enc_window_sec >= 0.0 {
+            let window_frames = (enc_window_sec * 100.0 + 0.5) as usize;
+            ctx.config.enc_n_window_infer = window_frames.clamp(100, 800);
+        }
+        if stream_max_new_tokens > 0 {
+            ctx.stream_max_new_tokens = stream_max_new_tokens;
+        }
+        if stream_chunk_sec > 0.0 {
+            ctx.stream_chunk_sec = stream_chunk_sec;
+        }
+        if past_text_mode >= 0 {
+            ctx.past_text_conditioning = past_text_mode == 1;
+        } else if stream_mode {
+            ctx.past_text_conditioning = true;
+        }
+        if skip_silence {
+            ctx.skip_silence = true;
+        }
+        if let Some(ref prompt) = prompt_text {
+            if ctx.set_prompt(prompt).is_err() {
+                eprintln!("Failed to set --prompt text");
+                std::process::exit(1);
+            }
+        }
+        if let Some(ref lang) = force_language {
+            if ctx.set_force_language(lang).is_err() {
+                eprintln!("Unsupported language for --language: {}", lang);
+                eprintln!("Supported languages: {}", SUPPORTED_LANGUAGES.join(","));
+                std::process::exit(1);
+            }
+        }
+        // Structured output without a forced language needs the model to emit its own
+        // `language X` header for detection; this skips the default prompt preamble.
+        // Plain-text runs keep the byte-identical default decode path.
         if output_requested && force_language.is_none() {
             ctx.want_language_detection = true;
         }

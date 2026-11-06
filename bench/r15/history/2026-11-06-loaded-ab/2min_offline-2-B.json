@@ -1,0 +1,45 @@
+{
+  "cmd": [
+    "/Users/lizhuo/owork/q-asr/tmp/r15/bin/head",
+    "-d",
+    "/Users/lizhuo/owork/q-asr/qwen3-asr-0.6b",
+    "-i",
+    "/Users/lizhuo/owork/q-asr/bench/long/samples/long-2min.wav",
+    "-t",
+    "12",
+    "--debug"
+  ],
+  "before": {
+    "time": 1793969817.5242822,
+    "loadavg": [
+      10.92431640625,
+      6.80078125,
+      5.93310546875
+    ],
+    "processes": "  PID  %CPU COMM\n  444  97.7 /usr/sbin/BTLEServer\n46287  51.3 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)\n47466  39.7 node (vitest 5)\n47462  37.3 node (vitest 1)\n47463  33.5 node (vitest 2)\n47465  26.5 node (vitest 4)\n  169  25.6 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer\n47766  21.2 (workerd)\n47500  19.9 /Users/lizhuo/owork/PodParrot/worker4pod/node_modules/@cloudflare/workerd-darwin-arm64/bin/workerd\n47495  19.6 /Users/lizhuo/owork/PodParrot/worker4pod/node_modules/@cloudflare/workerd-darwin-arm64/bin/workerd\n47790  18.3 /Users/lizhuo/owork/PodParrot/worker4pod/node_modules/@cloudflare/workerd-darwin-arm64/bin/workerd\n84447  13.2 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper.app/Contents/MacOS/Brave Browser Helper\n47464  11.9 node (vitest 3)\n47501   8.1 /Users/lizhuo/owork/PodParrot/worker4pod/node_modules/@cloudflare/workerd-darwin-arm64/bin/workerd\n84433   5.0 /Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7209059)\t100%; finishing charge; 0:00 remaining present: true",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded"
+  },
+  "after": {
+    "time": 1793969822.894264,
+    "loadavg": [
+      11.25048828125,
+      6.9365234375,
+      5.98583984375
+    ],
+    "processes": "  PID  %CPU COMM\n  444  96.7 /usr/sbin/BTLEServer\n  169  42.3 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer\n47462  38.9 node (vitest 1)\n47464  31.4 node (vitest 3)\n47465  29.6 node (vitest 4)\n47463  29.6 node (vitest 2)\n46287  28.7 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)\n47500  25.0 /Users/lizhuo/owork/PodParrot/worker4pod/node_modules/@cloudflare/workerd-darwin-arm64/bin/workerd\n47946  24.9 /Users/lizhuo/owork/PodParrot/worker4pod/node_modules/@cloudflare/workerd-darwin-arm64/bin/workerd\n47495  24.8 /Users/lizhuo/owork/PodParrot/worker4pod/node_modules/@cloudflare/workerd-darwin-arm64/bin/workerd\n47501  22.2 /Users/lizhuo/owork/PodParrot/worker4pod/node_modules/@cloudflare/workerd-darwin-arm64/bin/workerd\n84447  21.4 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper.app/Contents/MacOS/Brave Browser Helper\n84433  15.7 /Applications/Brave Browser.app/Contents/MacOS/Brave Browser\n95573   5.3 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/156.0.8078.48/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)\n38432   4.8 /Applications/AeroSpace.app/Contents/MacOS/AeroSpace",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7209059)\t100%; finishing charge; 0:00 remaining present: true",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded"
+  },
+  "returncode": 0,
+  "stdout_sha256": "8f4be6e5e5ee19a61aac69c98e3d355275d670ae458b5c210e034d79f5a5d508",
+  "metrics": {
+    "infer": 5173.0,
+    "prefill": 1076.0,
+    "encoder": 871.0,
+    "dec_ms": 3207.0,
+    "dec_tok": 373,
+    "ms_tok": 8.597855227882038,
+    "wall": 5304.6110407449305
+  }
+}

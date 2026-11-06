@@ -303,6 +303,8 @@ pub(crate) fn parallel_for<F: Fn(usize, usize) + Send + Sync>(f: F) {
 /// than `SPIN_LIMIT` iterations and never reaches the syscall.
 struct Backoff {
     spins: u32,
+    #[cfg(test)]
+    yield_calls: usize,
 }
 
 impl Backoff {
@@ -313,7 +315,11 @@ impl Backoff {
 
     #[inline]
     fn new() -> Self {
-        Backoff { spins: 0 }
+        Backoff {
+            spins: 0,
+            #[cfg(test)]
+            yield_calls: 0,
+        }
     }
 
     #[inline]
@@ -325,6 +331,15 @@ impl Backoff {
             // SAFETY: no arguments, no memory effects, always succeeds.
             unsafe {
                 libc::sched_yield();
+            }
+            #[cfg(test)]
+            {
+                self.yield_calls += 1;
+            }
+            // Re-arm bounded spinning instead of yielding on every poll of a long stage.
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+            {
+                self.spins = 0;
             }
         }
     }
@@ -499,7 +514,82 @@ pub(crate) fn range_for(tid: usize, nt: usize, total: usize) -> (usize, usize) {
 
 #[cfg(test)]
 mod tests {
-    use super::default_threads_formula;
+    use super::{default_threads_formula, Backoff};
+
+    #[test]
+    fn backoff_bounds_spinning_and_yield_frequency() {
+        let mut backoff = Backoff::new();
+        for _ in 0..Backoff::SPIN_LIMIT {
+            backoff.wait();
+        }
+        assert_eq!(
+            backoff.yield_calls, 0,
+            "short waits must remain syscall-free"
+        );
+        backoff.wait();
+        assert_eq!(
+            backoff.yield_calls, 1,
+            "long waits must yield to other workers"
+        );
+
+        let further_polls = 2 * (Backoff::SPIN_LIMIT + 1);
+        for _ in 0..further_polls {
+            backoff.wait();
+        }
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        assert_eq!(
+            backoff.yield_calls, 3,
+            "long waits must not become yield storms"
+        );
+        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+        assert_eq!(
+            backoff.yield_calls,
+            1 + further_polls as usize,
+            "retain the existing oversubscription policy on other platforms"
+        );
+    }
+
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+    #[test]
+    fn region_barrier_publishes_across_delayed_generations() {
+        use super::RegionBarrier;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::Duration;
+
+        let single = RegionBarrier::new(1);
+        single.wait();
+        single.wait();
+
+        const THREADS: usize = 4;
+        const ROUNDS: usize = 16;
+        let barrier = RegionBarrier::new(THREADS);
+        let slots: [AtomicUsize; THREADS] = std::array::from_fn(|_| AtomicUsize::new(0));
+        let mismatches = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for tid in 0..THREADS {
+                let barrier = &barrier;
+                let slots = &slots;
+                let mismatches = &mismatches;
+                scope.spawn(move || {
+                    for round in 0..ROUNDS {
+                        if tid == round % THREADS {
+                            std::thread::sleep(Duration::from_millis(2));
+                        }
+                        slots[tid].store(round * THREADS + tid + 1, Ordering::Relaxed);
+                        barrier.wait();
+                        for (owner, slot) in slots.iter().enumerate() {
+                            if slot.load(Ordering::Relaxed) != round * THREADS + owner + 1 {
+                                mismatches.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                        // Finish all reads before any participant writes the next generation.
+                        barrier.wait();
+                    }
+                });
+            }
+        });
+        assert_eq!(mismatches.load(Ordering::Relaxed), 0);
+    }
 
     #[test]
     fn default_threads_formula_matches_spec() {

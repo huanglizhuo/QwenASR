@@ -1,0 +1,9 @@
+   Compiling poolbench v0.1.0 (/Users/lizhuo/owork/q-asr/bench/r15/poolbench)
+    Finished `release` profile [optimized] target(s) in 0.20s
+     Running `bench/r15/poolbench/target/release/attn p`
+core class: P (QOS_USER_INTERACTIVE)
+ctx    75: current    25.2 us  3-pass    22.1 us  speedup 1.14x  bit-identical=true  | per-token(1 group x 28 layers): 0.09 -> 0.08 ms
+ctx   420: current   132.6 us  3-pass   122.6 us  speedup 1.08x  bit-identical=true  | per-token(1 group x 28 layers): 0.46 -> 0.43 ms
+ctx   900: current   271.5 us  3-pass   249.8 us  speedup 1.09x  bit-identical=true  | per-token(1 group x 28 layers): 0.95 -> 0.87 ms
+ctx  1770: current   539.1 us  3-pass   504.8 us  speedup 1.07x  bit-identical=true  | per-token(1 group x 28 layers): 1.89 -> 1.77 ms
+ctx  4000: current  1191.5 us  3-pass  1120.8 us  speedup 1.06x  bit-identical=true  | per-token(1 group x 28 layers): 4.17 -> 3.92 ms

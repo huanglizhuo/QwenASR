@@ -1,0 +1,26 @@
+{
+  "date": "2026-11-06",
+  "platform": "macOS/aarch64",
+  "decision": "Dynamic scheduling not retained; static disjoint group borrows + phase profiling retained.",
+  "fmt": "pass",
+  "clippy_default": "pass (-D warnings)",
+  "clippy_no_default": "pass (-D warnings)",
+  "default_release_workspace": {
+    "passed": 93,
+    "ignored_microbenchmarks": 3
+  },
+  "no_default_release_tests": {
+    "batch_decode": "pass",
+    "batch_lockstep": "pass",
+    "lockstep": "pass"
+  },
+  "python_tests": 6,
+  "retained_vs_previous_head_output": "exact on 2min_seg30 and multi12; 3 measured pairs plus warmups each",
+  "patch_apply_check": "pass",
+  "not_done": [
+    "idle-machine R15-3 / long-single-pass gate",
+    "Linux/x86 CI",
+    "2703-item full WER",
+    "push or merge"
+  ]
+}

@@ -1,0 +1,567 @@
+{
+  "git_head": "ef62a79d4a46e4847ca1041803f1fdfd678d1b6f",
+  "branch": "r15-speedups",
+  "source": "working tree including uncommitted R15 follow-up and macOS/aarch64 Backoff re-arm",
+  "binary": "tmp/r15/comprehensive/qwen-asr",
+  "binary_sha256": "de15033ee6e7034f46264ac6fea7cec16789d7845e3950c6fdefa9e3298845e6",
+  "baseline": "main 37c1e35b",
+  "baseline_binary_sha256": "2f5efa342bde2be7f1230cac18b915fa57239332371dea68a1b794b6f2da10dd",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "build": "cargo build --release -p qwen-asr-cli; default features; .cargo/config.toml target-cpu=native",
+  "machine": {
+    "machdep.cpu.brand_string": "Apple M5 Pro",
+    "hw.physicalcpu": "15",
+    "hw.logicalcpu": "15",
+    "hw.memsize": "51539607552"
+  },
+  "macos": "26.7",
+  "environment": {
+    "time": 1793977661.4637141,
+    "loadavg": [
+      6.87451171875,
+      7.71337890625,
+      9.74462890625
+    ],
+    "processes": "  PID  %CPU COMM\n  444  98.9 /usr/sbin/BTLEServer\n  169  24.5 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer\n99138  14.9 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)\n84447  13.1 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper.app/Contents/MacOS/Brave Browser Helper\n16515   9.2 /Library/Frameworks/Python.framework/Versions/3.10/Resources/Python.app/Contents/MacOS/Python\n95573   6.4 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/156.0.8078.48/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)\n    1   6.0 /sbin/launchd\n95024   5.1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/156.0.8078.48/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)\n94911   4.7 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (GPU).app/Contents/MacOS/Google Chrome Helper (GPU)\n95574   4.6 /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex\n  252   4.5 /usr/libexec/syspolicyd\n  180   2.9 /usr/sbin/coreaudiod\n22051   2.5 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)\n31144   2.4 /Applications/cmux.app/Contents/MacOS/cmux\n 9501   1.6 /Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex-code-mode-host",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7209059)\t100%; charged; 0:00 remaining present: true",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded",
+    "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                   614665.\nPages active:                                 591118.\nPages inactive:                               532487.\nPages speculative:                             58221.\nPages throttled:                                   0.\nPages wired down:                             452176.\nPages purgeable:                               13313.\n\"Translation faults\":                    41800236936.\nPages copy-on-write:                      4557131372.\nPages zero filled:                       21569271467.\nPages reactivated:                         306134992.\nPages purged:                              169875206.\nFile-backed pages:                            506125.\nAnonymous pages:                              675701.\nPages stored in compressor:                  3082491.\nPages occupied by compressor:                 834162.\nDecompressions:                            220814177.\nCompressions:                              288005083.\nPageins:                                   578099800.\nPageouts:                                    1836100.\nSwapins:                                      951395.\nSwapouts:                                    2887112.\nPages tagged:                                 236996.\nPages tagged resident:                        184117.\nPages tagged compressed:                       52879.\nPages tag-storage:                             98304.\nPages tag-storage holding tags:                 7376.\nPages tag-storage free:                         2796.\nPages tag-storage non-tag pageable:            88123.\nPages tag-storage non-tag wired:                   9.\nBytes of compressed tags:                    9144896.\nTagged compressions:                         5667671.\nTagged decompressions:                       5027001.",
+    "swap_usage": "vm.swapusage: total = 19456.00M  used = 18961.38M  free = 494.62M  (encrypted)"
+  },
+  "simulators": "== Devices ==\n-- iOS 26.4 --\n-- iOS 26.5 --\n-- iOS 27.0 --\n    iPhone 17e (905A927E-6385-44B3-BFB2-8EEE84C1901F) (Booted) \n-- iOS 27.1 --\n-- iOS 27.2 --\n-- iOS 27.2 --",
+  "files": {
+    "crates/qwen-asr/src/encoder.rs": "7db5e822b7a7843f32d80c61b5b89b29fb8f3a7651b958f3d003d1acd5702d62",
+    "crates/qwen-asr/src/subtitle.rs": "af5e76b84a19212b78cad8839471002f165e1d88f00f9c6556772b5e591af06e",
+    "crates/qwen-asr/src/align.rs": "39afb057b180a6b338728e82cd230fa924f5ee5da7d775420dc93ca62b8adfc9",
+    "crates/qwen-asr/src/config.rs": "f8e024b6c9676768a09743173b6429118d4280693bbbe8a17234dfa60ef6ab47",
+    "crates/qwen-asr/src/jni_api.rs": "a9ce7604622ea62159afef7a8b57b2e8ab0ae6ea25e641b7fa572df2ff0b6184",
+    "crates/qwen-asr/src/lib.rs": "14c8c0cd7f24fdddda13ce13b6cf37c91be68e93f0e5574878b4f3a7dd0c4317",
+    "crates/qwen-asr/src/decoder.rs": "c6726c9c20d8d9ab87294ff3ac78154fb6155510baf7c8d5bdc3810da15f9e19",
+    "crates/qwen-asr/src/draft.rs": "fffedc4abdc200f7d6ee143386f5edf937200fac8151e4bd9162d852649d5d11",
+    "crates/qwen-asr/src/output.rs": "484dfe28193b615e89d40a89a6000c4811c189b28ee42e31355ba5d2278fa613",
+    "crates/qwen-asr/src/safetensors.rs": "69e1e561277863538184aecebd1f6f9011a3269ac88ddaf25657cf3b643ef3bd",
+    "crates/qwen-asr/src/audio.rs": "c60c5be4c909b20e39c4ef814ce6f882d250613fcfb2ef7648e18954840ee90f",
+    "crates/qwen-asr/src/transcribe.rs": "92b6d116fab094cb386757ea43bf5366f12e4aa23144113c2c8c20eefde9c57e",
+    "crates/qwen-asr/src/c_api.rs": "421eb66f48f22dfaf3f6b050ce516b835b453195fce5eeba06402f1d8e7c6dd1",
+    "crates/qwen-asr/src/int8_sidecar.rs": "95e1b18dbc82f997baef2d936fd97a3afc69cb910b7e0788d174bd1867f8aa19",
+    "crates/qwen-asr/src/tokenizer.rs": "279507422dbcba1b98ad94c8138f9b81969134880ec28745791e4dc1429e4c2a",
+    "crates/qwen-asr/src/context.rs": "274689146807c8f87f079833df1a2705aac1c463d0dab7fdb27cff91b94a1db5",
+    "crates/qwen-asr/src/kernels/generic.rs": "58adec588fbeb1c13d6ca4d1799a5f7c7d2640ce7968ec8d6fb92762f0971391",
+    "crates/qwen-asr/src/kernels/neon.rs": "f8eeae18ca63413f8ce4bcd6ac2b73441b2b21eefa6ea3b4bc9d71ac39427e33",
+    "crates/qwen-asr/src/kernels/avx.rs": "00c76d447097f9c78cb130eec480b315a6d3ddc307302eaff570e3df13c3cd98",
+    "crates/qwen-asr/src/kernels/mod.rs": "9170df84ecd43608befd269838f1ffa209a484878282b3ffed99ed3b64dd7000",
+    "crates/qwen-asr/src/kernels/pool.rs": "02b193677421d8fcaabdfacbabdc073a38fbb64ffaa39ec5a81a32f396b9972b",
+    "crates/qwen-asr-cli/src/download.rs": "71f12bf8f1c622dfefce82a1b2f8061684f8c5c1792226c8377460408035ffb6",
+    "crates/qwen-asr-cli/src/live_capture.rs": "20642e3421ad485ab40357c2aa0ed696e45992ed009eeea6ee70f55aac9dc6fa",
+    "crates/qwen-asr-cli/src/main.rs": "56adc0d9db36ee4466c112a51cc28c8b50f14039e65afb762c46fa712b0b7ebf",
+    "Cargo.toml": "a1756433800688f2cd8507bbe6984c114f6706036f4bfb153c10f3d892a609bd",
+    "Cargo.lock": "3c8c2e23279ada5d8c6f708d4354fa369970a952ca9903d8746178adcfbcdaa3",
+    ".cargo/config.toml": "6bc7ab4f24cf45cba9f4277edd64f948d2f8ba7336627d9293c803b41a0930fc",
+    "qwen3-asr-0.6b/model.safetensors": "79d6cbd4c98c7bbffe9db2edac07f56cd6637d0d5944b27f6c2b8353840323ea",
+    "qwen3-aligner-0.6b/model.safetensors": "47831d0e82f96b20e9034dba01a075ee06436654719f6a68289e49f1b65ce0e7",
+    "qwen3-asr-0.6b/config.json": "76d3ae4601ce939830b2517f4a6cadb86cc51316c3900af6b020b051c21a478c",
+    "qwen3-asr-0.6b/tokenizer.json": "47737715ec4d1b7194dab061db65f1ab1e2f1d664c489b0c72e7256ff033baf7",
+    "qwen3-asr-0.6b/generation_config.json": "1da527824d81e07118facff437e03f2e24a23311e3bdeb2368973fe77e5f275c",
+    "qwen3-asr-0.6b/merges.txt": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+    "qwen3-asr-0.6b/vocab.json": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+    "qwen3-aligner-0.6b/tokenizer_config.json": "3ab80063f8511deb9566e6ad438d17b7a6277fcffd52d92854112f19d36bd81c",
+    "qwen3-aligner-0.6b/chat_template.json": "75a8cfca24f00de72d796fbfed6858fc9614ef3dabd8696684cc3bc03a9c58ff",
+    "qwen3-aligner-0.6b/config.json": "d616c65d46c4b90bdc651b0a0963ea932732241140f337f9bb6b0335a9c8ef09",
+    "qwen3-aligner-0.6b/generation_config.json": "948d089b23bca1d214e768d59c4438365665f52ec6d33678f4062206b3fbbb8c",
+    "qwen3-aligner-0.6b/merges.txt": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+    "qwen3-aligner-0.6b/vocab.json": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+    "qwen3-aligner-0.6b/preprocessor_config.json": "45e120a4eda2c20c5d7f2ea9354e63536bf35e27aa573fb7cdf78017b378770d",
+    "bench/long/samples/long-2min.ref.txt": "b777ad675940a02de580b682892efce4ca3c135c97a4d359f2dceb10ef43b2a1",
+    "bench/long/samples/long-10min.ref.txt": "c2a7f001fb98f9c5e72d8a988682981e434a9f1bda882d4f8d5ccc02d02a99ba",
+    "bench/samples/audio.txt": "631d41b415e0974171f7582eca6e19cb5a8a17f2c3e3c59d7c0eb4bbc66c2e05"
+  },
+  "audio": {
+    "bench/samples/mixed_zh_en.wav": {
+      "duration_s": 37.1881875,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "077cc99011b16a2627e6f5c86ee2d0a0e4510000c9dfa0f8fd55c18a2106ba4b"
+    },
+    "bench/samples/audio.wav": {
+      "duration_s": 28.16,
+      "sample_rate": 44100,
+      "channels": 1,
+      "sha256": "36940e1e22c7a52e9e62976e744cd8d5f9b378dea4ee4b3aede722d8e2664fe1"
+    },
+    "bench/long/samples/long-2min.wav": {
+      "duration_s": 120.7049375,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "bbff2406c3888857e17ae2eeb9cb799de9a02226dea564341bc49e57e29e15e8"
+    },
+    "bench/long/samples/long-10min.wav": {
+      "duration_s": 602.464875,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "8b447bef0b73320a941f00d3f9cf5a131232422e990400eed6117920848211b2"
+    },
+    "bench/r15/fixtures/clip60s.wav": {
+      "duration_s": 60.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "556694fead96884403ce04c3e63aa61c8fa0b7ed3b227b7f281f60e1f9a9b655"
+    },
+    "bench/r15/fixtures/clip4s.wav": {
+      "duration_s": 4.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "3c27c17a6d195e5b321c2801c6975ce2618bcb8bfdbb9f3f07a14878f478086a"
+    },
+    "bench/r15/fixtures/clip28s.wav": {
+      "duration_s": 28.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "92a1c47043d84e36c73c8499f0ed807565bbe88cc5174bdd734ccdecc8ba1870"
+    },
+    "bench/r15/fixtures/multi/m02.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "a7075ab7c9e5603c19baf76e359063baffc378ccb863b09faa29200cb8aa1b06"
+    },
+    "bench/r15/fixtures/multi/m03.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "23100cb898307ac7bc4a6095b0767e0372280309191a79bc7ade03bbec5968fd"
+    },
+    "bench/r15/fixtures/multi/m01.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "1b0f99400bcb40375f9b8249c6ed1d07a65081459b14e511bc5b11cba422ea0f"
+    },
+    "bench/r15/fixtures/multi/m00.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "a74d866df86413c1649f28f5e41b5c69ac1b74a105239bb645e52881cf7a096d"
+    },
+    "bench/r15/fixtures/multi/m10.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "4e28a477d68e885b7c2baa58d0e7c63e2ad07dd158bb4c6b3edca022ee143b6f"
+    },
+    "bench/r15/fixtures/multi/m04.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "a4a216afe2d4d355defc34ac911941fe0f4e42c0950dcc651ce521c84424bcf9"
+    },
+    "bench/r15/fixtures/multi/m05.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "4f4dee7ef1f9afba1abb24a99f013ee7a9767553cbd7718a6971a038af603e91"
+    },
+    "bench/r15/fixtures/multi/m11.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "5cc17c29dc9ab8b3b5c02a121c03462fd4cebd376b8d6bd462d9e7c40f5a1b07"
+    },
+    "bench/r15/fixtures/multi/m07.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "8a3ebdfcd69b33cbeb8c993c2244345ae7a7d5c64103844b5890721a260dbe1d"
+    },
+    "bench/r15/fixtures/multi/m06.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "ffdb2f2c1449a68adf757d7d9c8a65edac7f9b2f7ba7328c308d19fbf1a7d61d"
+    },
+    "bench/r15/fixtures/multi/m08.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "4cd1dd6e0c8b3ec3419d0dbd12da6f0de8026427198076c04b3bf420f44eab0d"
+    },
+    "bench/r15/fixtures/multi/m09.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "ac71598a9417f68bb731eacee0a3a18e3b3e0c089e1dae29eec6ed8d2a9ecb59"
+    },
+    "bench/r15/fixtures/multi60/m49.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "799c1ca24042ca4d79a8694f535d48e608ee3187f680d24bb6173d9a5ddb1fa0"
+    },
+    "bench/r15/fixtures/multi60/m48.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "f60b5154c4f1648e66dd8cdfda7927796f26e3cf2d4025063bcc682926218f18"
+    },
+    "bench/r15/fixtures/multi60/m58.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "2e974ef6f2acd311b790f8b7bead3f80a6d73cea59d9a4c471ca2b88f7d3b23e"
+    },
+    "bench/r15/fixtures/multi60/m59.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "e0bfe4a068534cad7475c24a27a61d6441fb36c2a817c0fd63962fe18616bec3"
+    },
+    "bench/r15/fixtures/multi60/m02.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "a7075ab7c9e5603c19baf76e359063baffc378ccb863b09faa29200cb8aa1b06"
+    },
+    "bench/r15/fixtures/multi60/m16.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "ffa8b34d4c5aa7595a2b76c553d44112d82022999ead5409aa7d9b8fa7dda93a"
+    },
+    "bench/r15/fixtures/multi60/m17.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "e2cfd6917d8e7def5e2fb075a098d4c8814191b8206eabcdac78b7568e477384"
+    },
+    "bench/r15/fixtures/multi60/m03.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "23100cb898307ac7bc4a6095b0767e0372280309191a79bc7ade03bbec5968fd"
+    },
+    "bench/r15/fixtures/multi60/m29.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "e1a52307012b362fae0cdda2b952076f7c88e1773f0468dd8d61682de7936c6d"
+    },
+    "bench/r15/fixtures/multi60/m15.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "da501a94e4387ef6552b365e87c64c686baad4a239d4bede7d384e589bbd0622"
+    },
+    "bench/r15/fixtures/multi60/m01.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "1b0f99400bcb40375f9b8249c6ed1d07a65081459b14e511bc5b11cba422ea0f"
+    },
+    "bench/r15/fixtures/multi60/m00.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "a74d866df86413c1649f28f5e41b5c69ac1b74a105239bb645e52881cf7a096d"
+    },
+    "bench/r15/fixtures/multi60/m14.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "8fc31ca650ecb885666c7a77e5af0a86e1b2137b072281f7cb62b71202c2e662"
+    },
+    "bench/r15/fixtures/multi60/m28.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "e7a3a5d9ebbe6aea2ae4900c2618b8380073779c57a912f1050c9014a1e240b5"
+    },
+    "bench/r15/fixtures/multi60/m10.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "4e28a477d68e885b7c2baa58d0e7c63e2ad07dd158bb4c6b3edca022ee143b6f"
+    },
+    "bench/r15/fixtures/multi60/m04.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "a4a216afe2d4d355defc34ac911941fe0f4e42c0950dcc651ce521c84424bcf9"
+    },
+    "bench/r15/fixtures/multi60/m38.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "3a0cf6158d1ddaf37531f4403f0f7a08d3c36911049331c1a02c095386e412a4"
+    },
+    "bench/r15/fixtures/multi60/m39.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "06ab72c01dfc16b622a2439c4bb5714829e5e94f9c123b82e534ae9a24e43dc7"
+    },
+    "bench/r15/fixtures/multi60/m05.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "4f4dee7ef1f9afba1abb24a99f013ee7a9767553cbd7718a6971a038af603e91"
+    },
+    "bench/r15/fixtures/multi60/m11.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "5cc17c29dc9ab8b3b5c02a121c03462fd4cebd376b8d6bd462d9e7c40f5a1b07"
+    },
+    "bench/r15/fixtures/multi60/m07.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "8a3ebdfcd69b33cbeb8c993c2244345ae7a7d5c64103844b5890721a260dbe1d"
+    },
+    "bench/r15/fixtures/multi60/m13.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "3f027bde034fec11c8b49985d52ea7ac85711763e4a3cb9aeecc5cf9b826c44c"
+    },
+    "bench/r15/fixtures/multi60/m12.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "7bba46933497002a1fc1cbcb20f7bdf5f2b04cfedb29a87573ae559d346a9734"
+    },
+    "bench/r15/fixtures/multi60/m06.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "ffdb2f2c1449a68adf757d7d9c8a65edac7f9b2f7ba7328c308d19fbf1a7d61d"
+    },
+    "bench/r15/fixtures/multi60/m23.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "35b79face97e8f79bb356ac948ce92458aeb5599aa1518820bc337f0a7ad3d24"
+    },
+    "bench/r15/fixtures/multi60/m37.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "e0ec846e41b91aaf85b889d6df3726549cc9556136feeb26a39aade62026be2c"
+    },
+    "bench/r15/fixtures/multi60/m36.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "17b35c7aea45717a45dce699cb832528c5c990a8bd5c58695a33b1a6678834af"
+    },
+    "bench/r15/fixtures/multi60/m22.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "f9d432b3fba714fb439b85b59849431476a4e76d2ef3ac3e2d0a605e8fd5afe6"
+    },
+    "bench/r15/fixtures/multi60/m08.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "4cd1dd6e0c8b3ec3419d0dbd12da6f0de8026427198076c04b3bf420f44eab0d"
+    },
+    "bench/r15/fixtures/multi60/m34.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "00cb1fd88b23df804437f70b2670d3c481156f7eb17df1725a3922cf2bc37b88"
+    },
+    "bench/r15/fixtures/multi60/m20.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "f422415f8833934555036797194fe81f6bef9505327209ee362367d0f36053e6"
+    },
+    "bench/r15/fixtures/multi60/m21.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "2ccac3e1fad55e13303e9abf4eb7e7425957f470f8eca4bfe24b6319ad261aec"
+    },
+    "bench/r15/fixtures/multi60/m35.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "a091aff2fc66f909c79e51cd1ba78a7666047ab662caecb629d6c5f32be98685"
+    },
+    "bench/r15/fixtures/multi60/m09.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "ac71598a9417f68bb731eacee0a3a18e3b3e0c089e1dae29eec6ed8d2a9ecb59"
+    },
+    "bench/r15/fixtures/multi60/m31.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "443057a09a801fd4311cb62ef40e29a5ab91cd906027544e2b64ad8377e07c93"
+    },
+    "bench/r15/fixtures/multi60/m25.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "adf0eb92e8798a174f000ea9a8107cb61598605456cfc5b911dfd36aff2ffd31"
+    },
+    "bench/r15/fixtures/multi60/m19.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "58103e4f2cf44625eeb14bc1be9a3bf12ca7b56256b321881891591fe9b8437a"
+    },
+    "bench/r15/fixtures/multi60/m18.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "8a5fd665e2b978b8944f248d6e2f12cfdb6d97637f521ddaa99989e7be925c03"
+    },
+    "bench/r15/fixtures/multi60/m24.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "83ce5afd4f7fb6423bea79ed5c6e9ddf00fcac4b8aae9e051291a59b0ea504f0"
+    },
+    "bench/r15/fixtures/multi60/m30.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "b9b82044821e54bb4ca974367bc811831ae2ed1b09eeed6c4a3c3a126b14c033"
+    },
+    "bench/r15/fixtures/multi60/m26.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "cdce5c2b1bda9d6c6a7dc0deb37e01a6a5b353523e9997521bb196892d2d8704"
+    },
+    "bench/r15/fixtures/multi60/m32.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "541581320e291eaa4e20072c81b925b2d9fb1354304c600a0e1ccf29148db6fe"
+    },
+    "bench/r15/fixtures/multi60/m33.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "d10dae220e6706514156a2393f6ea8f43676cfb499a07687319c52fbe0c5309f"
+    },
+    "bench/r15/fixtures/multi60/m27.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "7714f1cd58839fcedc89262d44c9ccc539bddbc126bd61f757ee1683e09cd4f4"
+    },
+    "bench/r15/fixtures/multi60/m40.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "dce27790dd42ad70e1f92e569d0c07be6354272104f3e8820252ca7f7e1615b5"
+    },
+    "bench/r15/fixtures/multi60/m54.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "e7601dee23a6e17a432371e7fcd60018e90c5052f433bb9b7ed7679bf158587f"
+    },
+    "bench/r15/fixtures/multi60/m55.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "d741b804ae809630a1b011c6ee5a6dc97e36243702b9e6bcffc50fcf3e16cf38"
+    },
+    "bench/r15/fixtures/multi60/m41.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "02b70ffad38e6fa4b5042f1f3a23b773a35e9a2fb553d95325730dc77ed4a619"
+    },
+    "bench/r15/fixtures/multi60/m57.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "785b93545e6fea871ca915bf8cb088d817c4106e0dae9c26b0e8105e8b16fd24"
+    },
+    "bench/r15/fixtures/multi60/m43.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "656ac5922e84b4b868fa4b87e3e258524ba9f6d633a61696fa27f87570f534fa"
+    },
+    "bench/r15/fixtures/multi60/m42.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "b973630c2e247cb8a6e3364ab5a368671ca2cfcc567423086ba6a6ef8ba923e9"
+    },
+    "bench/r15/fixtures/multi60/m56.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "ef0803e77e96cc16a830b1e77dec80d847ad5e872636146bdad25aab086f5d0c"
+    },
+    "bench/r15/fixtures/multi60/m52.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "dde0f66128cfbef74ae52f9eebd6a071f89e165ade8e2c7920ae075e9933f6d5"
+    },
+    "bench/r15/fixtures/multi60/m46.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "3398680bbf60aa0ec814c0648f4937dcf0b65d92dfc80784b00c0b6b93293be0"
+    },
+    "bench/r15/fixtures/multi60/m47.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "e98b986fa32d730c23e842056ca410ada66a30d1ec99596bc52854e0f89469f3"
+    },
+    "bench/r15/fixtures/multi60/m53.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "9de12ef9a7ff00d4ad3a1af9142bb1ddac53c9b8b034ebfa8cc82d48a4e7ed05"
+    },
+    "bench/r15/fixtures/multi60/m45.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "be365137e66698a421451447cc6334fe4341202bee3926124853a0dd8e8822b3"
+    },
+    "bench/r15/fixtures/multi60/m51.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "01c5989b6165ab04b56db046198b0a8319a6c68a6d6e3f70665c4d4a87469ae6"
+    },
+    "bench/r15/fixtures/multi60/m50.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "2ba8e3e11451c73ce6857d9a4c3dcdba7f693f6cc3b3d104a98b2b19fb554ea9"
+    },
+    "bench/r15/fixtures/multi60/m44.wav": {
+      "duration_s": 10.0,
+      "sample_rate": 16000,
+      "channels": 1,
+      "sha256": "e927637a6447a0dfee0547a06cac8891ccb39a68f51835f49cf770a9b8a83872"
+    }
+  },
+  "source_patch": {
+    "path": "source.patch",
+    "sha256": "4efd978050b03053d118881d6507abd2f4432312350d50dc007d96c5c3373778"
+  },
+  "external_implementations": {
+    "first_rust_revision": "bf52dafe908b157f0e3b1108fc7a38e0b49673be",
+    "c_revision": "924694251d9e0f18e5d86bbd06aa3ab5f870002d",
+    "second_state_revision": "02262707b9d7222583098766a88e1c830a28a267",
+    "mlx_audio_version": "0.4.5",
+    "mlx_model": "mlx-community/Qwen3-ASR-0.6B-8bit",
+    "mlx_model_revision": "89e96d92ba34aca20b3e29fb10cc284097d1219f",
+    "metal_component": "Metal Toolchain 27B47"
+  }
+}

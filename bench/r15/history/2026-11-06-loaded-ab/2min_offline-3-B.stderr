@@ -1,0 +1,15 @@
+Thread pool: 12 threads
+Optimizations: vDSP/Accelerate, NEON, DotProd | 12 threads | aarch64
+Loading model from /Users/lizhuo/owork/q-asr/qwen3-asr-0.6b
+Detected: Qwen3-ASR-0.6B
+Loading encoder weights...
+Loading decoder weights...
+Model loaded in 78 ms
+QASR_METRIC int8 prefill=0 encoder=0
+Audio: 1931279 samples (120.7 seconds)
+  Mel: 12070 frames (19 ms)
+  Encoder: 1569 tokens (898 ms)
+  Prefill: 1587 tokens (1069 ms)
+  Decode: 373 tokens (3322 ms, 8.9 ms/token)
+Inference: 5308 ms, 372 text tokens (70.08 tok/s, encoding: 917ms, decoding: 4390ms)
+Audio: 120.7 s processed in 5.3 s (22.74x realtime)

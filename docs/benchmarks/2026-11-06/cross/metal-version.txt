@@ -1,0 +1,4 @@
+Apple metal version 32023.922 (metalfe-32023.922.4)
+Target: air64-apple-darwin25.6.0
+Thread model: posix
+InstalledDir: /private/var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-v27.2.47.0.ZjkCq6/Metal.xctoolchain/usr/metal/current/bin

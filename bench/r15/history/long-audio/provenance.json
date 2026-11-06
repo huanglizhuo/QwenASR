@@ -1,0 +1,17 @@
+{
+  "date": "2026-11-06 Asia/Singapore",
+  "git_head": "ef62a79d4a46e4847ca1041803f1fdfd678d1b6f",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "build": "cargo build --release -p qwen-asr-cli; default features, aarch64 native CPU, same release profile",
+  "baseline_source": "main 37c1e35b; earlier clean archive build",
+  "before_source": "ef62a79d + local formatting/lint, disjoint batched GQA slices and batch profile counters",
+  "candidate_change": "macOS/aarch64 Backoff resets spins=0 after sched_yield; no other production behavior change",
+  "binary_sha256": {
+    "base": "2f5efa342bde2be7f1230cac18b915fa57239332371dea68a1b794b6f2da10dd",
+    "batch-static-safe": "3d7e5a479c20a55c77d0690aa46ab6a073863829b42c56d9c84a897c58b0bc4b",
+    "backoff-rearm": "d244652a35901d7867a8c0c24986717b3c4e96d9f45aedb079c0d0f121b6ffae",
+    "long-fixed-final": "de15033ee6e7034f46264ac6fea7cec16789d7845e3950c6fdefa9e3298845e6"
+  },
+  "final_pool_source_sha256": "02b193677421d8fcaabdfacbabdc073a38fbb64ffaa39ec5a81a32f396b9972b",
+  "final_gate_environment": "iPhone 17e simulator booted at gate start; continuing as loaded-machine validation, not idle"
+}

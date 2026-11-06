@@ -8188,6 +8188,159 @@ Method (every item):
   CLI run.
 - `Decision`: kept (consistent on its target metric, no output risk).
 
+
+### R15 follow-up: preserve tools and restore local checks (2026-11-06)
+
+- `Scope`: no inference kernel or thread-policy changes. Fixed the CLI's
+  `input_wav` late initialization and applied `cargo fmt` so the existing
+  formatting/clippy CI jobs can pass. Both default and no-default-feature
+  clippy checks pass locally with `-D warnings`.
+- `Tools`: moved `ab.py`, `ident.sh`, the C bandwidth/stage probes and the
+  Rust pool/attention/resampling/mel-cache probes into
+  [`bench/r15`](../../bench/r15/README.md). Paths are repository-relative;
+  large fixtures, binaries and generated raw output are ignored. Historical
+  identical transcripts are deduplicated with per-revision hashes. The A/B
+  runner saves raw stdout/stderr, process/power/thermal snapshots, wall and
+  phase timings, and binary hashes. Process failure, timeout, empty output,
+  differing transcripts/alignment JSON, or an optional decode regression
+  threshold produce failure instead of silently entering a median.
+- `Rebuild`: baseline `37c1e35b` and branch head `ef62a79d` (plus the formatting
+  and lint cleanup) were rebuilt with Rust 1.97.1, default features and the
+  same release/native-CPU configuration. Build provenance and archived
+  historical-binary hashes are separate; old binary filenames are not treated
+  as proof of their source revision.
+- `Performance attempt — INCONCLUSIVE`: external AC power, no booted iOS
+  simulators, but BTLEServer consumed about one core and other projects
+  launched vitest/workerd/Dart jobs during the run. Baseline 10-minute decode
+  was **33,537 ms** in warmup and **58,420 ms** in its first measured run,
+  both with 1,765 decoded tokens. The branch's warmup was 50,763 ms. These
+  nonstationary, incomplete samples do not establish a branch regression or
+  its cause. The user deferred idle-machine verification; the harness's own
+  ASR child was stopped intentionally (exit -15). Raw evidence and this status
+  are preserved in
+  [`history/2026-11-06-loaded-ab`](../../bench/r15/history/2026-11-06-loaded-ab/STATUS.md).
+- `Identity`: all 8 completed 2-minute invocations and all 3 completed
+  10-minute invocations match within their case. Fresh short offline/-S30/
+  stream comparisons match baseline byte-for-byte. A separate same-binary
+  12-vs-10 override smoke check matches both plain text and 2-minute alignment
+  JSON. These are output checks, **not** performance acceptance runs.
+- `Probe recovery`: the saved polyphase probe again reports 241 differing
+  samples out of 450,560 (max absolute difference 7.450581e-9), and the mel
+  cache probe reports 92/240 identical chunks. These confirm the probes still
+  reproduce their original observations; neither rejected optimization was
+  enabled in production.
+- `Validation`: `cargo fmt --check`, clippy with `-D warnings` in both feature
+  configurations, and full release workspace tests in both configurations
+  pass locally on macOS/aarch64. The A/B runner's four Python tests pass,
+  including timeout/failure evidence and identity/regression gates. All three
+  C probes and all four Rust probes compile and run. Linux/x86 CI and the
+  2,703-item full WER run were not executed in this follow-up.
+- `Remaining P0`: idle 2-/10-minute A/B with three measured pairs; same-binary
+  decode cap 12-vs-10 comparison; commit-by-commit localization if the decode
+  regression persists; then PR-triggered Linux/x86 CI before merging. R15-3
+  remains unchanged pending that evidence. No new README performance claim.
+
+
+### R15-12: profile batch decode and try dynamic attention — scheduling not retained
+
+- `Scope`: `decoder_forward_batched`, reached by segmented lockstep and
+  eligible multi-file transcription. Single-session decode, streaming verify,
+  and the R15-3 participant cap are unchanged.
+- `Kept`: `--profile` now reports caller-thread batch QKV, attention, FFN and
+  lm_head time alongside full batched-call time. Phase timers include their
+  existing completion barriers and do not sum overlapping worker times.
+  Attention tasks now borrow disjoint GQA output/query slices and offset
+  K/V to the matching group; this removes overlapping full-session mutable
+  slices without changing per-group arithmetic or the static schedule.
+- `Experiment`: one shared atomic item counter reset before the existing
+  KV-publication barrier, with each worker claiming a complete (session,
+  KV-group) item. No nested pool dispatch, no new barrier, no FP reordering.
+  It passed the new bitwise-state test and existing lockstep tests.
+- `Measurement`: initial 2-minute -S30 profiling put attention at 220.4 of
+  848.4 ms of batch decode (~26%). Three-pair static-vs-dynamic profiling of
+  10-minute -S30 reduced median attention time 1,389.0 → 1,129.4 ms (-18.7%),
+  but six-pair **unprofiled** A/B gave median paired wall deltas of -0.72%
+  (2-minute -S30), -0.49% (10-minute -S30), and +0.26% (12 files). Wins were
+  3/6, 4/6 and 3/6 pairs respectively. All transcripts matched. Background
+  load drifted, and pipeline batch occupancy differed between runs.
+- `Decision`: dynamic claiming **not retained**: no demonstrated repeatable
+  end-to-end benefit. This is not evidence of a proven regression, nor grounds
+  for an unmeasured KV-length threshold. Static scheduling remains active.
+  The existing completion barrier also means dynamic claiming alone would
+  not solve worker preemption (the separate P1 anti-preemption item).
+- `Tests/tooling`: new `tests/batch_decode.rs` compares real batched and
+  sequential decode for B=1/2/5/8, heterogeneous KV positions/strides and four
+  successive steps: exact tokens, normalized hidden-state bits and every
+  active K/V bit. The A/B tool parses batch phase totals/call counts separately
+  from serial decode and reports paired percentage deltas alongside ratios of
+  medians; the existing optional serial decode gate retains its semantics.
+- `Validation of retained code`: formatting and clippy (`-D warnings`) pass
+  in both feature configurations; the full default release workspace suite
+  passes (93 tests, 3 intentionally ignored microbenchmarks). The three
+  batch/lockstep integration tests also pass with no default features. All six
+  Python harness tests pass. A final three-pair unprofiled comparison against
+  the previous branch head preserves outputs, with paired wall deltas -0.07%
+  (2-minute -S30) and +0.73% (12 files), not a new speed claim.
+- `Evidence`: [commands and archived results](../../bench/r15/history/batch-attention/README.md).
+  Idle-machine performance acceptance and the original long-single-pass
+  regression investigation remain deferred.
+
+
+### R15-13: bound long-wait yield frequency on Apple Silicon — KEPT
+
+- `Diagnosis`: a fresh three-pair main/current 10-minute comparison did not
+  repeat the historical +21% decode regression (paired median +2.26%, wall
+  -3.35%). The old `Backoff` exhausted its 4,096-poll spin budget once, then
+  called `sched_yield()` on every remaining poll. This shared join/barrier
+  policy predates R15; it is a measured scheduler hotspot, not proof of a
+  particular R15 commit causing the original observation.
+- `Change`: on macOS/aarch64 only, reset the existing spin budget after each
+  yield. No new threshold, sleep, thread heuristic, arithmetic or reduction
+  order. Other platforms retain the existing oversubscription policy.
+- `Direct A/B`: three alternating 10-minute pairs, 1,765 decoded tokens and
+  identical transcripts throughout. Decode 55.081/48.225/46.210 seconds before
+  versus 41.490/40.142/38.971 after (-24.67%/-16.76%/-15.67%). Side medians:
+  decode 48.225 -> 40.142 seconds (-16.76%), process wall 63.284 -> 55.613
+  seconds (-12.12%; median paired wall delta -12.84%). These are loaded-machine
+  results, not an idle-machine claim.
+- `Resource evidence`: whole-process median system CPU 66.951 -> 6.562 CPU
+  seconds and involuntary context switches 2,070,805 -> 736,905. Context
+  switches are not yield-call counts. All measured long runs had zero system
+  Swapins/Swapouts deltas despite high existing swap occupancy.
+- `Controls`: 2-minute decode deltas are noisy (-36.44%, +31.45%, -3.91%).
+  At 16 global/decode threads, three pairs each of short/2-minute input match
+  exactly with no hangs (paired wall -3.37%/-1.46%). Same-binary decode12
+  versus decode10 gives paired decode -1.52% for 2 minutes, -10.80% for 10
+  minutes under recorded load; R15-3 remains unchanged pending idle review.
+- `Validation`: the yield-frequency test fails on the old code and passes
+  after restoring the fix. Delayed-generation barrier visibility is tested.
+  Default release workspace: 95 passed, 3 ignored. Relevant no-default
+  library/integration suites: 61 passed. Formatting, both all-target clippy
+  configurations with `-D warnings`, and six Python harness tests pass.
+- `Final main comparison`: three pairs of the rebuilt fix versus main match
+  outputs and pass the 6% median decode threshold (54.649 -> 54.503 seconds,
+  -0.27%; median wall -6.28%). A simulator had restarted and baseline decode
+  varied from 49.569 to 88.547 seconds; this is a noisy loaded-machine check,
+  not idle-machine performance acceptance.
+- `Evidence and limits`: [full investigation](../../bench/r15/history/long-audio/README.md)
+  includes per-run snapshots, hashes and commands. Idle-machine review,
+  Linux/x86 CI and full-set WER were not performed; README headline figures
+  remain unchanged. The fix still requires every barrier participant to run.
+
+
+### R15 benchmark refresh and full-set identity check (November 6–7)
+
+The working-tree build measured 581.0 ms median inference and 693.4 ms median
+process wall on the 28.16-second clip in the five-implementation comparison.
+All 17 A/B cases matched main on their outputs. Full offline dev-clean produced
+the same 1,501 errors in 54,402 reference words for both builds (2.7591% WER).
+One of 2,703 recorded hypotheses differs before normalization. The extra comma
+on `1272-141231-0009` reproduces at `3c0b6f9a` (R15-10), while `76bf6add`
+(R15-8) matches main on all three repeats. This supersedes the smaller fixture
+suite as evidence about exact output. The file-streaming path on both builds
+returns partial content on the long samples (91.8% / 98.4% WER).
+[Full report and evidence](../benchmarks/results.md).
+
 ---
 
 ## Autoresearch Program Baseline Experiments

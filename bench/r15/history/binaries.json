@@ -1,0 +1,61 @@
+{
+  "note": "Historical names are labels from the previous session, not independently verified commit provenance. Fresh comparison binaries are rebuilt from Git.",
+  "binaries": {
+    "r11_exit": {
+      "sha256": "9adfa5186a5e5362c47807e86f0450de7045b979fb3aac014478fe69ba94c449",
+      "bytes": 2555024
+    },
+    "r8_kvonly": {
+      "sha256": "3bfede06a11bc3c56df017780e7cbc35c2805d3b0079630d5e0ebe8c6614ec5c",
+      "bytes": 2555280
+    },
+    "r10_check": {
+      "sha256": "aee01cb53f1902b57b6221a552f1ed8e09b4c78af285c8b393cc9b31d0a64613",
+      "bytes": 2555488
+    },
+    "r8": {
+      "sha256": "3bfede06a11bc3c56df017780e7cbc35c2805d3b0079630d5e0ebe8c6614ec5c",
+      "bytes": 2555280
+    },
+    "final12": {
+      "sha256": "9adfa5186a5e5362c47807e86f0450de7045b979fb3aac014478fe69ba94c449",
+      "bytes": 2555024
+    },
+    "r5_multilock": {
+      "sha256": "c106e7f8b3c1859a8d4505928503f81e7a47a3c20bab47070a0873b2cfe93c84",
+      "bytes": 2555280
+    },
+    "r10_tiled": {
+      "sha256": "b18bbe4f0cb5682b46f7598d6bc86f6bf619720392995d85a15e2bdb47821a13",
+      "bytes": 2555280
+    },
+    "r3_decodecap": {
+      "sha256": "d12de9e35211ad4c4a72431e025beecc0bb9a534fcd182acc90cdcf3c6d36112",
+      "bytes": 2555072
+    },
+    "r2_tokenizer": {
+      "sha256": "4ffd287cb5e87f94360f9d843c79f913bc3545dadab3c3926a90bdb3f545a6f8",
+      "bytes": 2554096
+    },
+    "final": {
+      "sha256": "9adfa5186a5e5362c47807e86f0450de7045b979fb3aac014478fe69ba94c449",
+      "bytes": 2555024
+    },
+    "r7_spin": {
+      "sha256": "8340dc6fa1dc5d950da2000ef4135857e3e64041e6c891f361d6125eaa75b65d",
+      "bytes": 2556128
+    },
+    "r1_resample": {
+      "sha256": "12e662d0ef0fca386b874e165cb046fe1bcbad1ec51053bd73c2540151d42d64",
+      "bytes": 2536656
+    },
+    "r4_attn": {
+      "sha256": "75e530c0889bd5873d17453e7278d6acf0a9368445171928d2ac1a6c0848c98b",
+      "bytes": 2555520
+    },
+    "base": {
+      "sha256": "7180ed62db6e3e0e7be93cb631fcad57b88894b1ec23a14e22e57df471e00bd9",
+      "bytes": 2536112
+    }
+  }
+}

@@ -1,0 +1,11 @@
+   Compiling qwen-asr v0.11.0 (/Users/lizhuo/owork/q-asr/crates/qwen-asr)
+    Finished `release` profile [optimized] target(s) in 4.66s
+     Running unittests src/lib.rs (target/release/deps/qwen_asr-9f54dae09cad0b42)
+
+running 3 tests
+test kernels::pool::tests::default_threads_formula_matches_spec ... ok
+test kernels::pool::tests::backoff_bounds_spinning_and_yield_frequency ... ok
+test kernels::pool::tests::region_barrier_publishes_across_delayed_generations ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 31 filtered out; finished in 0.04s
+

@@ -11,6 +11,8 @@ BINARY="$PROJECT_DIR/target/release/qwen-asr"
 MODEL_DIR="$PROJECT_DIR/qwen3-asr-0.6b"
 DATASET="$PROJECT_DIR/librispeech-wer-bench/dev-clean-2"
 
+cd "$PROJECT_DIR"
+
 echo "==> Building release binary"
 RUSTFLAGS="-C target-cpu=native" cargo build --release
 
@@ -27,9 +29,7 @@ python3 "$PROJECT_DIR/librispeech-wer-bench/librispeech_wer.py" \
   --limit 100 --mode offline
 
 echo "==> Done. Update the following files with the new numbers:"
-echo "    docs/benchmarks/speed-benchmark.md"
-echo "    docs/benchmarks/wer-benchmark.md"
-echo "    docs/benchmarks/comparison.md"
+echo "    docs/benchmarks/results.md"
 echo "    README.md"
 echo ""
 echo "To refresh the cross-implementation comparison, run:"

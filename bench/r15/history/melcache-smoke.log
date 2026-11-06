@@ -1,0 +1,4 @@
+   Compiling poolbench v0.1.0 (/Users/lizhuo/owork/q-asr/bench/r15/poolbench)
+    Finished `release` profile [optimized] target(s) in 0.17s
+     Running `bench/r15/poolbench/target/release/melcache bench/long/samples/long-2min.wav`
+chunk mel bit-identical: 92/240

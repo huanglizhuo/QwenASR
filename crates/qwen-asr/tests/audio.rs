@@ -194,7 +194,9 @@ fn test_resample_parallel_bit_identical() {
         let want = resample_reference(&x, from, to);
         assert_eq!(got.len(), want.len());
         assert!(
-            got.iter().zip(&want).all(|(a, b)| a.to_bits() == b.to_bits()),
+            got.iter()
+                .zip(&want)
+                .all(|(a, b)| a.to_bits() == b.to_bits()),
             "resample {from}->{to} diverged from the serial reference"
         );
     }

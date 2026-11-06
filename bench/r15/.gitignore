@@ -1,0 +1,7 @@
+/fixtures/
+/results/
+__pycache__/
+/poolbench/target/
+/bw/bw
+/bw/stage
+/bw/stage2

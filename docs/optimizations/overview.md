@@ -47,3 +47,40 @@ This document catalogs the performance optimizations implemented in the pure-Rus
 - **Lazy Encoder Re-encoding**: In streaming mode, the partial encoder tail is only re-encoded every other chunk. This provides near-perfect Longest Common Prefix (LCP) reuse and reduces decoder prefill cost by ~50% on skipped chunks.
 - **Online Softmax**: Single-token causal attention uses an online softmax scan, combining score tracking, normalization, and value accumulation into a single loop. This avoids temporary score buffer allocations and separate exponentiation passes for `seq_len = 1` queries.
 - **Speculative Decoding with Greedy Verification**: Multi-token forward passes verify drafted tokens against the sequential greedy argmax in one weight stream, so accepted drafts are nearly-free tokens and output stays byte-identical. Two draft sources exist: streaming overlap drafts (R13, default ON — the previous chunk's tail predicts the re-decoded overlap) and offline prompt-lookup n-gram self-match (R14-B1, opt-in via `QWEN_ASR_VERIFY=1`, default OFF — measured acceptance on ASR text is low: ~8% of decode steps speculate on long audio, ≈3% fewer decode forwards).
+
+## 6. Round 15: engineering changes and transcript checks
+
+These changes are on `r15-speedups`; the long-context decode regression and
+idle-machine thread-count review remain merge gates. Measurements and
+accept/reject decisions are recorded in
+[the experiment log](../research/experiments.md#speed-improvement-experiments--round-15-exact-only-audit-follow-up).
+
+| Item | Retained implementation |
+|---|---|
+| R15-1 | Parallel resampling over independent output samples, preserving each sample's arithmetic order. |
+| R15-2 | Parse the tokenizer once per model, overlap parsing with weight loading, and share it with sessions. |
+| R15-3 | On macOS/aarch64, cap single-token decode participants at `min(threads, max(8, threads - 2))`; `QWEN_ASR_DECODE_THREADS` overrides this. Batched decode and verify retain their existing pool width. Idle-machine validation remains pending. |
+| R15-5 | Route eligible multi-file CLI groups through the lockstep scheduler, with fallback to the existing per-file workers. |
+| R15-8 | ASR prefill skips unused final-layer hidden-state computation while preserving the KV cache; aligner/full-prefill semantics remain intact. |
+| R15-10 | Tile causal prefill attention in 128-query blocks and avoid masked future keys, reducing temporary memory and prefill work. |
+| R15-11 | Flush plain-text single-file CLI output and exit without running model destructors. |
+| R15-13 | On macOS/aarch64, re-arm the existing bounded spin budget after yielding in pool joins and region barriers; avoid yielding on every poll of long waits. |
+
+The [Round 15 tools](../../bench/r15/README.md) preserve A/B and seven-case
+identity checks. Report end-to-end wall time alongside inference phases;
+keep background-load results separate from idle-machine results. Changes
+to floating-point reduction order still require the full-set accuracy gate.
+
+Batch-decode follow-up adds `--profile` phase counters and disjoint GQA output
+borrows. A dynamic attention task-claiming experiment preserved output bits
+but showed no repeatable unprofiled end-to-end gain, so static scheduling
+remains active; see the [experiment results](../../bench/r15/history/batch-attention/README.md).
+
+The long-audio investigation retains the wait-backoff fix: all three loaded
+10-minute pairs improved with identical transcripts. This addresses a
+scheduler hotspot predating R15; it does not identify a particular R15 commit
+as the cause of the historical +21% regression. See the
+[measurements and limits](../../bench/r15/history/long-audio/README.md); idle
+validation remains pending.
+
+The November 6–7 rerun matched main on all 17 benchmark cases. On full dev-clean, both builds scored 2.7591% WER. All 2,703 normalized texts matched and one recorded transcription differed by a comma. [Full-set comparison](../benchmarks/results.md#accuracy).

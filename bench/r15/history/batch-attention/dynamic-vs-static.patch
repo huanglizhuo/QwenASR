@@ -1,0 +1,59 @@
+--- a/crates/qwen-asr/src/decoder.rs
++++ b/crates/qwen-asr/src/decoder.rs
+@@ -1770,6 +1770,8 @@
+     sessions: &mut [BatchedSession],
+     out_tokens: &mut [i32],
+ ) {
++    use std::sync::atomic::{AtomicUsize, Ordering};
++
+     const MB: usize = kernels::MAX_BATCH;
+     let b = sessions.len();
+     assert!((1..=MB).contains(&b) && out_tokens.len() >= b);
+@@ -1842,6 +1844,7 @@
+     let mut scales = [0.0f32; 4 * MB];
+     let scales_addr = scales.as_mut_ptr() as usize;
+ 
++    let next_attention = AtomicUsize::new(0);
+     kernels::parallel_region(|barrier, tid, nt| {
+         // Per-stage pointer/scale table builders (stack arrays, per thread).
+         let mut_f32 = |tab: &[usize; MB]| {
+@@ -1967,6 +1970,10 @@
+                 }
+                 bi += nt;
+             }
++            // Publish the next layer's queue through the existing KV-write barrier.
++            if tid == 0 {
++                next_attention.store(0, Ordering::Relaxed);
++            }
+             barrier.wait();
+ 
+             // Caller-thread elapsed time includes the stage's completion barrier.
+@@ -1975,14 +1982,17 @@
+             } else {
+                 None
+             };
+-            // Stage: causal attention, striped over (session, GQA group) items —
++            // Stage: causal attention, dynamically claimed (session, GQA group) items —
+             // sessions have different sequence lengths, so each item carries its
+             // session's pos / total_seq / KV base.
+             {
+                 let hpk = n_heads / n_kv_heads;
+                 let n_items = b * n_kv_heads;
+-                let mut item = tid;
+-                while item < n_items {
++                loop {
++                    let item = next_attention.fetch_add(1, Ordering::Relaxed);
++                    if item >= n_items {
++                        break;
++                    }
+                     let bi = item / n_kv_heads;
+                     let g = item % n_kv_heads;
+                     let group_dim = hpk * head_dim;
+@@ -2017,7 +2027,6 @@
+                             hpk,
+                         );
+                     }
+-                    item += nt;
+                 }
+             }
+             barrier.wait();

@@ -731,7 +731,16 @@ pub fn decoder_prefill(
     input_embeds: &[f32],
     seq_len: usize,
 ) {
-    decoder_prefill_impl(decoder, cfg, kv_cache, rope, bufs, input_embeds, seq_len, false);
+    decoder_prefill_impl(
+        decoder,
+        cfg,
+        kv_cache,
+        rope,
+        bufs,
+        input_embeds,
+        seq_len,
+        false,
+    );
 }
 
 /// Prefill for autoregressive decoding (R15-8): fills the KV cache exactly like
@@ -750,7 +759,16 @@ pub fn decoder_prefill_kv_only(
     input_embeds: &[f32],
     seq_len: usize,
 ) {
-    decoder_prefill_impl(decoder, cfg, kv_cache, rope, bufs, input_embeds, seq_len, true);
+    decoder_prefill_impl(
+        decoder,
+        cfg,
+        kv_cache,
+        rope,
+        bufs,
+        input_embeds,
+        seq_len,
+        true,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1761,6 +1779,7 @@ pub fn decoder_forward_batched(
         return;
     }
 
+    let _profile = kernels::ProfileGuard::new(&kernels::PROF.batch_decode);
     let dim = cfg.dec_hidden;
     let n_heads = cfg.dec_heads;
     let n_kv_heads = cfg.dec_kv_heads;
@@ -1869,6 +1888,12 @@ pub fn decoder_forward_batched(
             }
             barrier.wait();
 
+            // Caller-thread elapsed time includes the stage's completion barrier.
+            let stage_profile = if tid == 0 {
+                kernels::ProfileGuard::new(&kernels::PROF.batch_qkv)
+            } else {
+                None
+            };
             // Stage: fused QKV projection, batched (rows outer, sessions inner).
             {
                 let (s, e) = kernels::range_for(tid, nt, q_dim + 2 * kv_dim);
@@ -1900,6 +1925,7 @@ pub fn decoder_forward_batched(
                 }
             }
             barrier.wait();
+            drop(stage_profile);
 
             // Stage: q/k norms, RoPE, KV-cache write (striped serial glue).
             let mut bi = tid;
@@ -1943,6 +1969,12 @@ pub fn decoder_forward_batched(
             }
             barrier.wait();
 
+            // Caller-thread elapsed time includes the stage's completion barrier.
+            let stage_profile = if tid == 0 {
+                kernels::ProfileGuard::new(&kernels::PROF.batch_attention)
+            } else {
+                None
+            };
             // Stage: causal attention, striped over (session, GQA group) items —
             // sessions have different sequence lengths, so each item carries its
             // session's pos / total_seq / KV base.
@@ -1953,13 +1985,21 @@ pub fn decoder_forward_batched(
                 while item < n_items {
                     let bi = item / n_kv_heads;
                     let g = item % n_kv_heads;
-                    let layer_kv_off = layer_idx * n_kv_heads * kv_stride[bi];
+                    let group_dim = hpk * head_dim;
+                    let group_off = g * group_dim;
+                    let kv_off = (layer_idx * n_kv_heads + g) * kv_stride[bi];
                     unsafe {
-                        let attn_out =
-                            std::slice::from_raw_parts_mut(attn_out_ptr[bi] as *mut f32, q_dim);
-                        let q = std::slice::from_raw_parts(q_ptr[bi] as *const f32, q_dim);
-                        let k_base = (kv_k_ptr[bi] as *const f32).add(layer_kv_off);
-                        let v_base = (kv_v_ptr[bi] as *const f32).add(layer_kv_off);
+                        // Each task exclusively borrows its own GQA group's output.
+                        let attn_out = std::slice::from_raw_parts_mut(
+                            (attn_out_ptr[bi] as *mut f32).add(group_off),
+                            group_dim,
+                        );
+                        let q = std::slice::from_raw_parts(
+                            (q_ptr[bi] as *const f32).add(group_off),
+                            group_dim,
+                        );
+                        let k_base = (kv_k_ptr[bi] as *const f32).add(kv_off);
+                        let v_base = (kv_v_ptr[bi] as *const f32).add(kv_off);
                         kernels::causal_attention_heads(
                             attn_out,
                             q,
@@ -1968,19 +2008,20 @@ pub fn decoder_forward_batched(
                             kv_stride[bi],
                             1,
                             pos[bi] + 1,
-                            n_heads,
-                            n_kv_heads,
+                            hpk,
+                            1,
                             head_dim,
                             scale,
                             pos[bi],
-                            g * hpk,
-                            (g + 1) * hpk,
+                            0,
+                            hpk,
                         );
                     }
                     item += nt;
                 }
             }
             barrier.wait();
+            drop(stage_profile);
 
             // Stage: quantize attention output for the O-projection (striped).
             let mut bi = tid;
@@ -2036,6 +2077,12 @@ pub fn decoder_forward_batched(
             }
             barrier.wait();
 
+            // Caller-thread elapsed time includes the stage's completion barrier.
+            let stage_profile = if tid == 0 {
+                kernels::ProfileGuard::new(&kernels::PROF.batch_ffn)
+            } else {
+                None
+            };
             // Stage: fused gate_up + SwiGLU, batched over intermediate rows.
             {
                 let (s, e) = kernels::range_for(tid, nt, intermediate);
@@ -2096,6 +2143,7 @@ pub fn decoder_forward_batched(
                 }
             }
             barrier.wait();
+            drop(stage_profile);
         }
 
         // Stage: final RMS norm per session (striped) — mirrors the
@@ -2119,6 +2167,7 @@ pub fn decoder_forward_batched(
 
     // lm_head argmax: stream the head weights once for ALL live sessions.
     // Same index-stable tie-break as the single-session path (R12-E2).
+    let head_profile = kernels::ProfileGuard::new(&kernels::PROF.batch_lm_head);
     let lm_out_dim = cfg.lm_head_dim();
     if let (Some(int8_data), Some(lm_scales)) =
         (&decoder.lm_head_int8, &decoder.lm_head_int8_scales)
@@ -2133,6 +2182,8 @@ pub fn decoder_forward_batched(
             out_tokens[bi] = lm_head_argmax(decoder, &s.bufs.x[..dim], dim, lm_out_dim);
         }
     }
+
+    drop(head_profile);
 
     // Speculative bookkeeping for the next step (same as the single-session tail).
     for s in sessions.iter_mut() {

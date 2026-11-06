@@ -25,7 +25,7 @@ Usage: bench/run.sh [options]
   --label NAME        Label for this run (default: git short rev or timestamp)
   --output-dir DIR    Where to save results (default: bench/results)
   --modes LIST        Comma-separated: offline,segmented,streaming (default: all)
-  --threads N         Thread count (default: system CPUs)
+  --threads N         Thread count (default: binary policy)
   --runs N            Repeat each test N times, use median latency (default: 10)
   --profile           Enable kernel profile counters during measured runs
   -h, --help          Show this help
@@ -90,7 +90,7 @@ fi
 if [[ -n "$THREADS" ]]; then
     THREAD_COUNT="$THREADS"
 else
-    THREAD_COUNT="$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 0)"
+    THREAD_COUNT=""
 fi
 
 TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -304,6 +304,10 @@ PY
         BEST_STDERR="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["median_run"]["stderr"])' "$STATS_JSON")"
         BEST_WALL_MS="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["wall"]["median_ms"])' "$STATS_JSON")"
 
+        if [[ -z "$THREADS" ]]; then
+            THREAD_COUNT="$(sed -n 's/^Thread pool: \([0-9]*\) threads.*/\1/p' "$BEST_STDERR" | head -1)"
+        fi
+
         TRANSCRIPT="$(cat "$BEST_STDOUT")"
 
         # Parse stderr
@@ -370,7 +374,7 @@ data = {
     'timestamp': sys.argv[4],
     'file': sys.argv[5],
     'mode': sys.argv[6],
-    'threads': int(sys.argv[7]),
+    'threads': int(sys.argv[7]) if sys.argv[7] else None,
     'system': json.loads(sys.argv[27]),
     'config': {
         'segment_sec': int(sys.argv[8]),
@@ -411,12 +415,19 @@ with open(sys.argv[25], 'w', encoding='utf-8') as f:
             "$WER" "$CER" "$LEV_WORDS" "$LEV_CHARS" "$EXACT" \
             "$OUT_FILE" "$wall_ms" "$SYSTEM_JSON"
 
-        python3 - "$OUT_FILE" "$STATS_JSON" <<'PY'
-import json, sys
+        python3 - "$OUT_FILE" "$STATS_JSON" "$wav" <<'PY'
+import json, sys, wave
 
-path, stats_json = sys.argv[1:]
+path, stats_json, wav_path = sys.argv[1:]
 with open(path, "r", encoding="utf-8") as fh:
     data = json.load(fh)
+try:
+    with wave.open(wav_path, "rb") as audio:
+        data["audio_duration_s"] = audio.getnframes() / audio.getframerate()
+    data["config"]["duration_source"] = "wav_header"
+except wave.Error:
+    # Older Python versions cannot read all WAV encodings accepted by the CLI.
+    data["config"]["duration_source"] = "cli"
 stats = json.loads(stats_json)
 data["timing"]["statistic"] = "median"
 data["timing"]["total_ms"] = round(stats["inference"]["median_ms"], 3)
@@ -432,9 +443,10 @@ data["timing"]["runs"] = stats["runs"]
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(data, fh, indent=2, ensure_ascii=False)
     fh.write("\n")
+timing = data["timing"]
+print(f"  -> {path} ({timing['wall_ms']}ms median wall, {timing['total_ms']}ms median inference, {timing['realtime_factor']}x inference)")
 PY
 
-        echo "  -> $OUT_FILE (${wall_ms}ms median wall, ${total_ms}ms median inference, ${realtime_factor}x inference)"
         while IFS=$'\t' read -r _ _ _ stdout_path stderr_path; do
             if [[ "$stdout_path" != "$BEST_STDOUT" ]]; then rm -f "$stdout_path"; fi
             if [[ "$stderr_path" != "$BEST_STDERR" ]]; then rm -f "$stderr_path"; fi

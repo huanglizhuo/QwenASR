@@ -189,7 +189,12 @@ define_profile_counters!(
     decoder_load,
     tokenizer_load,
     audio_load,
-    mel_compute
+    mel_compute,
+    batch_decode,
+    batch_qkv,
+    batch_attention,
+    batch_ffn,
+    batch_lm_head
 );
 
 pub static PROF: ProfileCounters = ProfileCounters::new();
@@ -247,10 +252,12 @@ mod pool;
 
 pub(crate) use pool::parallel_for;
 pub(crate) use pool::parallel_for_dynamic;
+pub(crate) use pool::set_thread_override;
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub(crate) use pool::{decode_region_threads, parallel_region, parallel_region_n};
-pub(crate) use pool::set_thread_override;
-pub use pool::{get_default_threads, get_num_cpus, get_num_threads, set_thread_override_public, set_threads};
+pub use pool::{
+    get_default_threads, get_num_cpus, get_num_threads, set_thread_override_public, set_threads,
+};
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub(crate) use pool::{range_for, MAX_THREADS};
 

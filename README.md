@@ -8,27 +8,47 @@ Supports the 0.6B and 1.7B models, offline and streaming transcription, live cap
 
 ## Performance
 
-On an Apple M5 Pro, qwen-asr transcribes the 28.2-second benchmark clip in **613 ms**—**46× faster than realtime**. In the same 10-run comparison, this CPU-only Rust implementation has the lowest median inference latency of all five implementations tested:
+On an Apple M5 Pro, the current 0.6B CPU build transcribes the **28.16-second**
+benchmark clip in **581 ms inference / 693 ms end to end**
+(medians of 10 standalone runs): **48.47× realtime** by inference time.
 
-- **1.12× faster** than `mlx-audio` on the GPU
-- **2.31× faster** than second-state MLX on the GPU
-- **2.71× faster** than the upstream pure-C implementation
-- **2.77× faster** than the first qwen-asr Rust port
-
-| Implementation | Median inference | Realtime factor |
-|---|---:|---:|
-| **qwen-asr (CPU, latest)** | **613 ms** | **46.00×** |
-| mlx-audio Python MLX (GPU) | 688 ms | 40.94× |
-| second-state MLX (GPU) | 1,414 ms | 19.91× |
-| pure C upstream (CPU) | 1,660 ms | 16.96× |
-| qwen-asr first port (CPU) | 1,698 ms | 16.61× |
+| Implementation | Median inference | Median process wall | Inference throughput |
+|---|---:|---:|---:|
+| qwen-asr (current CPU) | 581.0 ms | 693.4 ms | 48.47× |
+| mlx-audio Python (GPU) | 746.3 ms | 1,630.4 ms | 37.73× |
+| second-state MLX (GPU) | 1,439.7 ms | 1,679.7 ms | 19.56× |
+| qwen-asr first port (CPU) | 1,647.0 ms | 1,984.2 ms | 17.10× |
+| pure C upstream (CPU) | 1,653.5 ms | 1,922.5 ms | 17.03× |
 
 <p float="left">
-  <img src="docs/benchmarks/charts/benchmark-unified-latency.png" width="48%" alt="Latency comparison" />
-  <img src="docs/benchmarks/charts/benchmark-unified-rtf.png" width="48%" alt="Realtime factor comparison" />
+  <img src="docs/benchmarks/charts/benchmark-unified-latency.png" width="48%" alt="Measured inference latency comparison" />
+  <img src="docs/benchmarks/charts/benchmark-unified-rtf.png" width="48%" alt="Measured inference throughput comparison" />
 </p>
 
-> Apple M5 Pro, 15 cores, 48 GB RAM; same 0.6B model and 28.2 s audio; 10 standalone runs per implementation; median inference latency; each implementation uses its shipped default configuration. Results generated at `d141bca4` in `bench/compare-results/20260716T070644Z`. See the [methodology and full results](docs/benchmarks/comparison.md).
+> Run started 2026-11-06; Apple M5 Pro, 15 cores, 48 GiB; 0.6B model family,
+> each implementation's default configuration. Current build is the
+> `r15-speedups` working tree, binary `de15033ee6e7…`, including uncommitted fixes.
+> Background load was present. Native inference boundaries and quantization
+> differ between implementations; wall time includes process startup/load/exit.
+> See [versions, methodology and full comparison](docs/benchmarks/comparison.md).
+
+Long-audio results (three measured runs per side, alternating against main):
+
+| Audio / mode | Median inference | Median process wall |
+|---|---:|---:|
+| 120.705 s offline | 4.18 s | 4.29 s |
+| 120.705 s segmented (-S30) | 2.52 s | 2.69 s |
+| 602.465 s offline | 57.67 s | 57.87 s |
+| 602.465 s segmented (-S30) | 11.13 s | 11.31 s |
+
+All **17 benchmark cases** matched main, including forced-alignment JSON.
+On full LibriSpeech dev-clean, both builds scored **2.7591% offline WER**.
+Of 2,703 utterances, 2,702 transcriptions matched exactly and one differed by
+a comma. All 2,703 matched after WER normalization.
+
+File `--stream` returned partial transcripts on the two long recordings.
+Their timings and accuracy are reported separately from complete offline transcription.
+[All measurements and per-utterance comparison](docs/benchmarks/results.md).
 
 ## Quick Start
 
@@ -173,19 +193,19 @@ cargo ndk -t arm64-v8a build --release --features android
 
 ```bash
 # Speed benchmark
-./bench/run.sh --label current --runs 10
+./bench/run.sh --samples-dir bench/samples/audio.wav --threads 12 --label current --runs 10
 
-# WER benchmark (100-file LibriSpeech offline)
+# WER benchmark (full 2,703-item LibriSpeech dev-clean offline)
 python3 librispeech-wer-bench/librispeech_wer.py \
-  --dataset librispeech-wer-bench/dev-clean-2 \
+  --dataset librispeech-wer-bench/dev-clean-full \
   --binary target/release/qwen-asr \
   --model-dir qwen3-asr-0.6b \
-  --output-dir librispeech-wer-bench/results-100 \
-  --label current-offline-100 \
-  --limit 100 --mode offline
+  --output-dir librispeech-wer-bench/results \
+  --label current-offline-full \
+  --mode offline
 
 # Cross-implementation comparison (30–60 min)
-./bench/benchmark-all.sh --runs 10
+./bench/benchmark-all.sh --runs 10 --current-binary target/release/qwen-asr
 ```
 
 See [`docs/benchmarks/`](docs/benchmarks/) for full details.
