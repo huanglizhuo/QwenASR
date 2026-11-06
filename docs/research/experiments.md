@@ -8135,6 +8135,47 @@ Method (every item):
   background under decode).
 - `Decision`: kept.
 
+### R15-9: per-chunk conv-stem cache for streaming re-encodes — Rejected (feasibility)
+
+- `Idea`: the conv stem processes each 100-frame mel chunk independently
+  (~38% of encoder FLOPs), and the push path re-encodes the partial window
+  every 4 s and the full window at completion from the same start sample, so
+  stem outputs could be reused whenever a chunk's mel is bit-identical (exact
+  by construction with a content check). Distinct from G32 (mel-frame cache).
+- `Feasibility probe` (long-2min, every window start, slice pairs 4→8 s,
+  2→6 s, 6→8 s, 4→6 s, chunks fully inside the shorter slice): only **92/240
+  (38%)** chunks have bit-identical mel — the per-slice normalization
+  (`clamp(global_max − 8)`) shifts whenever a louder frame arrives later, and
+  the right-edge reflect padding moves.
+- `Projection`: with the 4 s re-encode throttle, reusable stem work ≈ 12% of
+  stem ≈ 5% of encoder ≈ < 1% of push-stream time. Not implemented.
+- `Decision`: rejected without code.
+
+### R15-10: causally-tiled multi-token attention (R5-H revisited) — KEPT
+
+- `Change`: prefill attention computed, per head, the full
+  `seq_q × seq_k` score GEMM and an O GEMM over all `seq_k` keys with the
+  masked upper triangle zeroed (≈ 2× the needed FLOPs; the allocation alone is
+  `seq_q × seq_k` floats per head range — ~240 MB per worker per layer at the
+  ~7800 tokens of a 10-min single pass). Now the query dimension is tiled
+  (128 rows) and each tile scores/accumulates only the keys its last row may
+  attend (`n_valid`); per-row softmax operations unchanged; score buffer
+  `128 × seq_k`. R5-H (TILE 64) was byte-identical but rejected because the
+  28 s sample made it 1.2% end-to-end; long single-pass audio was not gated
+  then.
+- `Exactness`: a temporary instrumented build ran the old and new kernels on
+  every call and compared outputs bitwise: 0 mismatched elements over all
+  calls in offline 28 s / long-2min, -S30 lockstep, file `--stream`, and 5
+  push-stream runs (2808 calls each, incl. `q_offset > 0` deltas). 7/7
+  transcripts identical. (Hook removed before commit.)
+- `Results` (A = R15-8): prefill long-2min 1157.5 → 997.0 ms (−13.9%),
+  inference −3.6%; long-10min single pass prefill 14602 → 10158 ms (−30.4%),
+  inference 57745 → 51870 ms (−10.2%, 2 runs); 28 s inputs prefill −2.3…−2.7%
+  (inference −0.5…−1.5%); push streaming flat (deltas are short). Peak RSS of
+  the long-10min single pass 10.37 GB → 8.55 GB (−1.8 GB, smaller score
+  buffers).
+- `Decision`: kept.
+
 ---
 
 ## Autoresearch Program Baseline Experiments

@@ -2976,7 +2976,6 @@ pub(crate) fn causal_attention_heads(
     head_end: usize,
 ) {
     let heads_per_kv = n_heads / n_kv_heads;
-    let q_hidden = n_heads * head_dim;
 
     // Single-token path: GQA-paired online softmax without allocation or BLAS.
     if seq_q == 1 {
@@ -2997,108 +2996,158 @@ pub(crate) fn causal_attention_heads(
         return;
     }
 
-    // Multi-token path: batched per-head GEMMs.
-    // Per head: S[seq_q, seq_k] = scale * Q_h @ K_h^T, then causal-masked
-    // row softmax, then O[seq_q, head_dim] = S @ V_h. This replaces the
-    // 2*seq_q tiny (N=1) BLAS calls per head with two real GEMMs.
-    let mut scores = vec![0.0f32; seq_q * seq_k];
+    // Multi-token path (R15-10): causally-tiled per-head GEMMs.
+    causal_attention_multi_tiled(
+        out,
+        q,
+        k_base,
+        v_base,
+        head_stride,
+        seq_q,
+        seq_k,
+        n_heads,
+        heads_per_kv,
+        head_dim,
+        scale,
+        q_offset,
+        head_start,
+        head_end,
+    );
+}
+
+/// Multi-token causal attention with the query dimension tiled (R15-10,
+/// revisiting R5-H): each `TILE`-row query tile only scores and accumulates the
+/// keys its last row may attend (`n_valid`), instead of the full `seq_k` with
+/// the masked upper triangle zeroed — about half the S/O GEMM FLOPs at long
+/// prefill (O(n²) → it matters on long single-pass audio). Per row the softmax
+/// is the same sequence of operations; masked keys are still zeroed inside the
+/// tile. The score buffer shrinks to `TILE × seq_k`.
+#[cfg(feature = "blas")]
+#[allow(clippy::too_many_arguments)]
+fn causal_attention_multi_tiled(
+    out: &mut [f32],
+    q: &[f32],
+    k_base: *const f32,
+    v_base: *const f32,
+    head_stride: usize,
+    seq_q: usize,
+    seq_k: usize,
+    n_heads: usize,
+    heads_per_kv: usize,
+    head_dim: usize,
+    scale: f32,
+    q_offset: usize,
+    head_start: usize,
+    head_end: usize,
+) {
+    const TILE: usize = 128;
+    let q_hidden = n_heads * head_dim;
+    let mut scores = vec![0.0f32; TILE.min(seq_q) * seq_k];
 
     for h in head_start..head_end {
         let kv_h = h / heads_per_kv;
         let k_head = unsafe { k_base.add(kv_h * head_stride) };
         let v_head = unsafe { v_base.add(kv_h * head_stride) };
 
-        // S = scale * Q_h[seq_q, head_dim] @ K_h[seq_k, head_dim]^T.
-        // Q_h rows are strided by q_hidden inside `q`; K_h is contiguous.
-        unsafe {
-            cblas_sgemm(
-                CBLAS_ROW_MAJOR,
-                CBLAS_NO_TRANS,
-                CBLAS_TRANS,
-                seq_q as i32,
-                seq_k as i32,
-                head_dim as i32,
-                scale,
-                q.as_ptr().add(h * head_dim),
-                q_hidden as i32,
-                k_head,
-                head_dim as i32,
-                0.0,
-                scores.as_mut_ptr(),
-                seq_k as i32,
-            );
-        }
+        let mut i0 = 0usize;
+        while i0 < seq_q {
+            let tq = TILE.min(seq_q - i0);
+            // Keys any row of this tile may attend: through the last row's
+            // causal end.
+            let n_valid = (q_offset + i0 + tq).min(seq_k);
 
-        // Causal-masked row softmax: query i attends keys 0..=(q_offset+i).
-        for i in 0..seq_q {
-            let k_end = (q_offset + i + 1).min(seq_k);
-            let row = &mut scores[i * seq_k..i * seq_k + seq_k];
-            if k_end == 0 {
-                for v in row.iter_mut() {
-                    *v = 0.0;
-                }
-                continue;
+            // S[tq, n_valid] = scale * Q_h[i0.., head_dim] @ K_h[..n_valid]^T.
+            unsafe {
+                cblas_sgemm(
+                    CBLAS_ROW_MAJOR,
+                    CBLAS_NO_TRANS,
+                    CBLAS_TRANS,
+                    tq as i32,
+                    n_valid as i32,
+                    head_dim as i32,
+                    scale,
+                    q.as_ptr().add(i0 * q_hidden + h * head_dim),
+                    q_hidden as i32,
+                    k_head,
+                    head_dim as i32,
+                    0.0,
+                    scores.as_mut_ptr(),
+                    n_valid as i32,
+                );
             }
 
-            let mut max_s = row[0];
-            for &s in &row[1..k_end] {
-                if s > max_s {
-                    max_s = s;
+            // Causal-masked row softmax: query i attends keys 0..=(q_offset+i).
+            for r in 0..tq {
+                let i = i0 + r;
+                let k_end = (q_offset + i + 1).min(seq_k);
+                let row = &mut scores[r * n_valid..r * n_valid + n_valid];
+                if k_end == 0 {
+                    for v in row.iter_mut() {
+                        *v = 0.0;
+                    }
+                    continue;
                 }
-            }
-            for s in &mut row[..k_end] {
-                *s -= max_s;
-            }
 
-            #[cfg(all(feature = "vdsp", target_vendor = "apple"))]
-            {
-                let n = k_end as i32;
-                unsafe {
-                    vvexpf(row.as_mut_ptr(), row.as_ptr(), &n);
+                let mut max_s = row[0];
+                for &s in &row[1..k_end] {
+                    if s > max_s {
+                        max_s = s;
+                    }
                 }
-            }
-            #[cfg(not(all(feature = "vdsp", target_vendor = "apple")))]
-            {
                 for s in &mut row[..k_end] {
-                    *s = s.exp();
+                    *s -= max_s;
+                }
+
+                #[cfg(all(feature = "vdsp", target_vendor = "apple"))]
+                {
+                    let n = k_end as i32;
+                    unsafe {
+                        vvexpf(row.as_mut_ptr(), row.as_ptr(), &n);
+                    }
+                }
+                #[cfg(not(all(feature = "vdsp", target_vendor = "apple")))]
+                {
+                    for s in &mut row[..k_end] {
+                        *s = s.exp();
+                    }
+                }
+
+                let mut sum_exp = 0.0f32;
+                for &s in &row[..k_end] {
+                    sum_exp += s;
+                }
+                if sum_exp > 0.0 {
+                    let inv = 1.0 / sum_exp;
+                    for s in &mut row[..k_end] {
+                        *s *= inv;
+                    }
+                }
+                // Zero the masked keys inside the tile.
+                for s in &mut row[k_end..n_valid] {
+                    *s = 0.0;
                 }
             }
 
-            let mut sum_exp = 0.0f32;
-            for &s in &row[..k_end] {
-                sum_exp += s;
+            // O[i0.., head_dim] = S[tq, n_valid] @ V_h[..n_valid, head_dim].
+            unsafe {
+                cblas_sgemm(
+                    CBLAS_ROW_MAJOR,
+                    CBLAS_NO_TRANS,
+                    CBLAS_NO_TRANS,
+                    tq as i32,
+                    head_dim as i32,
+                    n_valid as i32,
+                    1.0,
+                    scores.as_ptr(),
+                    n_valid as i32,
+                    v_head,
+                    head_dim as i32,
+                    0.0,
+                    out.as_mut_ptr().add(i0 * q_hidden + h * head_dim),
+                    q_hidden as i32,
+                );
             }
-            if sum_exp > 0.0 {
-                let inv = 1.0 / sum_exp;
-                for s in &mut row[..k_end] {
-                    *s *= inv;
-                }
-            }
-            // Zero the masked (future) keys so the O = S @ V GEMM ignores them.
-            for s in &mut row[k_end..seq_k] {
-                *s = 0.0;
-            }
-        }
-
-        // O[seq_q, head_dim] = S[seq_q, seq_k] @ V_h[seq_k, head_dim].
-        // O rows are strided by q_hidden inside `out`.
-        unsafe {
-            cblas_sgemm(
-                CBLAS_ROW_MAJOR,
-                CBLAS_NO_TRANS,
-                CBLAS_NO_TRANS,
-                seq_q as i32,
-                head_dim as i32,
-                seq_k as i32,
-                1.0,
-                scores.as_ptr(),
-                seq_k as i32,
-                v_head,
-                head_dim as i32,
-                0.0,
-                out.as_mut_ptr().add(h * head_dim),
-                q_hidden as i32,
-            );
+            i0 += tq;
         }
     }
 }
