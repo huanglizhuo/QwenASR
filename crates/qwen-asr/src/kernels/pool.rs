@@ -303,6 +303,8 @@ pub(crate) fn parallel_for<F: Fn(usize, usize) + Send + Sync>(f: F) {
 /// than `SPIN_LIMIT` iterations and never reaches the syscall.
 struct Backoff {
     spins: u32,
+    #[cfg(test)]
+    yield_calls: usize,
 }
 
 impl Backoff {
@@ -313,7 +315,11 @@ impl Backoff {
 
     #[inline]
     fn new() -> Self {
-        Backoff { spins: 0 }
+        Backoff {
+            spins: 0,
+            #[cfg(test)]
+            yield_calls: 0,
+        }
     }
 
     #[inline]
@@ -325,6 +331,15 @@ impl Backoff {
             // SAFETY: no arguments, no memory effects, always succeeds.
             unsafe {
                 libc::sched_yield();
+            }
+            #[cfg(test)]
+            {
+                self.yield_calls += 1;
+            }
+            // Re-arm bounded spinning instead of yielding on every poll of a long stage.
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+            {
+                self.spins = 0;
             }
         }
     }
@@ -434,6 +449,58 @@ pub(crate) fn parallel_region<F: Fn(&RegionBarrier, usize, usize) + Send + Sync>
     parallel_for(|tid, nt| f(&barrier, tid, nt));
 }
 
+/// Like [`parallel_region`] but with at most `n` participants: pool workers
+/// with `tid >= n` return immediately and the barrier is sized `n`. Used by
+/// the single-token decode region, whose per-row / per-head work is assigned
+/// to exactly one thread, so its output is identical for any participant
+/// count.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+pub(crate) fn parallel_region_n<F: Fn(&RegionBarrier, usize, usize) + Send + Sync>(n: usize, f: F) {
+    let n_threads = get_num_threads();
+    let n = n.clamp(1, n_threads.max(1));
+    if n == n_threads {
+        parallel_region(f);
+        return;
+    }
+    let barrier = RegionBarrier::new(n);
+    parallel_for(|tid, _nt| {
+        if tid < n {
+            f(&barrier, tid, n);
+        }
+    });
+}
+
+/// Participants for the fused single-token decode region (R15-3).
+///
+/// Decode streams ~575 MB of INT8 weights per token through ~280 spin
+/// barriers with a static row split, so ONE descheduled participant stalls the
+/// whole token. M5 Pro (5P/10E, default 12 threads) with background load:
+/// 12 participants measured 4.4–6.0 ms/token and 15 measured ~15 ms/token,
+/// against 3.9–4.3 at 8–10. Apple Silicon default: leave two of the configured
+/// threads out of the region, never below 8 (one thread per KV group in the
+/// attention stage) — 12 → 10. Trade-off: on a fully idle machine 12
+/// participants stream ~5–10% more bandwidth (long-context best case), so
+/// `QWEN_ASR_DECODE_THREADS=N` overrides for idle-machine benchmarking.
+/// Elsewhere: no cap (no data).
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+pub(crate) fn decode_region_threads() -> usize {
+    static CAP: OnceLock<Option<usize>> = OnceLock::new();
+    let nt = get_num_threads();
+    let cap = *CAP.get_or_init(|| {
+        std::env::var("QWEN_ASR_DECODE_THREADS")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .filter(|&n| n > 0)
+    });
+    match cap {
+        Some(n) => nt.min(n).max(1),
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        None => nt.min(nt.saturating_sub(2).max(8)),
+        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+        None => nt,
+    }
+}
+
 /// Even split of `total` items across `nt` workers; returns this worker's
 /// `[start, end)` range (possibly empty).
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
@@ -447,7 +514,82 @@ pub(crate) fn range_for(tid: usize, nt: usize, total: usize) -> (usize, usize) {
 
 #[cfg(test)]
 mod tests {
-    use super::default_threads_formula;
+    use super::{default_threads_formula, Backoff};
+
+    #[test]
+    fn backoff_bounds_spinning_and_yield_frequency() {
+        let mut backoff = Backoff::new();
+        for _ in 0..Backoff::SPIN_LIMIT {
+            backoff.wait();
+        }
+        assert_eq!(
+            backoff.yield_calls, 0,
+            "short waits must remain syscall-free"
+        );
+        backoff.wait();
+        assert_eq!(
+            backoff.yield_calls, 1,
+            "long waits must yield to other workers"
+        );
+
+        let further_polls = 2 * (Backoff::SPIN_LIMIT + 1);
+        for _ in 0..further_polls {
+            backoff.wait();
+        }
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        assert_eq!(
+            backoff.yield_calls, 3,
+            "long waits must not become yield storms"
+        );
+        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+        assert_eq!(
+            backoff.yield_calls,
+            1 + further_polls as usize,
+            "retain the existing oversubscription policy on other platforms"
+        );
+    }
+
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+    #[test]
+    fn region_barrier_publishes_across_delayed_generations() {
+        use super::RegionBarrier;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::Duration;
+
+        let single = RegionBarrier::new(1);
+        single.wait();
+        single.wait();
+
+        const THREADS: usize = 4;
+        const ROUNDS: usize = 16;
+        let barrier = RegionBarrier::new(THREADS);
+        let slots: [AtomicUsize; THREADS] = std::array::from_fn(|_| AtomicUsize::new(0));
+        let mismatches = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for tid in 0..THREADS {
+                let barrier = &barrier;
+                let slots = &slots;
+                let mismatches = &mismatches;
+                scope.spawn(move || {
+                    for round in 0..ROUNDS {
+                        if tid == round % THREADS {
+                            std::thread::sleep(Duration::from_millis(2));
+                        }
+                        slots[tid].store(round * THREADS + tid + 1, Ordering::Relaxed);
+                        barrier.wait();
+                        for (owner, slot) in slots.iter().enumerate() {
+                            if slot.load(Ordering::Relaxed) != round * THREADS + owner + 1 {
+                                mismatches.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                        // Finish all reads before any participant writes the next generation.
+                        barrier.wait();
+                    }
+                });
+            }
+        });
+        assert_eq!(mismatches.load(Ordering::Relaxed), 0);
+    }
 
     #[test]
     fn default_threads_formula_matches_spec() {

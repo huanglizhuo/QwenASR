@@ -1,0 +1,25 @@
+{
+  "date": "2026-11-06",
+  "platform": "macOS/aarch64",
+  "fmt": "passed",
+  "clippy_default": "passed",
+  "clippy_no_default_features": "passed",
+  "release_workspace_default": {
+    "passed": 92,
+    "ignored": 3
+  },
+  "release_workspace_no_default_features": {
+    "passed": 94,
+    "ignored": 3
+  },
+  "python_unittests": 4,
+  "c_probes": "bw/stage/stage2 compiled and smoke-tested",
+  "rust_probes": "poolbench/attn/resamp/melcache compiled and smoke-tested",
+  "accuracy_smoke": "short offline/segmented/streaming baseline vs head exact; head cap12 vs cap10 short and alignment JSON exact",
+  "performance": "inconclusive; user deferred idle-machine verification",
+  "not_run": [
+    "Linux/x86 CI",
+    "2703-item WER",
+    "complete seven-case fresh identity suite"
+  ]
+}

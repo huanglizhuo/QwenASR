@@ -1,0 +1,25 @@
+
+running 1 test
+test kernels::pool::tests::backoff_bounds_spinning_and_yield_frequency ... FAILED
+
+failures:
+
+---- kernels::pool::tests::backoff_bounds_spinning_and_yield_frequency stdout ----
+
+thread 'kernels::pool::tests::backoff_bounds_spinning_and_yield_frequency' (131167962) panicked at crates/qwen-asr/src/kernels/pool.rs:540:9:
+assertion `left == right` failed: long waits must not become yield storms
+  left: 8195
+ right: 3
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    kernels::pool::tests::backoff_bounds_spinning_and_yield_frequency
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 33 filtered out; finished in 0.00s
+
+   Compiling qwen-asr v0.11.0 (/Users/lizhuo/owork/q-asr/crates/qwen-asr)
+   Compiling libc v0.2.182
+    Finished `release` profile [optimized] target(s) in 5.50s
+     Running unittests src/lib.rs (target/release/deps/qwen_asr-9f54dae09cad0b42)
+error: test failed, to rerun pass `-p qwen-asr --lib`

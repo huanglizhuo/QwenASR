@@ -21,6 +21,7 @@ This file collects the optimization experiment diaries.
 - [Speed Improvement Experiments — Round 12](#speed-improvement-experiments--round-12)
 - [Speed Improvement Experiments — Round 13 (multi-token greedy verifier)](#speed-improvement-experiments--round-13-multi-token-greedy-verifier)
 - [Speed Improvement Experiments — Round 14 (A-layer micro-opts + B1 offline speculative decode)](#speed-improvement-experiments--round-14-a-layer-micro-opts--b1-offline-speculative-decode)
+- [Speed Improvement Experiments — Round 15 (exact-only audit follow-up)](#speed-improvement-experiments--round-15-exact-only-audit-follow-up)
 - [Autoresearch Program Baseline Experiments](#autoresearch-program-baseline-experiments)
 - [Historical Commit Ledger (perf-opt-1 branch)](#historical-commit-ledger-perf-opt-1-branch)
 - [Opportunity Backlog](#opportunity-backlog)
@@ -7911,6 +7912,434 @@ Task ledger:
   numbers): speech transcripts have little exploitable token-level n-gram
   repetition. Note `QWEN_ASR_VERIFY` is shared with the streaming verifier
   whose default is the opposite; the two cannot be toggled independently.
+
+---
+
+## Speed Improvement Experiments — Round 15 (exact-only audit follow-up)
+
+Branch `r15-speedups`. Source: the 2026-11 read-only audit (CPU read-bandwidth
+probe ~200–240 GB/s at 8–12 threads vs the "115 GB/s" effective decode figure;
+decode fragile under background load; long-context single-token attention
+gated by E-core stragglers; wall-time costs outside the bench "Inference"
+metric). Scope: **only changes whose output is byte-identical by construction**
+— no quantization, no shortlist/early-stop/token-cap, no FP-reorder changes
+without the R12-B3 full-set gate.
+
+Method (every item):
+- Byte-identity: the 7-case set (`audio.wav` offline / -S30 / --stream;
+  long-2min offline / -S30; long-10min offline / -S30) must match the previous
+  kept binary exactly.
+- Speed: interleaved A/B (ABBA order, one discarded warm-up per binary/case),
+  previous kept binary = A. Phase timings from `--debug`.
+- Conditions: M5 Pro 5P/10E, battery power, `BTLEServer` pinning ~1 core
+  throughout. Calibration control (identical binaries, 14 runs, `audio.wav`
+  offline): wall −1.8%, inference −3.0%, decode −6.2% median delta — i.e.
+  the noise floor is ~±3% on inference and ~±6% on decode medians, so
+  decisions use the metric the item targets and repeat runs when close.
+
+### R15-1: bit-exact parallel resampler — KEPT
+
+- `Change`: `audio::resample` (Kaiser-windowed sinc, per-tap `sin` + 20-term
+  Bessel in f64, ~0.45 µs/output) computed every output on one thread:
+  ~176–202 ms for the 28.2 s 44.1 kHz bench sample. Round 3 A2 hid it behind
+  model load (then ~249 ms), but R12-H1 cut warm model load to ~74 ms, so ~100+
+  ms of resampling was back on the CLI critical path. Outputs are independent
+  functions of their index, so long inputs (≥ 32768 outputs) are now split into
+  4096-output chunks pulled from a shared stack by scoped threads (not the
+  global kernel pool — the CLI resamples on a side thread during model load and
+  the pool supports one dispatcher). Per-output code unchanged.
+- `Exactness`: new `test_resample_parallel_bit_identical` compares against the
+  verbatim serial loop for 44.1k/48k/8k → 16k (bit-for-bit). 7/7 transcripts
+  identical.
+- `Results`: `audio_load` 176 → 23 ms (now fully hidden behind model load).
+  A/B (8 runs): wall `audio.wav` offline 813.7 → 744.2 ms (−8.5%), -S30
+  831.9 → 756.7 (−9.0%), --stream 821.1 → 749.7 (−8.7%); repeat (14 runs)
+  877.9 → 816.9 (−6.9%) vs the identical-binary control's −1.8%. Inference
+  deltas (+0.8…+3.1%) sit inside the control's ±3% band; the inference code
+  path is untouched. 16 kHz inputs never call the resampler.
+- `Note`: a polyphase table version (160 phases × 32 taps) ran in 6.6 ms vs
+  202 ms but is not bit-identical (241/450560 samples differ by ≤ 7.5e-9 —
+  the per-output `i / ratio` rounding differs from exact rational phases); not
+  adopted because the parallel exact version is already hidden behind model
+  load in the CLI.
+- `Decision`: kept.
+
+### R15-2: tokenizer parsed once per model, overlapped with weight load — KEPT
+
+- `Change`: every `transcribe_audio` / `transcribe_full` / `transcribe_stream`
+  call re-parsed `vocab.json` + `merges.txt` (~43 ms, single-threaded), and
+  `align::forced_align` did it again per aligned segment. `QwenModel` now holds
+  `tokenizer: Option<Arc<QwenTokenizer>>`, parsed on a side thread spawned at
+  the start of `QwenModel::load` (overlapping safetensors open + encoder/decoder
+  load; no kernel-pool use, so no dispatcher race). All call sites (including
+  the private `StreamState.tokenizer`) share the `Arc`. A missing vocab still
+  makes transcription return `None`, as before.
+- `Results` (A = R15-1, 10 runs): wall 4 s clip 325.6 → 276.2 ms (−15.2%),
+  28 s 16 kHz 926.0 → 895.0 (−3.4%), `audio.wav` 773.3 → 719.6 (−6.9%),
+  12-file batch 2979 → 2924 (−1.8%, reloads were already parallel);
+  `--json` + aligner on long-2min -S30 6558 → 6351 (−3.2%, ≈ 5 segments × 43 ms).
+  `model_load` 74 ms + serial tokenizer 43 ms → ~60–76 ms total. Inference
+  within noise. Transcripts 7/7 identical; aligner JSON byte-identical.
+- `Benefit beyond the CLI`: per-utterance callers (C API / JNI / Flutter
+  push-to-talk and VAD Live, `--live --vad`) no longer pay the parse per call.
+- `Decision`: kept.
+
+### R15-3: cap the single-token decode region's participants — KEPT
+
+- `Problem`: the fused decode region uses a static row split and ~280 spin
+  barriers per token, so one descheduled participant stalls the whole token.
+  The R11-G thread default (12 on 5P/10E) was tuned on an idle machine; with
+  background load (BTLEServer pinning a core the whole session) the audit
+  measured 4.4–6.0 ms/token at `-t 12` and ~15 ms/token at `-t 15`, against
+  3.9–4.3 at `-t 8/10`. Encoder/prefill (work-stealing items) were unaffected.
+- `Change`: new `parallel_region_n` (workers with `tid >= n` return at once,
+  barrier sized `n`) and `decode_region_threads()`; `decoder_forward` runs its
+  region with `max(8, threads − 2)` participants on macOS/aarch64 (12 → 10;
+  ≥ 8 keeps one thread per KV group in attention). Other platforms unchanged.
+  `QWEN_ASR_DECODE_THREADS=N` overrides. Lockstep/verify regions unchanged.
+- `Exactness`: every INT8 row, attention head and argmax slice is owned by one
+  thread, row math is order-exact, and the argmax reduce keeps the lowest-index
+  tie-break, so the token stream is identical for any participant count.
+  7/7 transcripts identical; full suite green.
+- `Results` (A = R15-2, 10 runs, normal conditions = BTLEServer on 1 core):
+
+| Case | A decode | B decode | Δ decode | Δ inference | Δ wall |
+|------|---------:|---------:|---------:|------------:|-------:|
+| 28 s 16 kHz offline | 361.5 ms | 327.5 ms | −9.4% | −4.2% | −3.3% |
+| `audio.wav` offline | 218.0 | 185.0 | −15.1% | −5.4% | −5.1% |
+| long-2min single pass | 2586 | 2239 | −13.4% | −7.8% | −7.6% |
+| push streaming 28 s | — | — | — | −2.6% | −2.3% |
+| long-2min -S30 (lockstep) | — | — | — | +0.9% | +0.1% |
+
+  Under +2 extra busy cores (`yes` ×2): cap 8 −16.5…−19.6% decode, cap 10
+  −27…−42% decode. Probed alternatives: cap 8 under normal conditions improved
+  short-context medians (−8.5/−12.5%) but its best runs at long context were
+  ~15% slower than 12 participants (fewer threads stream less bandwidth when
+  nobody is preempted); an earlier cap-10 session also showed an ~11%
+  slower long-context best case, which the final 10-run session did not
+  reproduce (B min 4135 vs A min 4258 ms). On a fully idle machine 12
+  participants may still win the long-context best case — use
+  `QWEN_ASR_DECODE_THREADS=12` there.
+- `Decision`: kept (default 12 → 10 participants on Apple Silicon).
+
+### R15-4: three-pass single-token attention scan — Rejected
+
+- `Motivation`: decode ms/token rises 4.0 → 8.5 from ctx ~75 to ~1770
+  (long-2min single pass). Isolated single-thread probe of the attention kernel:
+  one KV group at ctx 1770 costs 1.6 ms/token on a P-core but 4.9 ms/token on
+  an E-core (≈ the observed +4.5 ms/token), with the fused scan's per-position
+  chain `dot → scalar exp → axpy` suspected.
+- `Change tested`: `paired_attention_row` split into (1) all scores,
+  (2) the scalar online-softmax recurrence recording branch + coefficient,
+  (3) V accumulation in position order — same helper calls (vDSP/NEON
+  `dot_f32`, `vec_scale_add`, `vec_axpy_inplace`) with the same operands in the
+  same per-head order, thread-local grow-only scratch.
+- `Exactness`: bit-identical — an exactness test against the verbatim fused
+  scan passed in both build flavors at ctx 1…1500; transcripts identical.
+- `Isolated probe` (single thread): P-core 1.04–1.16×, E-core 1.25–1.6×.
+- `End-to-end` (A = R15-3): long-2min single pass decode median +9.6% (8 runs)
+  and +6.4% (12 runs), best runs −2%; 28 s / `audio.wav` / push streaming flat
+  (−2.2…+1.7%); long-2min -S30 −2.6% (inside noise).
+- `Why it doesn't transfer`: in the real region eight threads scan KV at once,
+  so the stage is bounded by the (E-cluster) shared bandwidth for ~400 MB/token
+  of KV, not by one core's dependency chain; splitting K and V into separate
+  passes also loses the fused scan's interleaved K/V streaming. The remaining
+  lever for long-context attention is spreading the KV scan over all
+  participants (position split + merge = numerics change → R12-B3 gate) or
+  fewer KV bytes.
+- `Decision`: rejected; code and test reverted.
+
+### R15-5: multi-file CLI batches through the lockstep scheduler — KEPT
+
+- `Change`: `-i a,b,c` ran up to 12 independent single-threaded workers
+  (`set_thread_override(1)` + `transcribe_audio` per file), each streaming the
+  full ~575 MB/token decode weights on its own. New
+  `transcribe::transcribe_batch_lockstep(ctx, inputs)` feeds each recording to
+  the R12-E3 lockstep scheduler as one segment (background nt=1 prefill — the
+  same environment as those workers — plus `decoder_forward_batched`, exact per
+  session by R12-E2). It returns `None` when it cannot reproduce the worker
+  result (non-aarch64 / lockstep off, < 2 inputs, `segment_sec > 0`, a
+  recording < 0.5 s that lockstep would zero-pad); the CLI then falls back to
+  the old workers for that group. Files are grouped (≤ 30 min of audio or 256
+  files) to bound resident audio.
+- `Exactness`: 12-file and 60-file outputs byte-identical to the worker path;
+  new `tests/batch_lockstep.rs` (own binary — the global pool only grows, so it
+  must not share a process with tests that shrink it) pins per-recording
+  equality vs single-threaded sibling sessions and the < 0.5 s fallback.
+- `Results` (A = R15-3, 5 runs, wall): 12 × 10 s files 2672 → 2228 ms
+  (−16.6%), repeat 2972 → 2602 (−12.4%); 60 × 10 s files 12541 → 11186
+  (−10.8%), repeat with budget grouping 12493 → 11382 (−8.9%). The 60-file
+  batch is dominated by AMX-bound encode/prefill, so sharing the decode weight
+  stream saves ~10% there; 32-file groups vs budget groups were equal within
+  noise.
+- `Decision`: kept.
+
+### R15-6: overlap the forced aligner with ASR decode — Skipped (no exact form)
+
+- `Idea`: `transcribe_full` (`--srt/--vtt/--json` + `--aligner-dir`) runs
+  `forced_align` serially after all ASR segments (long-2min -S30: ~3.4 s of
+  aligner after ~2.9 s of ASR); aligner work is AMX encoder/prefill, ASR decode
+  is NEON, and R12-F2 showed AMX/NEON overlap is free.
+- `Why not done`: the global kernel pool supports one dispatcher, and the ASR
+  lockstep decode already drives it from the caller thread. A concurrent
+  aligner would have to run its GEMMs on the nt=1 (single `cblas_sgemm` call)
+  path instead of the pooled 128-column slices, which changes its float
+  summation grouping and therefore the timestamps — not byte-identical. The
+  remaining exact sub-idea (project only timestamp positions through the
+  5000-class head) saves ~3 ms of ~680 ms per segment (< 0.5%) and changes the
+  GEMM's M (bit risk) — not worth it. R15-2 already removed the per-segment
+  tokenizer re-parse (−3.2% on this path). Revisit only with a second
+  dispatcher-capable pool or an R12-B3-gated numerics change.
+
+### R15-7: longer idle spin for pool workers — Rejected
+
+- `Change tested`: idle workers spun only 512 `spin_loop` iterations (< 5 µs)
+  before parking on the condvar; a dispatch to parked workers measured ~25 µs
+  (10 threads) vs ~4 µs when they are still spinning. Replaced with a
+  wall-clock spin window (`QWEN_ASR_POOL_SPIN_US`, default 50 µs) checked every
+  64 iterations. Scheduling-only → byte-identical (verified).
+- `Microbenchmark` (dispatch of a 2^18-element pooled conversion after an idle
+  gap): gap ≤ window → 3.6–4.5 µs instead of 23–27 µs, as intended.
+- `End-to-end` (A = R15-5, 8 runs): 50 µs — `audio.wav` inference +2.5%,
+  4 s clip −0.7%, push streaming +0.5%, long-2min -S30 −0.1% (flat to worse);
+  200 µs — `audio.wav` +8.6%, 4 s clip +5.4%, push streaming +7.1%, -S30 +0.6%
+  (clearly worse; encoder and prefill phases both slower).
+- `Why`: faster wake-ups do not pay for 11 cores spinning through every serial
+  gap — on Apple Silicon the spinning cores draw from the clusters' shared
+  power/frequency budget while the thread doing the serial (and AMX) work runs
+  slower. Same lesson as E9 from the other side.
+- `Also dropped`: fusing the bf16→f32 conversion and the GEMM into one dispatch
+  (R11-B, bit-identical) — those two dispatches are back-to-back, so the second
+  already finds the workers spinning (~4 µs); ≈ 0.8 ms per prefill call.
+- `Decision`: rejected; code reverted.
+
+### R15-8: KV-only last layer in ASR prefill — KEPT
+
+- `Change`: every ASR prefill caller (`prefill_segment_core` — offline,
+  segmented, lockstep — plus both streaming paths) follows the prefill with
+  `decoder_forward` on the next embedding, which reads only the KV cache. The
+  last layer's Q projection, q-norm/RoPE-Q, attention, O-projection and FFN only
+  produce `pref_x` (final hidden states), which nothing reads there. New
+  `decoder_prefill_kv_only` skips them (BF16 and Android INT8-prefill paths);
+  `decoder_prefill` keeps its full semantics for the aligner's
+  `decoder_prefill_logits` and external callers (qwen-asr-metal's
+  `decoder_reference.rs` reads `pref_x`). Skips 13M of the layer's 15M weights
+  (~3.1% of prefill GEMM work) plus 1/28 of prefill attention.
+- `Exactness`: by construction (K/V math untouched); new
+  `tests/prefill_kv_only.rs` pins KV-cache bit-identity vs `decoder_prefill`;
+  7/7 transcripts identical.
+- `Results` (A = R15-5, 8 runs): prefill `audio.wav` 229.0 → 219.0 ms (−4.4%),
+  long-2min single pass 1203 → 1166 (−3.1%), long-2min -S30 summed prefill
+  3363 → 3284 (−2.3%); inference `audio.wav` −3.9%, long-2min −0.6%, push
+  streaming −1.3%, -S30 +0.9% (wall-level noise; its prefill runs in the
+  background under decode).
+- `Decision`: kept.
+
+### R15-9: per-chunk conv-stem cache for streaming re-encodes — Rejected (feasibility)
+
+- `Idea`: the conv stem processes each 100-frame mel chunk independently
+  (~38% of encoder FLOPs), and the push path re-encodes the partial window
+  every 4 s and the full window at completion from the same start sample, so
+  stem outputs could be reused whenever a chunk's mel is bit-identical (exact
+  by construction with a content check). Distinct from G32 (mel-frame cache).
+- `Feasibility probe` (long-2min, every window start, slice pairs 4→8 s,
+  2→6 s, 6→8 s, 4→6 s, chunks fully inside the shorter slice): only **92/240
+  (38%)** chunks have bit-identical mel — the per-slice normalization
+  (`clamp(global_max − 8)`) shifts whenever a louder frame arrives later, and
+  the right-edge reflect padding moves.
+- `Projection`: with the 4 s re-encode throttle, reusable stem work ≈ 12% of
+  stem ≈ 5% of encoder ≈ < 1% of push-stream time. Not implemented.
+- `Decision`: rejected without code.
+
+### R15-10: causally-tiled multi-token attention (R5-H revisited) — KEPT
+
+- `Change`: prefill attention computed, per head, the full
+  `seq_q × seq_k` score GEMM and an O GEMM over all `seq_k` keys with the
+  masked upper triangle zeroed (≈ 2× the needed FLOPs; the allocation alone is
+  `seq_q × seq_k` floats per head range — ~240 MB per worker per layer at the
+  ~7800 tokens of a 10-min single pass). Now the query dimension is tiled
+  (128 rows) and each tile scores/accumulates only the keys its last row may
+  attend (`n_valid`); per-row softmax operations unchanged; score buffer
+  `128 × seq_k`. R5-H (TILE 64) was byte-identical but rejected because the
+  28 s sample made it 1.2% end-to-end; long single-pass audio was not gated
+  then.
+- `Exactness`: a temporary instrumented build ran the old and new kernels on
+  every call and compared outputs bitwise: 0 mismatched elements over all
+  calls in offline 28 s / long-2min, -S30 lockstep, file `--stream`, and 5
+  push-stream runs (2808 calls each, incl. `q_offset > 0` deltas). 7/7
+  transcripts identical. (Hook removed before commit.)
+- `Results` (A = R15-8): prefill long-2min 1157.5 → 997.0 ms (−13.9%),
+  inference −3.6%; long-10min single pass prefill 14602 → 10158 ms (−30.4%),
+  inference 57745 → 51870 ms (−10.2%, 2 runs); 28 s inputs prefill −2.3…−2.7%
+  (inference −0.5…−1.5%); push streaming flat (deltas are short). Peak RSS of
+  the long-10min single pass 10.37 GB → 8.55 GB (−1.8 GB, smaller score
+  buffers).
+- `Decision`: kept.
+
+### R15-11: CLI exits without tearing down the model — KEPT (small)
+
+- `Change`: the plain-text single-file CLI path returned from `main`, dropping
+  the session and model (encoder f32 prepack ~690 MB, KV superpages, mmaps)
+  after all output was written. It now flushes stdout/stderr and calls
+  `process::exit(0)`; output paths that write files are unchanged.
+- `Results`: time from the final stats line to process exit 27.9 → 21.1 ms
+  median (8/8 runs lower; remaining ~21 ms is the kernel unmapping the address
+  space). Wall A/B (10 runs) is inside noise (−2.3…+2.5%) — ~1% of a short
+  CLI run.
+- `Decision`: kept (consistent on its target metric, no output risk).
+
+
+### R15 follow-up: preserve tools and restore local checks (2026-11-06)
+
+- `Scope`: no inference kernel or thread-policy changes. Fixed the CLI's
+  `input_wav` late initialization and applied `cargo fmt` so the existing
+  formatting/clippy CI jobs can pass. Both default and no-default-feature
+  clippy checks pass locally with `-D warnings`.
+- `Tools`: moved `ab.py`, `ident.sh`, the C bandwidth/stage probes and the
+  Rust pool/attention/resampling/mel-cache probes into
+  [`bench/r15`](../../bench/r15/README.md). Paths are repository-relative;
+  large fixtures, binaries and generated raw output are ignored. Historical
+  identical transcripts are deduplicated with per-revision hashes. The A/B
+  runner saves raw stdout/stderr, process/power/thermal snapshots, wall and
+  phase timings, and binary hashes. Process failure, timeout, empty output,
+  differing transcripts/alignment JSON, or an optional decode regression
+  threshold produce failure instead of silently entering a median.
+- `Rebuild`: baseline `37c1e35b` and branch head `ef62a79d` (plus the formatting
+  and lint cleanup) were rebuilt with Rust 1.97.1, default features and the
+  same release/native-CPU configuration. Build provenance and archived
+  historical-binary hashes are separate; old binary filenames are not treated
+  as proof of their source revision.
+- `Performance attempt — INCONCLUSIVE`: external AC power, no booted iOS
+  simulators, but BTLEServer consumed about one core and other projects
+  launched vitest/workerd/Dart jobs during the run. Baseline 10-minute decode
+  was **33,537 ms** in warmup and **58,420 ms** in its first measured run,
+  both with 1,765 decoded tokens. The branch's warmup was 50,763 ms. These
+  nonstationary, incomplete samples do not establish a branch regression or
+  its cause. The user deferred idle-machine verification; the harness's own
+  ASR child was stopped intentionally (exit -15). Raw evidence and this status
+  are preserved in
+  [`history/2026-11-06-loaded-ab`](../../bench/r15/history/2026-11-06-loaded-ab/STATUS.md).
+- `Identity`: all 8 completed 2-minute invocations and all 3 completed
+  10-minute invocations match within their case. Fresh short offline/-S30/
+  stream comparisons match baseline byte-for-byte. A separate same-binary
+  12-vs-10 override smoke check matches both plain text and 2-minute alignment
+  JSON. These are output checks, **not** performance acceptance runs.
+- `Probe recovery`: the saved polyphase probe again reports 241 differing
+  samples out of 450,560 (max absolute difference 7.450581e-9), and the mel
+  cache probe reports 92/240 identical chunks. These confirm the probes still
+  reproduce their original observations; neither rejected optimization was
+  enabled in production.
+- `Validation`: `cargo fmt --check`, clippy with `-D warnings` in both feature
+  configurations, and full release workspace tests in both configurations
+  pass locally on macOS/aarch64. The A/B runner's four Python tests pass,
+  including timeout/failure evidence and identity/regression gates. All three
+  C probes and all four Rust probes compile and run. Linux/x86 CI and the
+  2,703-item full WER run were not executed in this follow-up.
+- `Remaining P0`: idle 2-/10-minute A/B with three measured pairs; same-binary
+  decode cap 12-vs-10 comparison; commit-by-commit localization if the decode
+  regression persists; then PR-triggered Linux/x86 CI before merging. R15-3
+  remains unchanged pending that evidence. No new README performance claim.
+
+
+### R15-12: profile batch decode and try dynamic attention — scheduling not retained
+
+- `Scope`: `decoder_forward_batched`, reached by segmented lockstep and
+  eligible multi-file transcription. Single-session decode, streaming verify,
+  and the R15-3 participant cap are unchanged.
+- `Kept`: `--profile` now reports caller-thread batch QKV, attention, FFN and
+  lm_head time alongside full batched-call time. Phase timers include their
+  existing completion barriers and do not sum overlapping worker times.
+  Attention tasks now borrow disjoint GQA output/query slices and offset
+  K/V to the matching group; this removes overlapping full-session mutable
+  slices without changing per-group arithmetic or the static schedule.
+- `Experiment`: one shared atomic item counter reset before the existing
+  KV-publication barrier, with each worker claiming a complete (session,
+  KV-group) item. No nested pool dispatch, no new barrier, no FP reordering.
+  It passed the new bitwise-state test and existing lockstep tests.
+- `Measurement`: initial 2-minute -S30 profiling put attention at 220.4 of
+  848.4 ms of batch decode (~26%). Three-pair static-vs-dynamic profiling of
+  10-minute -S30 reduced median attention time 1,389.0 → 1,129.4 ms (-18.7%),
+  but six-pair **unprofiled** A/B gave median paired wall deltas of -0.72%
+  (2-minute -S30), -0.49% (10-minute -S30), and +0.26% (12 files). Wins were
+  3/6, 4/6 and 3/6 pairs respectively. All transcripts matched. Background
+  load drifted, and pipeline batch occupancy differed between runs.
+- `Decision`: dynamic claiming **not retained**: no demonstrated repeatable
+  end-to-end benefit. This is not evidence of a proven regression, nor grounds
+  for an unmeasured KV-length threshold. Static scheduling remains active.
+  The existing completion barrier also means dynamic claiming alone would
+  not solve worker preemption (the separate P1 anti-preemption item).
+- `Tests/tooling`: new `tests/batch_decode.rs` compares real batched and
+  sequential decode for B=1/2/5/8, heterogeneous KV positions/strides and four
+  successive steps: exact tokens, normalized hidden-state bits and every
+  active K/V bit. The A/B tool parses batch phase totals/call counts separately
+  from serial decode and reports paired percentage deltas alongside ratios of
+  medians; the existing optional serial decode gate retains its semantics.
+- `Validation of retained code`: formatting and clippy (`-D warnings`) pass
+  in both feature configurations; the full default release workspace suite
+  passes (93 tests, 3 intentionally ignored microbenchmarks). The three
+  batch/lockstep integration tests also pass with no default features. All six
+  Python harness tests pass. A final three-pair unprofiled comparison against
+  the previous branch head preserves outputs, with paired wall deltas -0.07%
+  (2-minute -S30) and +0.73% (12 files), not a new speed claim.
+- `Evidence`: [commands and archived results](../../bench/r15/history/batch-attention/README.md).
+  Idle-machine performance acceptance and the original long-single-pass
+  regression investigation remain deferred.
+
+
+### R15-13: bound long-wait yield frequency on Apple Silicon — KEPT
+
+- `Diagnosis`: a fresh three-pair main/current 10-minute comparison did not
+  repeat the historical +21% decode regression (paired median +2.26%, wall
+  -3.35%). The old `Backoff` exhausted its 4,096-poll spin budget once, then
+  called `sched_yield()` on every remaining poll. This shared join/barrier
+  policy predates R15; it is a measured scheduler hotspot, not proof of a
+  particular R15 commit causing the original observation.
+- `Change`: on macOS/aarch64 only, reset the existing spin budget after each
+  yield. No new threshold, sleep, thread heuristic, arithmetic or reduction
+  order. Other platforms retain the existing oversubscription policy.
+- `Direct A/B`: three alternating 10-minute pairs, 1,765 decoded tokens and
+  identical transcripts throughout. Decode 55.081/48.225/46.210 seconds before
+  versus 41.490/40.142/38.971 after (-24.67%/-16.76%/-15.67%). Side medians:
+  decode 48.225 -> 40.142 seconds (-16.76%), process wall 63.284 -> 55.613
+  seconds (-12.12%; median paired wall delta -12.84%). These are loaded-machine
+  results, not an idle-machine claim.
+- `Resource evidence`: whole-process median system CPU 66.951 -> 6.562 CPU
+  seconds and involuntary context switches 2,070,805 -> 736,905. Context
+  switches are not yield-call counts. All measured long runs had zero system
+  Swapins/Swapouts deltas despite high existing swap occupancy.
+- `Controls`: 2-minute decode deltas are noisy (-36.44%, +31.45%, -3.91%).
+  At 16 global/decode threads, three pairs each of short/2-minute input match
+  exactly with no hangs (paired wall -3.37%/-1.46%). Same-binary decode12
+  versus decode10 gives paired decode -1.52% for 2 minutes, -10.80% for 10
+  minutes under recorded load; R15-3 remains unchanged pending idle review.
+- `Validation`: the yield-frequency test fails on the old code and passes
+  after restoring the fix. Delayed-generation barrier visibility is tested.
+  Default release workspace: 95 passed, 3 ignored. Relevant no-default
+  library/integration suites: 61 passed. Formatting, both all-target clippy
+  configurations with `-D warnings`, and six Python harness tests pass.
+- `Final main comparison`: three pairs of the rebuilt fix versus main match
+  outputs and pass the 6% median decode threshold (54.649 -> 54.503 seconds,
+  -0.27%; median wall -6.28%). A simulator had restarted and baseline decode
+  varied from 49.569 to 88.547 seconds; this is a noisy loaded-machine check,
+  not idle-machine performance acceptance.
+- `Evidence and limits`: [full investigation](../../bench/r15/history/long-audio/README.md)
+  includes per-run snapshots, hashes and commands. Idle-machine review,
+  Linux/x86 CI and full-set WER were not performed; README headline figures
+  remain unchanged. The fix still requires every barrier participant to run.
+
+
+### R15 benchmark refresh and full-set identity check (November 6–7)
+
+The working-tree build measured 581.0 ms median inference and 693.4 ms median
+process wall on the 28.16-second clip in the five-implementation comparison.
+All 17 A/B cases matched main on their outputs. Full offline dev-clean produced
+the same 1,501 errors in 54,402 reference words for both builds (2.7591% WER).
+One of 2,703 recorded hypotheses differs before normalization. The extra comma
+on `1272-141231-0009` reproduces at `3c0b6f9a` (R15-10), while `76bf6add`
+(R15-8) matches main on all three repeats. This supersedes the smaller fixture
+suite as evidence about exact output. The file-streaming path on both builds
+returns partial content on the long samples (91.8% / 98.4% WER).
+[Full report and evidence](../benchmarks/results.md).
 
 ---
 

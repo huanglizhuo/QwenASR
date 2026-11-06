@@ -1,0 +1,4 @@
+   Compiling poolbench v0.1.0 (/Users/lizhuo/owork/q-asr/bench/r15/poolbench)
+    Finished `release` profile [optimized] target(s) in 0.26s
+     Running `bench/r15/poolbench/target/release/resamp bench/samples/audio.wav`
+current resample: 22.5 ms   polyphase: 8.3 ms   (450560 out samples; differing: 241, max |diff| 7.450581e-9, max ulp 779)

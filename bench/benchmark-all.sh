@@ -15,6 +15,7 @@ CHARTS_DIR="$SCRIPT_DIR/charts"
 VENV_DIR="$SCRIPT_DIR/.venv-bench"
 BASELINE_REF="bf52daf"
 CURRENT_REF="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+CURRENT_BINARY=""
 C_REPO_URL="https://github.com/antirez/qwen-asr.git"
 UPSTREAM_REF="main"
 SECOND_STATE_REPO="https://github.com/second-state/qwen3_asr_rs.git"
@@ -38,6 +39,7 @@ Usage: $0 [options]
   --venv-dir DIR              Python venv for benchmark tooling (default: ./.venv-bench)
   --baseline-ref REF          First Rust ref (default: bf52daf)
   --current-ref REF           Current Rust ref (default: HEAD)
+  --current-binary PATH       Benchmark an existing current Rust binary instead of rebuilding --current-ref
   --upstream-ref REF          Upstream C ref to clone/reset (default: main)
   --second-state-ref REF      second-state/qwen3_asr_rs ref (default: main)
   --mlx-audio-venv DIR        Python venv for mlx-audio (default: ./.venv-mlx-audio)
@@ -61,6 +63,7 @@ while [[ $# -gt 0 ]]; do
         --venv-dir) VENV_DIR="$2"; shift 2 ;;
         --baseline-ref) BASELINE_REF="$2"; shift 2 ;;
         --current-ref) CURRENT_REF="$2"; shift 2 ;;
+        --current-binary) CURRENT_BINARY="$2"; shift 2 ;;
         --upstream-ref) UPSTREAM_REF="$2"; shift 2 ;;
         --second-state-ref) SECOND_STATE_REF="$2"; shift 2 ;;
         --mlx-audio-venv) MLX_AUDIO_VENV="$2"; shift 2 ;;
@@ -127,6 +130,9 @@ TMP_DIR="$(abs_path "$TMP_DIR")"
 CHARTS_DIR="$(abs_path "$CHARTS_DIR")"
 VENV_DIR="$(abs_path "$VENV_DIR")"
 MLX_AUDIO_VENV="$(abs_path "$MLX_AUDIO_VENV")"
+if [[ -n "$CURRENT_BINARY" ]]; then
+    CURRENT_BINARY="$(abs_path "$CURRENT_BINARY")"
+fi
 
 if [[ $DO_CLEAN -eq 1 ]]; then
     cleanup_tmp
@@ -140,6 +146,10 @@ if [[ ! -d "$MODEL_DIR" ]]; then
 fi
 if [[ ! -f "$INPUT_FILE" ]]; then
     echo "Input file not found: $INPUT_FILE" >&2
+    exit 1
+fi
+if [[ -n "$CURRENT_BINARY" && ! -x "$CURRENT_BINARY" ]]; then
+    echo "Current binary not found or not executable: $CURRENT_BINARY" >&2
     exit 1
 fi
 if [[ "$INPUT_FILE" != *.wav ]]; then
@@ -164,6 +174,10 @@ AUDIO_DURATION_S="$(wav_duration_seconds "$INPUT_FILE")"
 # min(system CPUs, 16) onto every CPU implementation).
 BASELINE_SHORT="$(git -C "$PROJECT_DIR" rev-parse --short "$BASELINE_REF")"
 CURRENT_SHORT="$(git -C "$PROJECT_DIR" rev-parse --short "$CURRENT_REF")"
+if [[ -n "$CURRENT_BINARY" ]]; then
+    CURRENT_BINARY_SHA="$(shasum -a 256 "$CURRENT_BINARY" | awk '{print $1}')"
+    CURRENT_SHORT="binary-${CURRENT_BINARY_SHA:0:12}"
+fi
 
 ensure_worktree() {
     local path="$1"
@@ -401,9 +415,13 @@ normalize_rust_results() {
     local accel="$3"
     local result_dir="$4"
     local commit_ref="$5"
-    python3 - "$label" "$impl" "$accel" "$result_dir" "$SUMMARY_DIR" "$commit_ref" "$TIMESTAMP" <<'PY'
-import glob, json, os, sys
-label, impl, accel, result_dir, out_dir, commit_ref, benchmark_date = sys.argv[1:]
+    local binary="$6"
+    local source_kind="$7"
+    python3 - "$label" "$impl" "$accel" "$result_dir" "$SUMMARY_DIR" "$commit_ref" "$TIMESTAMP" "$binary" "$source_kind" <<'PY'
+import glob, hashlib, json, os, sys
+label, impl, accel, result_dir, out_dir, commit_ref, benchmark_date, binary, source_kind = sys.argv[1:]
+with open(binary, "rb") as f:
+    binary_sha256 = hashlib.sha256(f.read()).hexdigest()
 paths = [
     p for p in sorted(glob.glob(os.path.join(result_dir, "*.json")))
     if os.path.basename(p) != "summary.json"
@@ -438,6 +456,9 @@ for path in paths:
         "note": "Inference time excludes process startup and model load; wall-clock retained as wall_clock_ms",
         "source_artifact": path,
         "commit": commit_ref,
+        "binary": binary,
+        "binary_sha256": binary_sha256,
+        "source_kind": source_kind,
         "benchmark_date": benchmark_date,
         "historical": False,
     }
@@ -498,14 +519,24 @@ benchmark_rust_target() {
     local build_log="$RAW_DIR/$label/build.log"
     local output_root="$RAW_DIR/$label"
     local result_dir="$output_root/$label"
+    local binary="$worktree/target/release/qwen-asr"
+    local source_kind="git_worktree"
     mkdir -p "$output_root"
 
-    log "Building $label"
-    if ! /bin/zsh -lc "cd '$worktree' && cargo clean >/dev/null && RUSTFLAGS='-C target-cpu=native' cargo build --release" >"$build_log" 2>&1; then
-        for mode in "${MODE_LIST[@]}"; do
-            write_result_json "$SUMMARY_DIR/$label-$mode.json" "$impl" true "$mode" false false true null null "" "Rust build failed; see $build_log" "$build_log" "$commit_ref" "$TIMESTAMP" false
-        done
-        return
+    if [[ "$impl" == "rust-current" && -n "$CURRENT_BINARY" ]]; then
+        binary="$CURRENT_BINARY"
+        source_kind="supplied_binary"
+        log "Using prebuilt $label: $binary ($CURRENT_BINARY_SHA)"
+        printf 'Source: supplied_binary (not rebuilt from --current-ref)\nBinary: %s\nSHA256: %s\n' \
+            "$binary" "$CURRENT_BINARY_SHA" >"$build_log"
+    else
+        log "Building $label"
+        if ! /bin/zsh -lc "cd '$worktree' && cargo clean >/dev/null && RUSTFLAGS='-C target-cpu=native' cargo build --release" >"$build_log" 2>&1; then
+            for mode in "${MODE_LIST[@]}"; do
+                write_result_json "$SUMMARY_DIR/$label-$mode.json" "$impl" true "$mode" false false true null null "" "Rust build failed; see $build_log" "$build_log" "$commit_ref" "$TIMESTAMP" false
+            done
+            return
+        fi
     fi
 
     local thread_args=()
@@ -514,7 +545,7 @@ benchmark_rust_target() {
     fi
     log "Running $label"
     if ! "$SCRIPT_DIR/run.sh" \
-        --binary "$worktree/target/release/qwen-asr" \
+        --binary "$binary" \
         --model-dir "$MODEL_DIR" \
         --samples-dir "$INPUT_FILE" \
         --output-dir "$output_root" \
@@ -528,7 +559,7 @@ benchmark_rust_target() {
         return
     fi
 
-    normalize_rust_results "$label" "$impl" true "$result_dir" "$commit_ref"
+    normalize_rust_results "$label" "$impl" true "$result_dir" "$commit_ref" "$binary" "$source_kind"
 }
 
 benchmark_c_target() {
@@ -829,7 +860,9 @@ fi
 
 log "Preparing worktrees"
 ensure_worktree "$TMP_DIR/baseline-rust" "$BASELINE_REF"
-ensure_worktree "$TMP_DIR/current-rust" "$CURRENT_REF"
+if [[ -z "$CURRENT_BINARY" ]]; then
+    ensure_worktree "$TMP_DIR/current-rust" "$CURRENT_REF"
+fi
 
 log "Preparing upstream C repo"
 ensure_c_clone "$TMP_DIR/antirez-qwen-asr"

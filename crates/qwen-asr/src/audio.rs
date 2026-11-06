@@ -154,7 +154,10 @@ pub fn resample(samples: &[f32], from_rate: i32, to_rate: i32) -> Vec<f32> {
 
     let inv_i0_beta = 1.0 / bessel_i0(kaiser_beta);
 
-    for (i, resampled_val) in resampled.iter_mut().enumerate().take(new_n) {
+    // One output sample. Every output is an independent function of `i`, so
+    // computing them on any thread in any order is bit-identical to the
+    // sequential loop.
+    let output_at = |i: usize| -> f32 {
         let src_pos = i as f64 / ratio;
         let center = src_pos as i32;
         let mut acc = 0.0f64;
@@ -189,11 +192,50 @@ pub fn resample(samples: &[f32], from_rate: i32, to_rate: i32) -> Vec<f32> {
             wsum += coeff;
         }
 
-        *resampled_val = if wsum > 1e-9 {
+        if wsum > 1e-9 {
             (acc / wsum) as f32
         } else {
             0.0
-        };
+        }
+    };
+
+    // The per-tap sin + 20-term Bessel make this ~0.45 µs per output sample
+    // (~200 ms for 28 s of 44.1 kHz audio). Split long inputs across scoped
+    // threads (NOT the global kernel pool: the CLI resamples on a side thread
+    // while the model loads, and the pool supports one dispatcher at a time).
+    // Fixed-size chunks handed out from a shared stack let P-cores take more.
+    const PAR_MIN_OUT: usize = 1 << 15;
+    const CHUNK: usize = 4096;
+    let n_threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(16);
+    if new_n < PAR_MIN_OUT || n_threads <= 1 {
+        for (i, v) in resampled.iter_mut().enumerate() {
+            *v = output_at(i);
+        }
+    } else {
+        let work: std::sync::Mutex<Vec<(usize, &mut [f32])>> = std::sync::Mutex::new(
+            resampled
+                .chunks_mut(CHUNK)
+                .enumerate()
+                .map(|(c, s)| (c * CHUNK, s))
+                .collect(),
+        );
+        std::thread::scope(|scope| {
+            for _ in 0..n_threads {
+                scope.spawn(|| loop {
+                    let item = match work.lock() {
+                        Ok(mut w) => w.pop(),
+                        Err(p) => p.into_inner().pop(),
+                    };
+                    let Some((start, out)) = item else { break };
+                    for (k, v) in out.iter_mut().enumerate() {
+                        *v = output_at(start + k);
+                    }
+                });
+            }
+        });
     }
 
     resampled

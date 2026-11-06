@@ -1,0 +1,19 @@
+{
+  "date": "2026-11-06 Asia/Singapore",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "base_commit": "37c1e35be333945dc9b5771a6a33fe4b2064533f",
+  "head_commit": "ef62a79d4a46e4847ca1041803f1fdfd678d1b6f",
+  "head_local_changes": "cargo fmt and input_wav late-initialization cleanup only; no inference or threading changes",
+  "build_command": "cargo build --release -p qwen-asr-cli",
+  "config": "aarch64-apple-darwin rustflags: -C target-cpu=native; release opt-level=3, lto=fat, codegen-units=1, panic=abort",
+  "binaries": {
+    "base": {
+      "path": "tmp/r15/bin/base",
+      "sha256": "2f5efa342bde2be7f1230cac18b915fa57239332371dea68a1b794b6f2da10dd"
+    },
+    "head": {
+      "path": "tmp/r15/bin/head",
+      "sha256": "dbe12044dd76d2825beb46574a87e407810c4a2cfc987fb8601b825c213ccd11"
+    }
+  }
+}

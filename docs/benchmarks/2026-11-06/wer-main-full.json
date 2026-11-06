@@ -1,0 +1,18 @@
+{
+  "label": "comprehensive-2026-11-06-main-full",
+  "dataset": "librispeech-wer-bench/dev-clean-full",
+  "mode": "offline",
+  "items": 2703,
+  "ok": 2703,
+  "failed": 0,
+  "corpus_wer": 0.02759089739347818,
+  "macro_wer": 0.031925741621742484,
+  "word_edits": 1501,
+  "ref_words": 54402,
+  "corpus_cer": 0.007542442109005642,
+  "macro_cer": 0.009193619894849977,
+  "char_edits": 1782,
+  "ref_chars": 236263,
+  "results_jsonl": "librispeech-wer-bench/wer-results/comprehensive-2026-11-06-main-full/results.jsonl",
+  "failures": []
+}

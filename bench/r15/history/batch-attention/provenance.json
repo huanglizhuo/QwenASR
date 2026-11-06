@@ -1,0 +1,20 @@
+{
+  "git_head": "ef62a79d4a46e4847ca1041803f1fdfd678d1b6f",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "build": "cargo build --release -p qwen-asr-cli; default features, target-cpu=native; identical release profile",
+  "binaries": {
+    "head": "dbe12044dd76d2825beb46574a87e407810c4a2cfc987fb8601b825c213ccd11",
+    "batch-static-profile": "b3c3f0643387cf0e6ebbc4a3f7d6d1a09146d0ac6ec21f4eb97609df89480e84",
+    "batch-static-safe": "3d7e5a479c20a55c77d0690aa46ab6a073863829b42c56d9c84a897c58b0bc4b",
+    "batch-dynamic": "3f9f0f55a1482b33c73dfdb6daa7a62c7f85fb0a5cf7bd10141bf9c86d4a08b4"
+  },
+  "source_sha256": {
+    "before_round15_followup": "6dd514ec6bedce7be24c90ea71d97d21b6dbe406a0b6800a5c8d95510a5197a2",
+    "static_group_slices": "c6726c9c20d8d9ab87294ff3ac78154fb6155510baf7c8d5bdc3810da15f9e19",
+    "dynamic_group_slices": "b9787a4f20f528bd1dadc509362928998c84e82dd54c68d2d64aceed97a267c9"
+  },
+  "comparison": "static-safe and dynamic both include identical phase profiling and disjoint GQA slices; only task claiming differs",
+  "environment": "AC power, BTLEServer background core load; not an idle-machine gate",
+  "decision": "Dynamic claiming not retained: no demonstrated end-to-end benefit. Final production keeps static scheduling with disjoint group slices and phase profiling.",
+  "retained_decoder_sha256": "c6726c9c20d8d9ab87294ff3ac78154fb6155510baf7c8d5bdc3810da15f9e19"
+}

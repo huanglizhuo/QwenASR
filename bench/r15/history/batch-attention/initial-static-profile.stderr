@@ -1,0 +1,50 @@
+Thread pool: 12 threads
+Optimizations: vDSP/Accelerate, NEON, DotProd | 12 threads | aarch64
+Loading model from qwen3-asr-0.6b
+Detected: Qwen3-ASR-0.6B
+Loading encoder weights...
+Loading decoder weights...
+Model loaded in 236 ms
+QASR_METRIC int8 prefill=0 encoder=0
+Audio: 1931279 samples (120.7 seconds)
+Splitting into 5 segments
+Lockstep segments: 5 segments, batch 5, 5 sessions
+  Mel: 2795 frames (3 ms)
+  Mel: 3085 frames (4 ms)
+  Mel: 2875 frames (3 ms)
+  Mel: 3015 frames (3 ms)
+  Mel: 300 frames (0 ms)
+  Encoder: 39 tokens (142 ms)
+  Encoder: 363 tokens (485 ms)
+  Prefill: 57 tokens (265 ms)
+  Encoder: 392 tokens (561 ms)
+  Encoder: 401 tokens (881 ms)
+  Encoder: 374 tokens (890 ms)
+  Prefill: 381 tokens (657 ms)
+  Prefill: 410 tokens (559 ms)
+  Prefill: 392 tokens (665 ms)
+  Prefill: 419 tokens (894 ms)
+Inference: 2307 ms, 368 text tokens (159.52 tok/s, encoding: 2973ms, decoding: 4463ms)
+Audio: 120.7 s processed in 2.3 s (52.32x realtime)
+[profile] rms_norm: 28.7ms (21536 calls, 0.00ms avg)
+[profile] layer_norm: 15.0ms (185 calls, 0.08ms avg)
+[profile] gelu: 195.2ms (461 calls, 0.42ms avg)
+[profile] swiglu: 162.2ms (135 calls, 1.20ms avg)
+[profile] bf16_matvec: 2320.1ms (955 calls, 2.43ms avg)
+[profile] attention_bidir: 551.7ms (90 calls, 6.13ms avg)
+[profile] attention_causal: 446.5ms (135 calls, 3.31ms avg)
+[profile] sgemm: 3112.0ms (1627 calls, 1.91ms avg)
+[profile] conv2d_op: 1244.9ms (366 calls, 3.40ms avg)
+[profile] rope: 19.2ms (21163 calls, 0.00ms avg)
+[profile] add_inplace_op: 11.7ms (392 calls, 0.03ms avg)
+[profile] model_load: 236.0ms (1 calls, 235.96ms avg)
+[profile] encoder_load: 44.1ms (1 calls, 44.12ms avg)
+[profile] decoder_load: 0.4ms (1 calls, 0.37ms avg)
+[profile] tokenizer_load: 46.0ms (1 calls, 45.97ms avg)
+[profile] audio_load: 1.8ms (1 calls, 1.76ms avg)
+[profile] mel_compute: 14.3ms (5 calls, 2.86ms avg)
+[profile] batch_decode: 848.4ms (139 calls, 6.10ms avg)
+[profile] batch_qkv: 100.7ms (3892 calls, 0.03ms avg)
+[profile] batch_attention: 220.4ms (3892 calls, 0.06ms avg)
+[profile] batch_ffn: 246.7ms (3892 calls, 0.06ms avg)
+[profile] batch_lm_head: 105.7ms (139 calls, 0.76ms avg)

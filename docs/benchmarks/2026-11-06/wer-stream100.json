@@ -1,0 +1,18 @@
+{
+  "label": "comprehensive-2026-11-06-stream100",
+  "dataset": "librispeech-wer-bench/dev-clean-full",
+  "mode": "streaming",
+  "items": 100,
+  "ok": 100,
+  "failed": 0,
+  "corpus_wer": 0.04895960832313342,
+  "macro_wer": 0.05256107865038326,
+  "word_edits": 80,
+  "ref_words": 1634,
+  "corpus_cer": 0.016348399505426568,
+  "macro_cer": 0.017179462689556647,
+  "char_edits": 119,
+  "ref_chars": 7279,
+  "results_jsonl": "librispeech-wer-bench/wer-results/comprehensive-2026-11-06-stream100/results.jsonl",
+  "failures": []
+}

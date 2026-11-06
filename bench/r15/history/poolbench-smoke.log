@@ -1,0 +1,13 @@
+   Compiling libc v0.2.191
+   Compiling qwen-asr v0.11.0 (/Users/lizhuo/owork/q-asr/crates/qwen-asr)
+   Compiling poolbench v0.1.0 (/Users/lizhuo/owork/q-asr/bench/r15/poolbench)
+    Finished `release` profile [optimized] target(s) in 4.66s
+     Running `bench/r15/poolbench/target/release/poolbench 10`
+threads=10  serial convert of 262144 elems = 12.2 us
+  idle gap      0 us before dispatch -> pooled call p50 35.0 us, p90 50.7 us
+  idle gap      5 us before dispatch -> pooled call p50 48.7 us, p90 84.5 us
+  idle gap     20 us before dispatch -> pooled call p50 69.4 us, p90 93.1 us
+  idle gap     50 us before dispatch -> pooled call p50 71.2 us, p90 90.7 us
+  idle gap    100 us before dispatch -> pooled call p50 66.8 us, p90 127.7 us
+  idle gap    300 us before dispatch -> pooled call p50 55.3 us, p90 95.1 us
+  idle gap   1000 us before dispatch -> pooled call p50 48.0 us, p90 83.5 us

@@ -8,7 +8,6 @@ use qwen_asr::{align, audio, config, context, kernels, subtitle, transcribe};
 
 use std::io::Write;
 // Only the macOS live-capture loop uses these.
-use std::sync::atomic::AtomicUsize;
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(target_os = "macos")]
@@ -60,15 +59,15 @@ fn extract_audio_from_video(path: &str) -> Option<Vec<f32>> {
         return None;
     }
 
-    let raw = &output.stdout;
-    if raw.len() % 2 != 0 {
+    let (pcm, remainder) = output.stdout.as_chunks::<2>();
+    if !remainder.is_empty() {
         eprintln!("Error: ffmpeg returned odd number of bytes");
         return None;
     }
 
-    let samples: Vec<f32> = raw
-        .chunks_exact(2)
-        .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
+    let samples: Vec<f32> = pcm
+        .iter()
+        .map(|&bytes| i16::from_le_bytes(bytes) as f32 / 32768.0)
         .collect();
     Some(samples)
 }
@@ -189,7 +188,6 @@ fn main() {
 
     let mut model_dir: Option<String> = None;
     let mut input_files: Vec<String> = Vec::new();
-    let input_wav: Option<String>;
     let mut verbosity = 1i32;
     let mut use_stdin = false;
     let mut live_mode = false;
@@ -410,7 +408,7 @@ fn main() {
         }
     }
 
-    input_wav = input_files.first().cloned();
+    let input_wav = input_files.first().cloned();
 
     if input_wav.is_none() && !use_stdin && !live_mode {
         usage(&args[0]);
@@ -517,45 +515,45 @@ fn main() {
     // configure fresh sibling sessions identically).
     let apply_settings = |ctx: &mut QwenCtx| {
         if segment_sec >= 0.0 {
-        ctx.segment_sec = segment_sec;
-    }
-    if search_sec >= 0.0 {
-        ctx.search_sec = search_sec;
-    }
-    if enc_window_sec >= 0.0 {
-        let window_frames = (enc_window_sec * 100.0 + 0.5) as usize;
-        ctx.config.enc_n_window_infer = window_frames.clamp(100, 800);
-    }
-    if stream_max_new_tokens > 0 {
-        ctx.stream_max_new_tokens = stream_max_new_tokens;
-    }
-    if stream_chunk_sec > 0.0 {
-        ctx.stream_chunk_sec = stream_chunk_sec;
-    }
-    if past_text_mode >= 0 {
-        ctx.past_text_conditioning = past_text_mode == 1;
-    } else if stream_mode {
-        ctx.past_text_conditioning = true;
-    }
-    if skip_silence {
-        ctx.skip_silence = true;
-    }
-    if let Some(ref prompt) = prompt_text {
-        if ctx.set_prompt(prompt).is_err() {
-            eprintln!("Failed to set --prompt text");
-            std::process::exit(1);
+            ctx.segment_sec = segment_sec;
         }
-    }
-    if let Some(ref lang) = force_language {
-        if ctx.set_force_language(lang).is_err() {
-            eprintln!("Unsupported language for --language: {}", lang);
-            eprintln!("Supported languages: {}", SUPPORTED_LANGUAGES.join(","));
-            std::process::exit(1);
+        if search_sec >= 0.0 {
+            ctx.search_sec = search_sec;
         }
-    }
-    // Structured output without a forced language needs the model to emit its own
-    // `language X` header for detection; this skips the default prompt preamble.
-    // Plain-text runs keep the byte-identical default decode path.
+        if enc_window_sec >= 0.0 {
+            let window_frames = (enc_window_sec * 100.0 + 0.5) as usize;
+            ctx.config.enc_n_window_infer = window_frames.clamp(100, 800);
+        }
+        if stream_max_new_tokens > 0 {
+            ctx.stream_max_new_tokens = stream_max_new_tokens;
+        }
+        if stream_chunk_sec > 0.0 {
+            ctx.stream_chunk_sec = stream_chunk_sec;
+        }
+        if past_text_mode >= 0 {
+            ctx.past_text_conditioning = past_text_mode == 1;
+        } else if stream_mode {
+            ctx.past_text_conditioning = true;
+        }
+        if skip_silence {
+            ctx.skip_silence = true;
+        }
+        if let Some(ref prompt) = prompt_text {
+            if ctx.set_prompt(prompt).is_err() {
+                eprintln!("Failed to set --prompt text");
+                std::process::exit(1);
+            }
+        }
+        if let Some(ref lang) = force_language {
+            if ctx.set_force_language(lang).is_err() {
+                eprintln!("Unsupported language for --language: {}", lang);
+                eprintln!("Supported languages: {}", SUPPORTED_LANGUAGES.join(","));
+                std::process::exit(1);
+            }
+        }
+        // Structured output without a forced language needs the model to emit its own
+        // `language X` header for detection; this skips the default prompt preamble.
+        // Plain-text runs keep the byte-identical default decode path.
         if output_requested && force_language.is_none() {
             ctx.want_language_detection = true;
         }
@@ -649,61 +647,98 @@ fn main() {
         }
     }
 
-    // Multi-file parallel transcription. Sibling sessions share the weights
-    // through the model's Arc, so each worker only pays for its own KV cache
-    // and scratch buffers. The global kernel thread pool is shared, so the
-    // win comes from overlapping the serial parts of decode across files.
+    // Multi-file transcription. Sibling sessions share the weights through the
+    // model's Arc, so each session only pays for its own KV cache and scratch.
+    //
+    // R15-5: files are taken in groups and each group goes through the lockstep
+    // batched scheduler (`transcribe_batch_lockstep`): up to MAX_BATCH decodes
+    // share every weight stream while background single-threaded workers
+    // prefill the next files — the same single-threaded prefill environment as
+    // the worker path below, so per-file output is unchanged. When lockstep
+    // cannot reproduce that (other arch, `-S` splitting, sub-0.5 s file), the
+    // group falls back to independent single-threaded workers.
     if input_files.len() > 1 {
         let model = ctx.model().clone();
         let files = &input_files;
         let results = std::sync::Mutex::new(vec![None::<String>; files.len()]);
-        // One core per single-threaded worker (see the override note below);
-        // extra workers would only oversubscribe.
-        let n_workers = files.len().min(kernels::get_num_threads());
-        let next_file = AtomicUsize::new(0);
-        std::thread::scope(|scope| {
-            let handles: Vec<_> = (0..n_workers)
-                .map(|_| {
-                    scope.spawn(|| {
-                        // The global kernel pool supports one dispatcher at a
-                        // time; pin this worker's kernels to inline
-                        // single-threaded execution (same pattern as the
-                        // parallel-segment decode workers) so N workers each
-                        // own one core instead of racing the pool dispatch.
-                        kernels::set_thread_override_public(1);
-                        let mut session = QwenCtx::from_model(model.clone());
-                        apply_settings(&mut session);
-                        loop {
-                            let idx = next_file.fetch_add(1, Ordering::Relaxed);
-                            if idx >= files.len() {
-                                break;
-                            }
-                            if verbosity >= 1 {
-                                eprintln!("Transcribing: {}", files[idx]);
-                            }
-                            match load_audio(&files[idx]) {
-                                Some(samples) => {
-                                    let text =
-                                        transcribe::transcribe_audio(&mut session, &samples);
-                                    if let Ok(mut guard) = results.lock() {
-                                        guard[idx] = text;
-                                    }
-                                }
-                                None => {
-                                    eprintln!("Failed to load audio from {}", files[idx]);
-                                }
-                            }
-                        }
-                    })
-                })
-                .collect();
-            for h in handles {
-                if h.join().is_err() {
-                    eprintln!("Error: worker thread panicked");
-                    std::process::exit(1);
+        // Groups keep resident audio bounded (~30 min of 16 kHz samples, or 256
+        // files) while each lockstep run stays long enough that its prefill
+        // ramp and drain tail are amortized.
+        const GROUP_MAX_FILES: usize = 256;
+        const GROUP_MAX_SAMPLES: usize = 30 * 60 * 16_000;
+        let mut next = 0usize;
+        while next < files.len() {
+            let mut idxs = Vec::new();
+            let mut audio: Vec<Vec<f32>> = Vec::new();
+            let mut group_samples = 0usize;
+            while next < files.len()
+                && idxs.len() < GROUP_MAX_FILES
+                && group_samples < GROUP_MAX_SAMPLES
+            {
+                let i = next;
+                next += 1;
+                if verbosity >= 1 {
+                    eprintln!("Transcribing: {}", files[i]);
+                }
+                match load_audio(&files[i]) {
+                    Some(samples) => {
+                        group_samples += samples.len();
+                        idxs.push(i);
+                        audio.push(samples);
+                    }
+                    None => eprintln!("Failed to load audio from {}", files[i]),
                 }
             }
-        });
+
+            let mut session = QwenCtx::from_model(model.clone());
+            apply_settings(&mut session);
+            if let Some(texts) = transcribe::transcribe_batch_lockstep(&mut session, &audio) {
+                if let Ok(mut guard) = results.lock() {
+                    for (k, text) in texts.into_iter().enumerate() {
+                        guard[idxs[k]] = text;
+                    }
+                }
+                continue;
+            }
+
+            // Fallback: one core per single-threaded worker; extra workers
+            // would only oversubscribe.
+            let n_workers = idxs.len().min(kernels::get_num_threads());
+            let queue = std::sync::Mutex::new(idxs.into_iter().zip(audio).collect::<Vec<_>>());
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = (0..n_workers)
+                    .map(|_| {
+                        scope.spawn(|| {
+                            // The global kernel pool supports one dispatcher at
+                            // a time; pin this worker's kernels to inline
+                            // single-threaded execution (same pattern as the
+                            // parallel-segment decode workers) so N workers each
+                            // own one core instead of racing the pool dispatch.
+                            kernels::set_thread_override_public(1);
+                            let mut session = QwenCtx::from_model(model.clone());
+                            apply_settings(&mut session);
+                            loop {
+                                let item = match queue.lock() {
+                                    Ok(mut q) => q.pop(),
+                                    Err(_) => None,
+                                };
+                                let Some((idx, samples)) = item else { break };
+                                let text = transcribe::transcribe_audio(&mut session, &samples);
+                                if let Ok(mut guard) = results.lock() {
+                                    guard[idx] = text;
+                                }
+                            }
+                        })
+                    })
+                    .collect();
+                for h in handles {
+                    if h.join().is_err() {
+                        eprintln!("Error: worker thread panicked");
+                        std::process::exit(1);
+                    }
+                }
+            });
+        }
         let results = results.into_inner().unwrap();
 
         let mut failed = false;
@@ -962,6 +997,12 @@ fn main() {
     if profile {
         kernels::profile_report();
     }
+
+    // R15-11: all output is written; exit without running destructors for the
+    // multi-GB model/session state (they only free memory the OS reclaims).
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    std::process::exit(0);
 }
 
 // ========================================================================

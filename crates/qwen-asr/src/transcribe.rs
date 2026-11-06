@@ -227,10 +227,9 @@ fn stream_tail_repeat_blocks(tokens: &[i32], max_period: usize) -> (usize, usize
     (best_reps, best_period)
 }
 
-fn load_tokenizer(model_dir: &str) -> Option<QwenTokenizer> {
-    let _pg = kernels::ProfileGuard::new(&kernels::PROF.tokenizer_load);
-    let vocab_path = format!("{}/vocab.json", model_dir);
-    QwenTokenizer::load(&vocab_path)
+/// The model's shared tokenizer (parsed once in [`crate::context::QwenModel::load`]).
+fn load_tokenizer(ctx: &QwenCtx) -> Option<std::sync::Arc<QwenTokenizer>> {
+    ctx.model.tokenizer.clone()
 }
 
 /// Immutable, thread-shareable model weights plus the prepared prompt token
@@ -455,7 +454,7 @@ fn prefill_segment_core(
     let t0 = get_time_ms();
     kv_cache.len = 0;
     let prefill_len = total_seq - 1;
-    decoder::decoder_prefill(
+    decoder::decoder_prefill_kv_only(
         weights.decoder,
         cfg,
         kv_cache,
@@ -1014,7 +1013,7 @@ pub fn transcribe_full(
 ) -> Option<TranscriptionResult> {
     ctx.reset_perf();
 
-    let tokenizer = load_tokenizer(&ctx.model.model_dir)?;
+    let tokenizer = load_tokenizer(ctx)?;
     if !ctx.prepare_prompt_tokens(&tokenizer) {
         return None;
     }
@@ -1210,7 +1209,7 @@ pub fn transcribe_audio(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         );
     }
 
-    let tokenizer = load_tokenizer(&ctx.model.model_dir)?;
+    let tokenizer = load_tokenizer(ctx)?;
     if !ctx.prepare_prompt_tokens(&tokenizer) {
         return None;
     }
@@ -1895,6 +1894,91 @@ fn collect_splits_lockstep(
     slots
 }
 
+/// Transcribe several independent recordings with the lockstep batched
+/// scheduler (R15-5): each recording is one lockstep segment, so up to
+/// `MAX_BATCH` decodes share every weight stream while background workers
+/// prefill the next recordings.
+///
+/// Per-recording output is byte-identical to [`transcribe_audio`] on a sibling
+/// session whose kernels are pinned single-threaded
+/// ([`kernels::set_thread_override_public`]`(1)`) — the CLI's multi-file worker
+/// path: lockstep prefill runs in that same single-threaded environment and the
+/// batched INT8 decode step is bit-identical per session (R12-E2).
+///
+/// Returns `None` (caller should fall back) when the lockstep path cannot
+/// reproduce that per-recording result: non-aarch64 or lockstep disabled, fewer
+/// than two recordings, `segment_sec > 0` (recordings would be split), or a
+/// recording shorter than the segment minimum (lockstep zero-pads those).
+/// Must be called from the thread that owns the kernel pool (not from a thread
+/// with a thread-count override). Results are in input order; `None` entries
+/// mark recordings whose prefill failed.
+pub fn transcribe_batch_lockstep(
+    ctx: &mut QwenCtx,
+    inputs: &[Vec<f32>],
+) -> Option<Vec<Option<String>>> {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let n = inputs.len();
+        let min_samples = SAMPLE_RATE as usize / 2;
+        let b = lockstep_batch_size(n);
+        if n < 2
+            || b < 2
+            || !kernels::seg_parallel_blas()
+            || ctx.segment_sec > 0.0
+            || inputs.iter().any(|x| x.len() < min_samples)
+        {
+            return None;
+        }
+
+        ctx.reset_perf();
+        let tokenizer = load_tokenizer(ctx)?;
+        if !ctx.prepare_prompt_tokens(&tokenizer) {
+            return None;
+        }
+
+        // Same preprocessing as `transcribe_audio` with `segment_sec <= 0`.
+        let prepared: Vec<Vec<f32>> = inputs
+            .iter()
+            .map(|x| {
+                if ctx.skip_silence {
+                    audio::compact_silence(x)
+                } else {
+                    x.clone()
+                }
+            })
+            .collect();
+        if prepared.iter().any(|x| x.len() < min_samples) {
+            return None;
+        }
+
+        let mut splits = Vec::with_capacity(n);
+        let mut concat = Vec::with_capacity(prepared.iter().map(Vec::len).sum());
+        for x in &prepared {
+            splits.push(concat.len());
+            concat.extend_from_slice(x);
+        }
+        ctx.perf_audio_ms = 1000.0 * concat.len() as f64 / SAMPLE_RATE as f64;
+
+        let slots = collect_splits_lockstep(ctx, &concat, &splits, &tokenizer, b);
+        let mut out = Vec::with_capacity(n);
+        for slot in slots {
+            match slot {
+                Some(o) => {
+                    apply_seg_core(ctx, &o.core);
+                    out.push(Some(o.core.text));
+                }
+                None => out.push(None),
+            }
+        }
+        Some(out)
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        let _ = (ctx, inputs);
+        None
+    }
+}
+
 /// Convenience wrapper: load a WAV file and transcribe it.
 ///
 /// Equivalent to [`audio::load_wav`] followed by
@@ -2201,7 +2285,7 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         } else {
             samples.to_vec()
         };
-        let tokenizer = load_tokenizer(&ctx.model.model_dir)?;
+        let tokenizer = load_tokenizer(ctx)?;
         ctx.prepare_prompt_tokens(&tokenizer);
         let (text, _) = transcribe_segment(ctx, &audio_samples, &tokenizer, None)?;
         return Some(text);
@@ -2213,7 +2297,7 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         samples.to_vec()
     };
 
-    let tokenizer = load_tokenizer(&ctx.model.model_dir)?;
+    let tokenizer = load_tokenizer(ctx)?;
     if !ctx.prepare_prompt_tokens(&tokenizer) {
         return None;
     }
@@ -2447,7 +2531,7 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         ctx.kv_cache.len = reused_prefill;
         let delta_prefill = prefill_len - reused_prefill;
         if delta_prefill > 0 {
-            decoder::decoder_prefill(
+            decoder::decoder_prefill_kv_only(
                 &ctx.model.decoder,
                 &cfg,
                 &mut ctx.kv_cache,
@@ -2673,7 +2757,7 @@ pub struct StreamState {
     ml_speech_since_boundary: bool,
 
     // Tokenizer (loaded once)
-    tokenizer: Option<QwenTokenizer>,
+    tokenizer: Option<std::sync::Arc<QwenTokenizer>>,
     prompt_prepared: bool,
 }
 
@@ -2796,7 +2880,7 @@ pub fn stream_push_audio(
 
     // Lazy-init tokenizer
     if state.tokenizer.is_none() {
-        state.tokenizer = load_tokenizer(&ctx.model.model_dir);
+        state.tokenizer = load_tokenizer(ctx);
     }
     let tokenizer = state.tokenizer.as_ref()?;
 
@@ -3048,7 +3132,7 @@ pub fn stream_push_audio(
         ctx.kv_cache.len = reused_prefill;
         let delta_prefill = prefill_len - reused_prefill;
         if delta_prefill > 0 {
-            decoder::decoder_prefill(
+            decoder::decoder_prefill_kv_only(
                 &ctx.model.decoder,
                 &cfg,
                 &mut ctx.kv_cache,

@@ -26,6 +26,19 @@ python3 librispeech-wer-bench/librispeech_wer.py \
   --mode offline
 ```
 
+### Full dev-clean evaluation (2,703 utterances)
+
+The local `dev-clean-2` cache contains only 1,089 utterances. Use the complete
+split and omit `--limit` for a full-set result:
+
+```bash
+python3 librispeech-wer-bench/librispeech_wer.py \
+  --dataset librispeech-wer-bench/dev-clean-full \
+  --binary target/release/qwen-asr --model-dir qwen3-asr-0.6b \
+  --output-dir librispeech-wer-bench/results \
+  --label current-offline-full --mode offline
+```
+
 ### Download `dev-clean` automatically
 
 ```bash

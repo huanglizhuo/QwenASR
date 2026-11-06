@@ -1,0 +1,11 @@
+{
+  "items": 100,
+  "mode": "offline",
+  "source": "matching IDs extracted from full offline pass",
+  "word_edits": 80,
+  "ref_words": 1634,
+  "char_edits": 119,
+  "ref_chars": 7279,
+  "corpus_wer": 0.04895960832313342,
+  "corpus_cer": 0.016348399505426568
+}

@@ -1,0 +1,10 @@
+[package]
+name = "poolbench"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+qwen-asr = { path = "../../../crates/qwen-asr" }
+[profile.release]
+opt-level = 3
+
+[workspace]

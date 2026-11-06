@@ -167,7 +167,7 @@ whitespace.
 
 ## Performance
 
-Detailed, up-to-date benchmark results (including the latest optimizations that achieve **41+ RTF** on Apple Silicon) are published in the [main repository README](https://github.com/huanglizhuo/QwenASR).
+Detailed, dated benchmark results (including inference and end-to-end timings, long-audio coverage, and full-set WER) are published in the [main repository README](https://github.com/huanglizhuo/QwenASR).
 
 ## License
 
