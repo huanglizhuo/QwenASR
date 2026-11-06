@@ -1185,7 +1185,7 @@ pub fn decoder_forward(
         let mut fused_token: i32 = 0;
         let fused_token_ptr = &mut fused_token as *mut i32 as usize;
 
-        kernels::parallel_region(|barrier, tid, nt| {
+        kernels::parallel_region_n(kernels::decode_region_threads(), |barrier, tid, nt| {
             // Per-thread SwiGLU gate_up scratch, allocated once per decode step
             // instead of once per layer: removes 28 heap allocations per token
             // per thread from the fused region. Sized for this thread's max

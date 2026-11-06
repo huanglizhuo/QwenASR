@@ -7984,6 +7984,44 @@ Method (every item):
   push-to-talk and VAD Live, `--live --vad`) no longer pay the parse per call.
 - `Decision`: kept.
 
+### R15-3: cap the single-token decode region's participants — KEPT
+
+- `Problem`: the fused decode region uses a static row split and ~280 spin
+  barriers per token, so one descheduled participant stalls the whole token.
+  The R11-G thread default (12 on 5P/10E) was tuned on an idle machine; with
+  background load (BTLEServer pinning a core the whole session) the audit
+  measured 4.4–6.0 ms/token at `-t 12` and ~15 ms/token at `-t 15`, against
+  3.9–4.3 at `-t 8/10`. Encoder/prefill (work-stealing items) were unaffected.
+- `Change`: new `parallel_region_n` (workers with `tid >= n` return at once,
+  barrier sized `n`) and `decode_region_threads()`; `decoder_forward` runs its
+  region with `max(8, threads − 2)` participants on macOS/aarch64 (12 → 10;
+  ≥ 8 keeps one thread per KV group in attention). Other platforms unchanged.
+  `QWEN_ASR_DECODE_THREADS=N` overrides. Lockstep/verify regions unchanged.
+- `Exactness`: every INT8 row, attention head and argmax slice is owned by one
+  thread, row math is order-exact, and the argmax reduce keeps the lowest-index
+  tie-break, so the token stream is identical for any participant count.
+  7/7 transcripts identical; full suite green.
+- `Results` (A = R15-2, 10 runs, normal conditions = BTLEServer on 1 core):
+
+| Case | A decode | B decode | Δ decode | Δ inference | Δ wall |
+|------|---------:|---------:|---------:|------------:|-------:|
+| 28 s 16 kHz offline | 361.5 ms | 327.5 ms | −9.4% | −4.2% | −3.3% |
+| `audio.wav` offline | 218.0 | 185.0 | −15.1% | −5.4% | −5.1% |
+| long-2min single pass | 2586 | 2239 | −13.4% | −7.8% | −7.6% |
+| push streaming 28 s | — | — | — | −2.6% | −2.3% |
+| long-2min -S30 (lockstep) | — | — | — | +0.9% | +0.1% |
+
+  Under +2 extra busy cores (`yes` ×2): cap 8 −16.5…−19.6% decode, cap 10
+  −27…−42% decode. Probed alternatives: cap 8 under normal conditions improved
+  short-context medians (−8.5/−12.5%) but its best runs at long context were
+  ~15% slower than 12 participants (fewer threads stream less bandwidth when
+  nobody is preempted); an earlier cap-10 session also showed an ~11%
+  slower long-context best case, which the final 10-run session did not
+  reproduce (B min 4135 vs A min 4258 ms). On a fully idle machine 12
+  participants may still win the long-context best case — use
+  `QWEN_ASR_DECODE_THREADS=12` there.
+- `Decision`: kept (default 12 → 10 participants on Apple Silicon).
+
 ---
 
 ## Autoresearch Program Baseline Experiments

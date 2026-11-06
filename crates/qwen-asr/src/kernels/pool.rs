@@ -434,6 +434,58 @@ pub(crate) fn parallel_region<F: Fn(&RegionBarrier, usize, usize) + Send + Sync>
     parallel_for(|tid, nt| f(&barrier, tid, nt));
 }
 
+/// Like [`parallel_region`] but with at most `n` participants: pool workers
+/// with `tid >= n` return immediately and the barrier is sized `n`. Used by
+/// the single-token decode region, whose per-row / per-head work is assigned
+/// to exactly one thread, so its output is identical for any participant
+/// count.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+pub(crate) fn parallel_region_n<F: Fn(&RegionBarrier, usize, usize) + Send + Sync>(n: usize, f: F) {
+    let n_threads = get_num_threads();
+    let n = n.clamp(1, n_threads.max(1));
+    if n == n_threads {
+        parallel_region(f);
+        return;
+    }
+    let barrier = RegionBarrier::new(n);
+    parallel_for(|tid, _nt| {
+        if tid < n {
+            f(&barrier, tid, n);
+        }
+    });
+}
+
+/// Participants for the fused single-token decode region (R15-3).
+///
+/// Decode streams ~575 MB of INT8 weights per token through ~280 spin
+/// barriers with a static row split, so ONE descheduled participant stalls the
+/// whole token. M5 Pro (5P/10E, default 12 threads) with background load:
+/// 12 participants measured 4.4–6.0 ms/token and 15 measured ~15 ms/token,
+/// against 3.9–4.3 at 8–10. Apple Silicon default: leave two of the configured
+/// threads out of the region, never below 8 (one thread per KV group in the
+/// attention stage) — 12 → 10. Trade-off: on a fully idle machine 12
+/// participants stream ~5–10% more bandwidth (long-context best case), so
+/// `QWEN_ASR_DECODE_THREADS=N` overrides for idle-machine benchmarking.
+/// Elsewhere: no cap (no data).
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+pub(crate) fn decode_region_threads() -> usize {
+    static CAP: OnceLock<Option<usize>> = OnceLock::new();
+    let nt = get_num_threads();
+    let cap = *CAP.get_or_init(|| {
+        std::env::var("QWEN_ASR_DECODE_THREADS")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .filter(|&n| n > 0)
+    });
+    match cap {
+        Some(n) => nt.min(n).max(1),
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        None => nt.min(nt.saturating_sub(2).max(8)),
+        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+        None => nt,
+    }
+}
+
 /// Even split of `total` items across `nt` workers; returns this worker's
 /// `[start, end)` range (possibly empty).
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
