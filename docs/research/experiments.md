@@ -8022,6 +8022,33 @@ Method (every item):
   `QWEN_ASR_DECODE_THREADS=12` there.
 - `Decision`: kept (default 12 → 10 participants on Apple Silicon).
 
+### R15-4: three-pass single-token attention scan — Rejected
+
+- `Motivation`: decode ms/token rises 4.0 → 8.5 from ctx ~75 to ~1770
+  (long-2min single pass). Isolated single-thread probe of the attention kernel:
+  one KV group at ctx 1770 costs 1.6 ms/token on a P-core but 4.9 ms/token on
+  an E-core (≈ the observed +4.5 ms/token), with the fused scan's per-position
+  chain `dot → scalar exp → axpy` suspected.
+- `Change tested`: `paired_attention_row` split into (1) all scores,
+  (2) the scalar online-softmax recurrence recording branch + coefficient,
+  (3) V accumulation in position order — same helper calls (vDSP/NEON
+  `dot_f32`, `vec_scale_add`, `vec_axpy_inplace`) with the same operands in the
+  same per-head order, thread-local grow-only scratch.
+- `Exactness`: bit-identical — an exactness test against the verbatim fused
+  scan passed in both build flavors at ctx 1…1500; transcripts identical.
+- `Isolated probe` (single thread): P-core 1.04–1.16×, E-core 1.25–1.6×.
+- `End-to-end` (A = R15-3): long-2min single pass decode median +9.6% (8 runs)
+  and +6.4% (12 runs), best runs −2%; 28 s / `audio.wav` / push streaming flat
+  (−2.2…+1.7%); long-2min -S30 −2.6% (inside noise).
+- `Why it doesn't transfer`: in the real region eight threads scan KV at once,
+  so the stage is bounded by the (E-cluster) shared bandwidth for ~400 MB/token
+  of KV, not by one core's dependency chain; splitting K and V into separate
+  passes also loses the fused scan's interleaved K/V streaming. The remaining
+  lever for long-context attention is spreading the KV scan over all
+  participants (position split + merge = numerics change → R12-B3 gate) or
+  fewer KV bytes.
+- `Decision`: rejected; code and test reverted.
+
 ---
 
 ## Autoresearch Program Baseline Experiments
