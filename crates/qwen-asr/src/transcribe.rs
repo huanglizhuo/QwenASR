@@ -227,10 +227,9 @@ fn stream_tail_repeat_blocks(tokens: &[i32], max_period: usize) -> (usize, usize
     (best_reps, best_period)
 }
 
-fn load_tokenizer(model_dir: &str) -> Option<QwenTokenizer> {
-    let _pg = kernels::ProfileGuard::new(&kernels::PROF.tokenizer_load);
-    let vocab_path = format!("{}/vocab.json", model_dir);
-    QwenTokenizer::load(&vocab_path)
+/// The model's shared tokenizer (parsed once in [`crate::context::QwenModel::load`]).
+fn load_tokenizer(ctx: &QwenCtx) -> Option<std::sync::Arc<QwenTokenizer>> {
+    ctx.model.tokenizer.clone()
 }
 
 /// Immutable, thread-shareable model weights plus the prepared prompt token
@@ -1014,7 +1013,7 @@ pub fn transcribe_full(
 ) -> Option<TranscriptionResult> {
     ctx.reset_perf();
 
-    let tokenizer = load_tokenizer(&ctx.model.model_dir)?;
+    let tokenizer = load_tokenizer(ctx)?;
     if !ctx.prepare_prompt_tokens(&tokenizer) {
         return None;
     }
@@ -1210,7 +1209,7 @@ pub fn transcribe_audio(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         );
     }
 
-    let tokenizer = load_tokenizer(&ctx.model.model_dir)?;
+    let tokenizer = load_tokenizer(ctx)?;
     if !ctx.prepare_prompt_tokens(&tokenizer) {
         return None;
     }
@@ -2201,7 +2200,7 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         } else {
             samples.to_vec()
         };
-        let tokenizer = load_tokenizer(&ctx.model.model_dir)?;
+        let tokenizer = load_tokenizer(ctx)?;
         ctx.prepare_prompt_tokens(&tokenizer);
         let (text, _) = transcribe_segment(ctx, &audio_samples, &tokenizer, None)?;
         return Some(text);
@@ -2213,7 +2212,7 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         samples.to_vec()
     };
 
-    let tokenizer = load_tokenizer(&ctx.model.model_dir)?;
+    let tokenizer = load_tokenizer(ctx)?;
     if !ctx.prepare_prompt_tokens(&tokenizer) {
         return None;
     }
@@ -2673,7 +2672,7 @@ pub struct StreamState {
     ml_speech_since_boundary: bool,
 
     // Tokenizer (loaded once)
-    tokenizer: Option<QwenTokenizer>,
+    tokenizer: Option<std::sync::Arc<QwenTokenizer>>,
     prompt_prepared: bool,
 }
 
@@ -2796,7 +2795,7 @@ pub fn stream_push_audio(
 
     // Lazy-init tokenizer
     if state.tokenizer.is_none() {
-        state.tokenizer = load_tokenizer(&ctx.model.model_dir);
+        state.tokenizer = load_tokenizer(ctx);
     }
     let tokenizer = state.tokenizer.as_ref()?;
 

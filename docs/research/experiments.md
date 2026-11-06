@@ -7964,6 +7964,26 @@ Method (every item):
   load in the CLI.
 - `Decision`: kept.
 
+### R15-2: tokenizer parsed once per model, overlapped with weight load — KEPT
+
+- `Change`: every `transcribe_audio` / `transcribe_full` / `transcribe_stream`
+  call re-parsed `vocab.json` + `merges.txt` (~43 ms, single-threaded), and
+  `align::forced_align` did it again per aligned segment. `QwenModel` now holds
+  `tokenizer: Option<Arc<QwenTokenizer>>`, parsed on a side thread spawned at
+  the start of `QwenModel::load` (overlapping safetensors open + encoder/decoder
+  load; no kernel-pool use, so no dispatcher race). All call sites (including
+  the private `StreamState.tokenizer`) share the `Arc`. A missing vocab still
+  makes transcription return `None`, as before.
+- `Results` (A = R15-1, 10 runs): wall 4 s clip 325.6 → 276.2 ms (−15.2%),
+  28 s 16 kHz 926.0 → 895.0 (−3.4%), `audio.wav` 773.3 → 719.6 (−6.9%),
+  12-file batch 2979 → 2924 (−1.8%, reloads were already parallel);
+  `--json` + aligner on long-2min -S30 6558 → 6351 (−3.2%, ≈ 5 segments × 43 ms).
+  `model_load` 74 ms + serial tokenizer 43 ms → ~60–76 ms total. Inference
+  within noise. Transcripts 7/7 identical; aligner JSON byte-identical.
+- `Benefit beyond the CLI`: per-utterance callers (C API / JNI / Flutter
+  push-to-talk and VAD Live, `--live --vad`) no longer pay the parse per call.
+- `Decision`: kept.
+
 ---
 
 ## Autoresearch Program Baseline Experiments

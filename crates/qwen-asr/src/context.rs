@@ -31,6 +31,10 @@ pub struct QwenModel {
     pub decoder: Decoder,
     pub _safetensors: MultiSafetensors, // kept alive for mmap'd BF16 pointers
     pub model_dir: String,
+    /// Tokenizer parsed once at load (concurrently with the weights) and
+    /// shared by every session and call; `None` if `vocab.json`/`merges.txt`
+    /// failed to load, in which case transcription returns `None` as before.
+    pub tokenizer: Option<Arc<QwenTokenizer>>,
 }
 
 impl QwenModel {
@@ -45,6 +49,17 @@ impl QwenModel {
 
         let _pg = kernels::ProfileGuard::new(&kernels::PROF.model_load);
         let load_t0 = std::time::Instant::now();
+
+        // Parse the tokenizer (single-threaded JSON + BPE merges, ~40 ms) on a
+        // side thread for the whole weight load, instead of on every transcribe
+        // call. It uses no kernel pool, so it cannot race the loaders. On an
+        // early `?` return the handle is dropped and the thread just finishes.
+        let vocab_path = format!("{}/vocab.json", model_dir);
+        let tok_handle = std::thread::spawn(move || {
+            let _pg = kernels::ProfileGuard::new(&kernels::PROF.tokenizer_load);
+            QwenTokenizer::load(&vocab_path).map(Arc::new)
+        });
+
         let ms = MultiSafetensors::open(model_dir)?;
 
         // Detect model variant from tensor shapes
@@ -104,6 +119,7 @@ impl QwenModel {
             let _pg = kernels::ProfileGuard::new(&kernels::PROF.decoder_load);
             Decoder::load(&ms, &cfg, model_dir)?
         };
+        let tokenizer = tok_handle.join().ok().flatten();
 
         if kernels::verbose() >= 1 {
             eprintln!(
@@ -123,6 +139,7 @@ impl QwenModel {
             decoder,
             _safetensors: ms,
             model_dir: model_dir.to_string(),
+            tokenizer,
         });
         // Also to native stderr (host/CLI); on Android stderr is not redirected to
         // logcat, so the same status is additionally surfaced via `perf_stats()`.

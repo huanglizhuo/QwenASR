@@ -222,8 +222,9 @@ pub fn forced_align(
         return None;
     }
 
-    let vocab_path = format!("{}/vocab.json", ctx.model.model_dir);
-    let tokenizer = QwenTokenizer::load(&vocab_path)?;
+    // Shared tokenizer parsed once at model load (was re-parsed per call,
+    // i.e. per aligned segment in `transcribe_full`).
+    let tokenizer = ctx.model.tokenizer.clone()?;
 
     ctx.reset_perf();
     ctx.perf_audio_ms = 1000.0 * samples.len() as f64 / SAMPLE_RATE as f64;
