@@ -8176,6 +8176,18 @@ Method (every item):
   buffers).
 - `Decision`: kept.
 
+### R15-11: CLI exits without tearing down the model — KEPT (small)
+
+- `Change`: the plain-text single-file CLI path returned from `main`, dropping
+  the session and model (encoder f32 prepack ~690 MB, KV superpages, mmaps)
+  after all output was written. It now flushes stdout/stderr and calls
+  `process::exit(0)`; output paths that write files are unchanged.
+- `Results`: time from the final stats line to process exit 27.9 → 21.1 ms
+  median (8/8 runs lower; remaining ~21 ms is the kernel unmapping the address
+  space). Wall A/B (10 runs) is inside noise (−2.3…+2.5%) — ~1% of a short
+  CLI run.
+- `Decision`: kept (consistent on its target metric, no output risk).
+
 ---
 
 ## Autoresearch Program Baseline Experiments

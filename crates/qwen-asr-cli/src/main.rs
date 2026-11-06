@@ -998,6 +998,12 @@ fn main() {
     if profile {
         kernels::profile_report();
     }
+
+    // R15-11: all output is written; exit without running destructors for the
+    // multi-GB model/session state (they only free memory the OS reclaims).
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    std::process::exit(0);
 }
 
 // ========================================================================
