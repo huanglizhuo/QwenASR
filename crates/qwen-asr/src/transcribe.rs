@@ -454,7 +454,7 @@ fn prefill_segment_core(
     let t0 = get_time_ms();
     kv_cache.len = 0;
     let prefill_len = total_seq - 1;
-    decoder::decoder_prefill(
+    decoder::decoder_prefill_kv_only(
         weights.decoder,
         cfg,
         kv_cache,
@@ -2531,7 +2531,7 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         ctx.kv_cache.len = reused_prefill;
         let delta_prefill = prefill_len - reused_prefill;
         if delta_prefill > 0 {
-            decoder::decoder_prefill(
+            decoder::decoder_prefill_kv_only(
                 &ctx.model.decoder,
                 &cfg,
                 &mut ctx.kv_cache,
@@ -3132,7 +3132,7 @@ pub fn stream_push_audio(
         ctx.kv_cache.len = reused_prefill;
         let delta_prefill = prefill_len - reused_prefill;
         if delta_prefill > 0 {
-            decoder::decoder_prefill(
+            decoder::decoder_prefill_kv_only(
                 &ctx.model.decoder,
                 &cfg,
                 &mut ctx.kv_cache,

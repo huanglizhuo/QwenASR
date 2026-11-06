@@ -8113,6 +8113,28 @@ Method (every item):
   already finds the workers spinning (~4 µs); ≈ 0.8 ms per prefill call.
 - `Decision`: rejected; code reverted.
 
+### R15-8: KV-only last layer in ASR prefill — KEPT
+
+- `Change`: every ASR prefill caller (`prefill_segment_core` — offline,
+  segmented, lockstep — plus both streaming paths) follows the prefill with
+  `decoder_forward` on the next embedding, which reads only the KV cache. The
+  last layer's Q projection, q-norm/RoPE-Q, attention, O-projection and FFN only
+  produce `pref_x` (final hidden states), which nothing reads there. New
+  `decoder_prefill_kv_only` skips them (BF16 and Android INT8-prefill paths);
+  `decoder_prefill` keeps its full semantics for the aligner's
+  `decoder_prefill_logits` and external callers (qwen-asr-metal's
+  `decoder_reference.rs` reads `pref_x`). Skips 13M of the layer's 15M weights
+  (~3.1% of prefill GEMM work) plus 1/28 of prefill attention.
+- `Exactness`: by construction (K/V math untouched); new
+  `tests/prefill_kv_only.rs` pins KV-cache bit-identity vs `decoder_prefill`;
+  7/7 transcripts identical.
+- `Results` (A = R15-5, 8 runs): prefill `audio.wav` 229.0 → 219.0 ms (−4.4%),
+  long-2min single pass 1203 → 1166 (−3.1%), long-2min -S30 summed prefill
+  3363 → 3284 (−2.3%); inference `audio.wav` −3.9%, long-2min −0.6%, push
+  streaming −1.3%, -S30 +0.9% (wall-level noise; its prefill runs in the
+  background under decode).
+- `Decision`: kept.
+
 ---
 
 ## Autoresearch Program Baseline Experiments

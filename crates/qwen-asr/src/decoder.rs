@@ -720,7 +720,8 @@ impl DecoderBuffers {
     }
 }
 
-/// Decoder prefill: process multiple tokens.
+/// Decoder prefill: process multiple tokens. Afterwards `bufs.pref_x` holds the
+/// final-layer hidden states of all `seq_len` positions.
 pub fn decoder_prefill(
     decoder: &Decoder,
     cfg: &QwenConfig,
@@ -729,6 +730,39 @@ pub fn decoder_prefill(
     bufs: &mut DecoderBuffers,
     input_embeds: &[f32],
     seq_len: usize,
+) {
+    decoder_prefill_impl(decoder, cfg, kv_cache, rope, bufs, input_embeds, seq_len, false);
+}
+
+/// Prefill for autoregressive decoding (R15-8): fills the KV cache exactly like
+/// [`decoder_prefill`] but skips the last layer's Q projection, attention,
+/// O-projection and FFN — their only output is `bufs.pref_x` (final hidden
+/// states), which decoding never reads (the next token is produced by
+/// [`decoder_forward`] from its own input embedding over the KV cache). The KV
+/// cache is bit-identical; `bufs.pref_x` is NOT meaningful afterwards. Use
+/// [`decoder_prefill`] when the final hidden states are needed (aligner logits).
+pub fn decoder_prefill_kv_only(
+    decoder: &Decoder,
+    cfg: &QwenConfig,
+    kv_cache: &mut KvCache,
+    rope: &mut RopeCache,
+    bufs: &mut DecoderBuffers,
+    input_embeds: &[f32],
+    seq_len: usize,
+) {
+    decoder_prefill_impl(decoder, cfg, kv_cache, rope, bufs, input_embeds, seq_len, true);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decoder_prefill_impl(
+    decoder: &Decoder,
+    cfg: &QwenConfig,
+    kv_cache: &mut KvCache,
+    rope: &mut RopeCache,
+    bufs: &mut DecoderBuffers,
+    input_embeds: &[f32],
+    seq_len: usize,
+    kv_only: bool,
 ) {
     let dim = cfg.dec_hidden;
     let n_heads = cfg.dec_heads;
@@ -803,7 +837,12 @@ pub fn decoder_prefill(
         (Vec::new(), Vec::new())
     };
 
+    let n_layers = decoder.layers.len();
     for (layer_idx, layer) in decoder.layers.iter().enumerate() {
+        // R15-8: in KV-only mode the last layer only has to produce its K/V
+        // cache rows; its Q/attention/O/FFN feed nothing but `pref_x`.
+        let kv_last = kv_only && layer_idx + 1 == n_layers;
+
         let x_norm = &mut bufs.pref_x_norm[..seq_len * dim];
         kernels::rms_norm(
             x_norm,
@@ -834,16 +873,18 @@ pub fn decoder_prefill(
                 );
                 let xq = &xq_buf[..seq_len * dim];
                 let xs = &xq_scales[..seq_len];
-                kernels::int8_prefill_matvec(
-                    q,
-                    xq,
-                    xs,
-                    layer.wq_int8.as_ptr(),
-                    layer.wq_int8_scales.as_ptr(),
-                    dim,
-                    q_dim,
-                    seq_len,
-                );
+                if !kv_last {
+                    kernels::int8_prefill_matvec(
+                        q,
+                        xq,
+                        xs,
+                        layer.wq_int8.as_ptr(),
+                        layer.wq_int8_scales.as_ptr(),
+                        dim,
+                        q_dim,
+                        seq_len,
+                    );
+                }
                 kernels::int8_prefill_matvec(
                     k,
                     xq,
@@ -867,15 +908,17 @@ pub fn decoder_prefill(
             }
         } else {
             unsafe {
-                kernels::linear_nobias_bf16_scratch(
-                    q,
-                    x_norm,
-                    layer.wq_weight_bf16,
-                    seq_len,
-                    dim,
-                    q_dim,
-                    &mut bufs.bf16_scratch,
-                );
+                if !kv_last {
+                    kernels::linear_nobias_bf16_scratch(
+                        q,
+                        x_norm,
+                        layer.wq_weight_bf16,
+                        seq_len,
+                        dim,
+                        q_dim,
+                        &mut bufs.bf16_scratch,
+                    );
+                }
                 kernels::linear_nobias_bf16_scratch(
                     k,
                     x_norm,
@@ -897,10 +940,14 @@ pub fn decoder_prefill(
             }
         }
 
-        kernels::rms_norm_per_head(q, &layer.q_norm_weight, seq_len, n_heads, head_dim, eps);
+        if !kv_last {
+            kernels::rms_norm_per_head(q, &layer.q_norm_weight, seq_len, n_heads, head_dim, eps);
+        }
         kernels::rms_norm_per_head(k, &layer.k_norm_weight, seq_len, n_kv_heads, head_dim, eps);
 
-        kernels::apply_rope_neox(q, rope_cos, rope_sin, seq_len, n_heads, head_dim);
+        if !kv_last {
+            kernels::apply_rope_neox(q, rope_cos, rope_sin, seq_len, n_heads, head_dim);
+        }
         kernels::apply_rope_neox(k, rope_cos, rope_sin, seq_len, n_kv_heads, head_dim);
 
         // Store K, V in cache (scatter to head-contiguous layout)
@@ -915,6 +962,9 @@ pub fn decoder_prefill(
                 start_pos + s,
                 &bufs.pref_v[s * kv_dim..(s + 1) * kv_dim],
             );
+        }
+        if kv_last {
+            break;
         }
 
         let total_seq = start_pos + seq_len;
