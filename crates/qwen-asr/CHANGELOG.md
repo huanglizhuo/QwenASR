@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.11.1](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.11.0...qwen-asr-v0.11.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* **kernels:** gate the batch region export on aarch64 ([8585e24](https://github.com/huanglizhuo/QwenASR/commit/8585e24edd11efc896a3ae11121d23e3c0727144))
+* **review:** address PR [#52](https://github.com/huanglizhuo/QwenASR/issues/52) review — 4th BLAS site, spin-join, flag parsing ([b71f338](https://github.com/huanglizhuo/QwenASR/commit/b71f33866ae5da4311a805c97960d67e838b685e))
+* **stream:** keep stable-token cursor in sync on degen/re-anchor reset ([1d1906d](https://github.com/huanglizhuo/QwenASR/commit/1d1906da1383241c9b612dae614be637a7af19ef))
+* **x86:** avoid pooled OpenBLAS calls ([ee27b7c](https://github.com/huanglizhuo/QwenASR/commit/ee27b7cacdce162f01c97b1f15a0b5b26021d538))
+* **x86:** avoid pooled OpenBLAS calls ([52d73c6](https://github.com/huanglizhuo/QwenASR/commit/52d73c64d59789e67c9b316276d7b00fcfe37542))
+
+
+### Performance Improvements
+
+* **attention:** causally-tiled multi-token attention (R15-10, R5-H revisited) ([3c0b6f9](https://github.com/huanglizhuo/QwenASR/commit/3c0b6f9a768f7e9ba1352e40c9905f23ff0947c2))
+* **audio:** bit-exact parallel resampler (R15-1) ([a36fb62](https://github.com/huanglizhuo/QwenASR/commit/a36fb6273c64da6da73288cb52487bbeb490d3ee))
+* **cli:** multi-file batches through the lockstep scheduler (R15-5) ([cea3ea9](https://github.com/huanglizhuo/QwenASR/commit/cea3ea9890fbab3161e5fd2640d1657c460cae72))
+* **cli:** multi-file parallel transcription + macOS build tuning ([a932504](https://github.com/huanglizhuo/QwenASR/commit/a9325047805ca4a3776e15325678ed2f79b0a70f))
+* **decode:** cap single-token decode region participants on Apple Silicon (R15-3) ([661a144](https://github.com/huanglizhuo/QwenASR/commit/661a14457f6b6245cb79c4ada1b8f0f876c02313))
+* **decoder:** KV-only last layer in ASR prefill (R15-8) ([76bf6ad](https://github.com/huanglizhuo/QwenASR/commit/76bf6add6e8371b83adc13f9099c3e98de787010))
+* **model:** parse tokenizer once per model, overlapped with weight load (R15-2) ([6f1acc4](https://github.com/huanglizhuo/QwenASR/commit/6f1acc4b5d7bc46c689de3964a584692a71810c2))
+* reduce Apple Silicon pool waits during long audio decode ([bb36701](https://github.com/huanglizhuo/QwenASR/commit/bb367013cdafc2fdee15bee29154dc6959233093))
+* speed up CPU ASR and long-audio decoding ([2349759](https://github.com/huanglizhuo/QwenASR/commit/23497591cf9f00f56298cb5ebdefbe23198de6c2))
+
 ## [0.11.0](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.10.0...qwen-asr-v0.11.0) (2026-07-30)
 
 
