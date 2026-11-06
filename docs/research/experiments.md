@@ -8049,6 +8049,31 @@ Method (every item):
   fewer KV bytes.
 - `Decision`: rejected; code and test reverted.
 
+### R15-5: multi-file CLI batches through the lockstep scheduler — KEPT
+
+- `Change`: `-i a,b,c` ran up to 12 independent single-threaded workers
+  (`set_thread_override(1)` + `transcribe_audio` per file), each streaming the
+  full ~575 MB/token decode weights on its own. New
+  `transcribe::transcribe_batch_lockstep(ctx, inputs)` feeds each recording to
+  the R12-E3 lockstep scheduler as one segment (background nt=1 prefill — the
+  same environment as those workers — plus `decoder_forward_batched`, exact per
+  session by R12-E2). It returns `None` when it cannot reproduce the worker
+  result (non-aarch64 / lockstep off, < 2 inputs, `segment_sec > 0`, a
+  recording < 0.5 s that lockstep would zero-pad); the CLI then falls back to
+  the old workers for that group. Files are grouped (≤ 30 min of audio or 256
+  files) to bound resident audio.
+- `Exactness`: 12-file and 60-file outputs byte-identical to the worker path;
+  new `tests/batch_lockstep.rs` (own binary — the global pool only grows, so it
+  must not share a process with tests that shrink it) pins per-recording
+  equality vs single-threaded sibling sessions and the < 0.5 s fallback.
+- `Results` (A = R15-3, 5 runs, wall): 12 × 10 s files 2672 → 2228 ms
+  (−16.6%), repeat 2972 → 2602 (−12.4%); 60 × 10 s files 12541 → 11186
+  (−10.8%), repeat with budget grouping 12493 → 11382 (−8.9%). The 60-file
+  batch is dominated by AMX-bound encode/prefill, so sharing the decode weight
+  stream saves ~10% there; 32-file groups vs budget groups were equal within
+  noise.
+- `Decision`: kept.
+
 ---
 
 ## Autoresearch Program Baseline Experiments

@@ -1894,6 +1894,91 @@ fn collect_splits_lockstep(
     slots
 }
 
+/// Transcribe several independent recordings with the lockstep batched
+/// scheduler (R15-5): each recording is one lockstep segment, so up to
+/// `MAX_BATCH` decodes share every weight stream while background workers
+/// prefill the next recordings.
+///
+/// Per-recording output is byte-identical to [`transcribe_audio`] on a sibling
+/// session whose kernels are pinned single-threaded
+/// ([`kernels::set_thread_override_public`]`(1)`) — the CLI's multi-file worker
+/// path: lockstep prefill runs in that same single-threaded environment and the
+/// batched INT8 decode step is bit-identical per session (R12-E2).
+///
+/// Returns `None` (caller should fall back) when the lockstep path cannot
+/// reproduce that per-recording result: non-aarch64 or lockstep disabled, fewer
+/// than two recordings, `segment_sec > 0` (recordings would be split), or a
+/// recording shorter than the segment minimum (lockstep zero-pads those).
+/// Must be called from the thread that owns the kernel pool (not from a thread
+/// with a thread-count override). Results are in input order; `None` entries
+/// mark recordings whose prefill failed.
+pub fn transcribe_batch_lockstep(
+    ctx: &mut QwenCtx,
+    inputs: &[Vec<f32>],
+) -> Option<Vec<Option<String>>> {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let n = inputs.len();
+        let min_samples = SAMPLE_RATE as usize / 2;
+        let b = lockstep_batch_size(n);
+        if n < 2
+            || b < 2
+            || !kernels::seg_parallel_blas()
+            || ctx.segment_sec > 0.0
+            || inputs.iter().any(|x| x.len() < min_samples)
+        {
+            return None;
+        }
+
+        ctx.reset_perf();
+        let tokenizer = load_tokenizer(ctx)?;
+        if !ctx.prepare_prompt_tokens(&tokenizer) {
+            return None;
+        }
+
+        // Same preprocessing as `transcribe_audio` with `segment_sec <= 0`.
+        let prepared: Vec<Vec<f32>> = inputs
+            .iter()
+            .map(|x| {
+                if ctx.skip_silence {
+                    audio::compact_silence(x)
+                } else {
+                    x.clone()
+                }
+            })
+            .collect();
+        if prepared.iter().any(|x| x.len() < min_samples) {
+            return None;
+        }
+
+        let mut splits = Vec::with_capacity(n);
+        let mut concat = Vec::with_capacity(prepared.iter().map(Vec::len).sum());
+        for x in &prepared {
+            splits.push(concat.len());
+            concat.extend_from_slice(x);
+        }
+        ctx.perf_audio_ms = 1000.0 * concat.len() as f64 / SAMPLE_RATE as f64;
+
+        let slots = collect_splits_lockstep(ctx, &concat, &splits, &tokenizer, b);
+        let mut out = Vec::with_capacity(n);
+        for slot in slots {
+            match slot {
+                Some(o) => {
+                    apply_seg_core(ctx, &o.core);
+                    out.push(Some(o.core.text));
+                }
+                None => out.push(None),
+            }
+        }
+        Some(out)
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        let _ = (ctx, inputs);
+        None
+    }
+}
+
 /// Convenience wrapper: load a WAV file and transcribe it.
 ///
 /// Equivalent to [`audio::load_wav`] followed by
