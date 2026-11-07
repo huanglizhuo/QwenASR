@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.1](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-cli-v0.10.0...qwen-asr-cli-v0.10.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **asr:** preserve complete file streaming transcripts ([b2c1f94](https://github.com/huanglizhuo/QwenASR/commit/b2c1f943d5af98b3fc4cee86308623bbe046b1fa))
+* **asr:** preserve complete file streaming transcripts ([9a23009](https://github.com/huanglizhuo/QwenASR/commit/9a2300979ca93da79e13ca1fe12bd54a27ad6371))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * qwen-asr bumped from 0.11.1 to 0.11.2
+
 ## [0.10.0](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-cli-v0.9.1...qwen-asr-cli-v0.10.0) (2026-11-06)
 
 
