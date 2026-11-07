@@ -1,0 +1,54 @@
+{
+  "cmd": [
+    "/Users/lizhuo/owork/q-asr/tmp/stream-fix/before",
+    "-d",
+    "/Users/lizhuo/owork/q-asr/qwen3-asr-0.6b",
+    "-i",
+    "/Users/lizhuo/owork/q-asr/bench/samples/audio.wav",
+    "--stream",
+    "-t",
+    "12",
+    "--debug"
+  ],
+  "before": {
+    "time": 1794029344.583505,
+    "loadavg": [
+      6.84130859375,
+      6.81005859375,
+      4.65283203125
+    ],
+    "processes": "  PID  %CPU COMM\n  444 100.0 /usr/sbin/BTLEServer\n62710  86.1 /Applications/Docker.app/Contents/MacOS/com.docker.backend\n71522  25.7 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)\n84447   7.1 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper.app/Contents/MacOS/Brave Browser Helper\n  169   6.5 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer\n  180   4.1 /usr/sbin/coreaudiod\n94911   3.8 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (GPU).app/Contents/MacOS/Google Chrome Helper (GPU)\n22051   1.7 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)\n77330   1.6 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared\n77329   1.5 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared\n77334   1.1 /Library/Frameworks/Python.framework/Versions/3.10/Resources/Python.app/Contents/MacOS/Python\n11557   0.9 /Users/lizhuo/Library/Developer/CoreSimulator/Devices/905A927E-6385-44B3-BFB2-8EEE84C1901F/data/Containers/Bundle/Application/C5AE7DCE-994D-4E5D-A7B9-A7ECA7C1A5D3/Runner.app/Runner\n  293   0.9 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores\n  125   0.9 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds\n20227   0.7 /Users/lizhuo/Library/Developer/CoreSimulator/Devices/1298D133-57B2-44FB-9550-8C7586593A40/data/Containers/Bundle/Application/4B0FE83A-D7C8-4442-ABE3-5432B001C5EE/Runner.app/Runner",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7209059)\t100%; charged; 0:00 remaining present: true",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded",
+    "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                   397753.\nPages active:                                 801640.\nPages inactive:                               798761.\nPages speculative:                             18531.\nPages throttled:                                   0.\nPages wired down:                             429930.\nPages purgeable:                               30400.\n\"Translation faults\":                    43780516555.\nPages copy-on-write:                      4592588942.\nPages zero filled:                       22431705393.\nPages reactivated:                         312491193.\nPages purged:                              175296252.\nFile-backed pages:                            613623.\nAnonymous pages:                             1005309.\nPages stored in compressor:                  2783423.\nPages occupied by compressor:                 638674.\nDecompressions:                            225031709.\nCompressions:                              294088845.\nPageins:                                   594930714.\nPageouts:                                    1864161.\nSwapins:                                      976406.\nSwapouts:                                    3015664.\nPages tagged:                                 239527.\nPages tagged resident:                        190880.\nPages tagged compressed:                       48647.\nPages tag-storage:                             98304.\nPages tag-storage holding tags:                 7475.\nPages tag-storage free:                          684.\nPages tag-storage non-tag pageable:            90136.\nPages tag-storage non-tag wired:                   9.\nBytes of compressed tags:                    8265856.\nTagged compressions:                         5790357.\nTagged decompressions:                       5138803.",
+    "swap_usage": "vm.swapusage: total = 21504.00M  used = 20577.62M  free = 926.38M  (encrypted)"
+  },
+  "after": {
+    "time": 1794029345.3262951,
+    "loadavg": [
+      6.84130859375,
+      6.81005859375,
+      4.65283203125
+    ],
+    "processes": "  PID  %CPU COMM\n  444  99.0 /usr/sbin/BTLEServer\n77476  39.2 /private/var/run/com.apple.security.cryptexd/mnt/com.apple.iPhoneOS.SimulatorRuntime-v24.1.434.0.9bJtKx/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/Frameworks/ManagedAppDistribution.framework/Support/managedappdistributiond\n77477  30.3 /private/var/run/com.apple.security.cryptexd/mnt/com.apple.iPhoneOS.SimulatorRuntime-v24.1.434.0.9bJtKx/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/PrivateFrameworks/PairedSync.framework/Support/pairedsyncd\n71522  24.9 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)\n84447   6.6 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper.app/Contents/MacOS/Brave Browser Helper\n  169   6.1 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer\n45807   5.6 /Applications/FuseBar.app/Contents/MacOS/FuseBar\n62710   5.2 /Applications/Docker.app/Contents/MacOS/com.docker.backend\n  180   4.3 /usr/sbin/coreaudiod\n94911   3.6 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (GPU).app/Contents/MacOS/Google Chrome Helper (GPU)\n22051   1.7 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)\n77327   0.9 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared\n77326   0.9 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared\n  293   0.8 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores\n30667   0.8 /Users/lizhuo/Library/Developer/CoreSimulator/Devices/A9AD99C2-B40F-4DBE-8AC2-A957A1BC6CE0/data/Containers/Bundle/Application/86092570-2C7A-4CF4-953C-1D9223B68FEC/Runner.app/Runner",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7209059)\t100%; charged; 0:00 remaining present: true",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded",
+    "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                   397261.\nPages active:                                 796481.\nPages inactive:                               798466.\nPages speculative:                             18535.\nPages throttled:                                   0.\nPages wired down:                             435783.\nPages purgeable:                               25108.\n\"Translation faults\":                    43780747837.\nPages copy-on-write:                      4592590257.\nPages zero filled:                       22431798721.\nPages reactivated:                         312491193.\nPages purged:                              175296252.\nFile-backed pages:                            613629.\nAnonymous pages:                              999853.\nPages stored in compressor:                  2783423.\nPages occupied by compressor:                 638674.\nDecompressions:                            225031709.\nCompressions:                              294088845.\nPageins:                                   594930719.\nPageouts:                                    1864161.\nSwapins:                                      976406.\nSwapouts:                                    3015664.\nPages tagged:                                 239525.\nPages tagged resident:                        190878.\nPages tagged compressed:                       48647.\nPages tag-storage:                             98304.\nPages tag-storage holding tags:                 7475.\nPages tag-storage free:                          685.\nPages tag-storage non-tag pageable:            90135.\nPages tag-storage non-tag wired:                   9.\nBytes of compressed tags:                    8265856.\nTagged compressions:                         5790357.\nTagged decompressions:                       5138803.",
+    "swap_usage": "vm.swapusage: total = 21504.00M  used = 20577.62M  free = 926.38M  (encrypted)"
+  },
+  "returncode": 0,
+  "timed_out": false,
+  "stdout_sha256": "d78b5f5dd25555370959b4dac43113d1810688808830abcb85e7443ab9c188fd",
+  "resource_usage": {
+    "ru_utime": 4.875507999999996,
+    "ru_stime": 0.43168799999999985,
+    "ru_minflt": 214622,
+    "ru_majflt": 0,
+    "ru_nvcsw": 0,
+    "ru_nivcsw": 18306
+  },
+  "metrics": {
+    "infer": 557.0,
+    "wall": 674.0038329735398
+  }
+}

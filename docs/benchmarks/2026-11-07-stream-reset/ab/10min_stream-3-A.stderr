@@ -1,0 +1,1089 @@
+Thread pool: 12 threads
+Optimizations: vDSP/Accelerate, NEON, DotProd | 12 threads | aarch64
+Loading model from /Users/lizhuo/owork/q-asr/qwen3-asr-0.6b
+Detected: Qwen3-ASR-0.6B
+Loading encoder weights...
+Loading decoder weights...
+Model loaded in 85 ms
+QASR_METRIC int8 prefill=0 encoder=0
+  [stream chunk 99 verify] committed=32 draft_len=0 lcp=0 verify_steps=0 accepted_drafts=0 verified_commits=0
+  [stream chunk 100 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 101 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 102 verify] committed=32 draft_len=5 lcp=1 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 103 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 104 verify] committed=14 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 105 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 106 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 107 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 108 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 108 (stale=4, reps=1)
+  [stream chunk 109 verify] committed=10 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 110 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 111 verify] committed=32 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 112 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 113 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 114 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 115 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 115 (stale=4, reps=1)
+  [stream chunk 116 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 117 verify] committed=10 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 118 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 119 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 120 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 121 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 121 (stale=4, reps=1)
+  [stream chunk 122 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 123 verify] committed=10 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 124 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 125 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 126 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 127 verify] committed=28 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 128 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 129 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 130 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 131 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 131 (stale=4, reps=1)
+  [stream chunk 132 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 133 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 134 verify] committed=6 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 135 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream reanchor] at chunk 135
+  [stream chunk 143 verify] committed=7 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 144 verify] committed=5 draft_len=5 lcp=1 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 145 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 146 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 147 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 148 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 148 (stale=4, reps=1)
+  [stream chunk 149 verify] committed=7 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 150 verify] committed=5 draft_len=5 lcp=1 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 151 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 152 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 153 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 154 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 154 (stale=4, reps=1)
+  [stream chunk 155 verify] committed=7 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 156 verify] committed=5 draft_len=5 lcp=1 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 157 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 158 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 159 verify] committed=5 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 160 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 161 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 162 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 163 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 163 (stale=4, reps=1)
+  [stream chunk 164 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 165 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 166 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 167 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 168 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 168 (stale=4, reps=1)
+  [stream chunk 169 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 170 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 171 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 172 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 173 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 173 (stale=4, reps=1)
+  [stream chunk 174 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 175 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 176 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 177 verify] committed=21 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 178 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 179 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 180 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream reanchor] at chunk 180
+  [stream chunk 191 verify] committed=7 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 192 verify] committed=7 draft_len=5 lcp=1 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 193 verify] committed=2 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 194 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 195 verify] committed=7 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 196 verify] committed=7 draft_len=5 lcp=1 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 197 verify] committed=2 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 198 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 199 verify] committed=7 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 200 verify] committed=7 draft_len=5 lcp=1 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 201 verify] committed=2 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 202 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 203 verify] committed=7 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 204 verify] committed=7 draft_len=5 lcp=1 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 205 verify] committed=2 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 206 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 207 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 208 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 209 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 210 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 211 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 211 (stale=4, reps=1)
+  [stream chunk 212 verify] committed=6 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 213 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 214 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 215 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 216 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 216 (stale=4, reps=1)
+  [stream chunk 217 verify] committed=6 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 218 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 219 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 220 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 221 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 221 (stale=4, reps=1)
+  [stream chunk 222 verify] committed=6 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 223 verify] committed=32 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 224 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 225 verify] committed=19 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream reanchor] at chunk 225
+  [stream chunk 239 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 240 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 241 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 242 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 243 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 243 (stale=4, reps=1)
+  [stream chunk 244 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 245 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 246 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 247 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 248 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 248 (stale=4, reps=1)
+  [stream chunk 249 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 250 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 251 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 252 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 253 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 253 (stale=4, reps=1)
+  [stream chunk 254 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 255 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 256 verify] committed=25 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 257 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 258 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 259 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 260 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 260 (stale=4, reps=1)
+  [stream chunk 261 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 262 verify] committed=25 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 263 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 264 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 265 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 266 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 266 (stale=4, reps=1)
+  [stream chunk 267 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 268 verify] committed=25 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 269 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 270 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream reanchor] at chunk 270
+  [stream chunk 271 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 272 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 273 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 274 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 275 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 275 (stale=4, reps=1)
+  [stream chunk 276 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 277 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 278 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 279 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 280 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 280 (stale=4, reps=1)
+  [stream chunk 281 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 282 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 283 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 284 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 285 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 285 (stale=4, reps=1)
+  [stream chunk 286 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 287 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 288 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 289 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 290 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 290 (stale=4, reps=1)
+  [stream chunk 291 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 292 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 293 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 294 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 295 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 295 (stale=4, reps=1)
+  [stream chunk 296 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 297 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 298 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 299 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 300 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 300 (stale=4, reps=1)
+  [stream chunk 301 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 302 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 303 verify] committed=32 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 304 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 305 verify] committed=22 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 306 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 307 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 308 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 309 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 309 (stale=4, reps=1)
+  [stream chunk 310 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 311 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 312 verify] committed=22 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 313 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 314 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 315 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream reanchor] at chunk 315
+  [stream chunk 319 verify] committed=6 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 320 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 321 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 322 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 323 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 323 (stale=4, reps=1)
+  [stream chunk 324 verify] committed=6 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 325 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 326 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 327 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 328 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 328 (stale=4, reps=1)
+  [stream chunk 329 verify] committed=6 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 330 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 331 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 332 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 333 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 333 (stale=4, reps=1)
+  [stream chunk 334 verify] committed=6 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 335 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 336 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 337 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 338 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 338 (stale=4, reps=1)
+  [stream chunk 339 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 340 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 341 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 342 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 343 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 343 (stale=4, reps=1)
+  [stream chunk 344 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 345 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 346 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 347 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 348 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 348 (stale=4, reps=1)
+  [stream chunk 349 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 350 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 351 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 352 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 353 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 353 (stale=4, reps=1)
+  [stream chunk 354 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 355 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 356 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 357 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 358 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 358 (stale=4, reps=1)
+  [stream chunk 359 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 360 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream reanchor] at chunk 360
+  [stream chunk 367 verify] committed=7 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 368 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 369 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 370 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 371 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 371 (stale=4, reps=1)
+  [stream chunk 372 verify] committed=7 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 373 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 374 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 375 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 376 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 376 (stale=4, reps=1)
+  [stream chunk 377 verify] committed=7 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 378 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 379 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 380 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 381 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 381 (stale=4, reps=1)
+  [stream chunk 382 verify] committed=7 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 383 verify] committed=4 draft_len=5 lcp=1 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 384 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 385 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 386 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 387 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 387 (stale=4, reps=1)
+  [stream chunk 388 verify] committed=4 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 389 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 390 verify] committed=22 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 391 verify] committed=2 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 392 verify] committed=8 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 393 verify] committed=2 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 394 verify] committed=8 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 395 verify] committed=2 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 396 verify] committed=8 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 397 verify] committed=2 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 398 verify] committed=8 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 399 verify] committed=25 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 400 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 401 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 402 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 403 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 403 (stale=4, reps=1)
+  [stream chunk 404 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 405 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream reanchor] at chunk 405
+  [stream chunk 415 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 416 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 417 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 418 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 419 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 419 (stale=4, reps=1)
+  [stream chunk 420 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 421 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 422 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 423 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 424 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 424 (stale=4, reps=1)
+  [stream chunk 425 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 426 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 427 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 428 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 429 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 429 (stale=4, reps=1)
+  [stream chunk 430 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 431 verify] committed=8 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 432 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 433 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 434 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 435 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 435 (stale=4, reps=1)
+  [stream chunk 436 verify] committed=8 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 437 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 438 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 439 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 440 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 440 (stale=4, reps=1)
+  [stream chunk 441 verify] committed=8 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 442 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 443 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 444 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 445 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 445 (stale=4, reps=1)
+  [stream chunk 446 verify] committed=8 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 447 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 448 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 449 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 450 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 450 (stale=4, reps=1)
+[stream reanchor] at chunk 450
+  [stream chunk 463 verify] committed=6 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 464 verify] committed=8 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 465 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 466 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 467 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 468 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 468 (stale=4, reps=1)
+  [stream chunk 469 verify] committed=6 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 470 verify] committed=8 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 471 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 472 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 473 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 474 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 474 (stale=4, reps=1)
+  [stream chunk 475 verify] committed=6 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 476 verify] committed=8 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 477 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 478 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 479 verify] committed=3 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 480 verify] committed=5 draft_len=5 lcp=1 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 481 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 482 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 483 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 484 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 484 (stale=4, reps=1)
+  [stream chunk 485 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 486 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 487 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 488 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 489 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 489 (stale=4, reps=1)
+  [stream chunk 490 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 491 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 492 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 493 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 494 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 494 (stale=4, reps=1)
+  [stream chunk 495 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+[stream reanchor] at chunk 495
+  [stream chunk 511 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 512 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 513 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 514 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 515 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 515 (stale=4, reps=1)
+  [stream chunk 516 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 517 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 518 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 519 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 520 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 520 (stale=4, reps=1)
+  [stream chunk 521 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 522 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 523 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 524 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 525 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 525 (stale=4, reps=1)
+  [stream chunk 526 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 527 verify] committed=32 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 528 verify] committed=19 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 529 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 530 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 531 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 532 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 532 (stale=4, reps=1)
+  [stream chunk 533 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 534 verify] committed=19 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 535 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 536 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 537 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 538 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 538 (stale=4, reps=1)
+  [stream chunk 539 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 540 verify] committed=19 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream reanchor] at chunk 540
+  [stream chunk 543 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 544 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 545 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 546 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 547 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 547 (stale=4, reps=1)
+  [stream chunk 548 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 549 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 550 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 551 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 552 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 552 (stale=4, reps=1)
+  [stream chunk 553 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 554 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 555 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 556 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 557 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 557 (stale=4, reps=1)
+  [stream chunk 558 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 559 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 560 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 561 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 562 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 562 (stale=4, reps=1)
+  [stream chunk 563 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 564 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 565 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 566 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 567 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 567 (stale=4, reps=1)
+  [stream chunk 568 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 569 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 570 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 571 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 572 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 572 (stale=4, reps=1)
+  [stream chunk 573 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 574 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 575 verify] committed=7 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 576 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 577 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 578 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 579 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 579 (stale=4, reps=1)
+  [stream chunk 580 verify] committed=7 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 581 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 582 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 583 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 584 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 584 (stale=4, reps=1)
+  [stream chunk 585 verify] committed=7 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+[stream reanchor] at chunk 585
+  [stream chunk 591 verify] committed=6 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 592 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 593 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 594 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 595 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 596 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 597 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 598 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 599 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 600 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 601 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 602 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 603 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 604 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 605 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 606 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 607 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 608 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 609 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 610 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 610 (stale=4, reps=1)
+  [stream chunk 611 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 612 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 613 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 614 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 615 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 615 (stale=4, reps=1)
+  [stream chunk 616 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 617 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 618 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 619 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 620 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 620 (stale=4, reps=1)
+  [stream chunk 621 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 622 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 623 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 624 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 625 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 625 (stale=4, reps=1)
+  [stream chunk 626 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 627 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 628 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 629 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 630 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 630 (stale=4, reps=1)
+[stream reanchor] at chunk 630
+  [stream chunk 639 verify] committed=4 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 640 verify] committed=7 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 641 verify] committed=4 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 642 verify] committed=6 draft_len=5 lcp=1 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 643 verify] committed=2 draft_len=5 lcp=1 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 644 verify] committed=0 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=0
+  [stream chunk 645 verify] committed=3 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 646 verify] committed=19 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 647 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 648 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 649 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 650 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 650 (stale=4, reps=1)
+  [stream chunk 651 verify] committed=4 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 652 verify] committed=7 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 653 verify] committed=4 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 654 verify] committed=6 draft_len=5 lcp=1 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 655 verify] committed=8 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 656 verify] committed=2 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 657 verify] committed=8 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 658 verify] committed=2 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 659 verify] committed=8 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 660 verify] committed=2 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 661 verify] committed=8 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 662 verify] committed=2 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 663 verify] committed=8 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 664 verify] committed=2 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 665 verify] committed=8 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 666 verify] committed=2 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 667 verify] committed=8 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 668 verify] committed=2 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 669 verify] committed=8 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 670 verify] committed=2 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 671 verify] committed=10 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 672 verify] committed=5 draft_len=5 lcp=1 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 673 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 674 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 675 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream reanchor] at chunk 675
+  [stream chunk 687 verify] committed=6 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 688 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 689 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 690 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 691 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 692 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 693 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 694 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 695 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 696 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 697 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 698 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 699 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 700 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 701 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 702 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 703 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 704 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 705 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 706 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 707 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 707 (stale=4, reps=1)
+  [stream chunk 708 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 709 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 710 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 711 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 712 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 712 (stale=4, reps=1)
+  [stream chunk 713 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 714 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 715 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 716 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 717 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 717 (stale=4, reps=1)
+  [stream chunk 718 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 719 verify] committed=32 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 720 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream reanchor] at chunk 720
+  [stream chunk 735 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 736 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 737 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 738 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 739 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 739 (stale=4, reps=1)
+  [stream chunk 740 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 741 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 742 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 743 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 744 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 744 (stale=4, reps=1)
+  [stream chunk 745 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 746 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 747 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 748 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 749 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 749 (stale=4, reps=1)
+  [stream chunk 750 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 751 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 752 verify] committed=28 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 753 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 754 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 755 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 756 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 756 (stale=4, reps=1)
+  [stream chunk 757 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 758 verify] committed=28 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 759 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 760 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 761 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 762 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 762 (stale=4, reps=1)
+  [stream chunk 763 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 764 verify] committed=28 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 765 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream reanchor] at chunk 765
+  [stream chunk 767 verify] committed=29 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 768 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 769 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 770 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 771 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 771 (stale=4, reps=1)
+  [stream chunk 772 verify] committed=29 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 773 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 774 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 775 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 776 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 776 (stale=4, reps=1)
+  [stream chunk 777 verify] committed=29 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 778 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 779 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 780 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 781 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 781 (stale=4, reps=1)
+  [stream chunk 782 verify] committed=29 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 783 verify] committed=24 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 784 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 785 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 786 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 787 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 787 (stale=4, reps=1)
+  [stream chunk 788 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 789 verify] committed=21 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 790 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 791 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 792 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 793 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 793 (stale=4, reps=1)
+  [stream chunk 794 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 795 verify] committed=21 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 796 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 797 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 798 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 799 verify] committed=31 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 800 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 801 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 802 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 803 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 803 (stale=4, reps=1)
+  [stream chunk 804 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 805 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 806 verify] committed=20 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 807 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 808 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 809 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 810 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 810 (stale=4, reps=1)
+[stream reanchor] at chunk 810
+  [stream chunk 815 verify] committed=4 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 816 verify] committed=4 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 817 verify] committed=0 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=0
+  [stream chunk 818 verify] committed=6 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 819 verify] committed=2 draft_len=5 lcp=1 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 820 verify] committed=7 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 821 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 822 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 823 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 824 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 824 (stale=4, reps=1)
+  [stream chunk 825 verify] committed=4 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 826 verify] committed=4 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 827 verify] committed=0 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=0
+  [stream chunk 828 verify] committed=6 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 829 verify] committed=2 draft_len=5 lcp=1 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 830 verify] committed=7 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 831 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 832 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 833 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 834 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 835 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 836 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 836 (stale=4, reps=1)
+  [stream chunk 837 verify] committed=7 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 838 verify] committed=4 draft_len=5 lcp=1 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 839 verify] committed=8 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 840 verify] committed=2 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 841 verify] committed=8 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 842 verify] committed=2 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 843 verify] committed=8 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 844 verify] committed=2 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 845 verify] committed=8 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 846 verify] committed=2 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 847 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 848 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 849 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 850 verify] committed=10 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 851 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 852 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 853 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 854 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 854 (stale=4, reps=1)
+  [stream chunk 855 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+[stream reanchor] at chunk 855
+  [stream chunk 863 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 864 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 865 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 866 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 867 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 867 (stale=4, reps=1)
+  [stream chunk 868 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 869 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 870 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 871 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 872 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 872 (stale=4, reps=1)
+  [stream chunk 873 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 874 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 875 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 876 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 877 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 877 (stale=4, reps=1)
+  [stream chunk 878 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 879 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 880 verify] committed=27 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 881 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 882 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 883 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 884 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 884 (stale=4, reps=1)
+  [stream chunk 885 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 886 verify] committed=27 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 887 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 888 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 889 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 890 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 890 (stale=4, reps=1)
+  [stream chunk 891 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 892 verify] committed=27 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 893 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 894 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 895 verify] committed=27 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 896 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 897 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 898 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 899 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 899 (stale=4, reps=1)
+  [stream chunk 900 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+[stream reanchor] at chunk 900
+  [stream chunk 911 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 912 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 913 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 914 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 915 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 915 (stale=4, reps=1)
+  [stream chunk 916 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 917 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 918 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 919 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 920 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 920 (stale=4, reps=1)
+  [stream chunk 921 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 922 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 923 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 924 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 925 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 925 (stale=4, reps=1)
+  [stream chunk 926 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 927 verify] committed=3 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 928 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 929 verify] committed=27 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 930 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 931 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 932 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 933 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 933 (stale=4, reps=1)
+  [stream chunk 934 verify] committed=3 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 935 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 936 verify] committed=27 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 937 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 938 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 939 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 940 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 940 (stale=4, reps=1)
+  [stream chunk 941 verify] committed=3 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 942 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 943 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 944 verify] committed=18 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 945 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream reanchor] at chunk 945
+  [stream chunk 959 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 960 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 961 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 962 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 963 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 963 (stale=4, reps=1)
+  [stream chunk 964 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 965 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 966 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 967 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 968 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 968 (stale=4, reps=1)
+  [stream chunk 969 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 970 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 971 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 972 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 973 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 973 (stale=4, reps=1)
+  [stream chunk 974 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 975 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 976 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 977 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 978 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 979 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 980 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 981 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 982 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 983 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 984 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 985 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 986 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 987 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 988 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+  [stream chunk 989 verify] committed=6 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 990 verify] committed=4 draft_len=5 lcp=2 verify_steps=1 accepted_drafts=1 verified_commits=2
+[stream reanchor] at chunk 990
+  [stream chunk 991 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 992 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 993 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 994 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 995 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 995 (stale=4, reps=1)
+  [stream chunk 996 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 997 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 998 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 999 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1000 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1000 (stale=4, reps=1)
+  [stream chunk 1001 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1002 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1003 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1004 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1005 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1005 (stale=4, reps=1)
+  [stream chunk 1006 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1007 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 1008 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1009 verify] committed=6 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1010 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1011 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1012 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1013 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1013 (stale=4, reps=1)
+  [stream chunk 1014 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1015 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1016 verify] committed=6 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1017 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1018 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1019 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1020 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1020 (stale=4, reps=1)
+  [stream chunk 1021 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1022 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1023 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1024 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1025 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1026 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1027 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1027 (stale=4, reps=1)
+  [stream chunk 1028 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1029 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1030 verify] committed=30 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1031 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1032 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1033 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1034 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1034 (stale=4, reps=1)
+  [stream chunk 1035 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+[stream reanchor] at chunk 1035
+  [stream chunk 1039 verify] committed=28 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1040 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1041 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1042 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1043 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1043 (stale=4, reps=1)
+  [stream chunk 1044 verify] committed=28 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1045 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1046 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1047 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1048 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1048 (stale=4, reps=1)
+  [stream chunk 1049 verify] committed=28 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1050 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1051 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1052 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1053 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1053 (stale=4, reps=1)
+  [stream chunk 1054 verify] committed=28 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1055 verify] committed=31 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 1056 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1057 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1058 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1059 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1059 (stale=4, reps=1)
+  [stream chunk 1060 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1061 verify] committed=26 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1062 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1063 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1064 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1065 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1065 (stale=4, reps=1)
+  [stream chunk 1066 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1067 verify] committed=26 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1068 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1069 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1070 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1071 verify] committed=28 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 1072 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1073 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1074 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1075 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1075 (stale=4, reps=1)
+  [stream chunk 1076 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1077 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1078 verify] committed=24 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1079 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1080 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream reanchor] at chunk 1080
+  [stream chunk 1087 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1088 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1089 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1090 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1091 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1091 (stale=4, reps=1)
+  [stream chunk 1092 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1093 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1094 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1095 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1096 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1096 (stale=4, reps=1)
+  [stream chunk 1097 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1098 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1099 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1100 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1101 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1101 (stale=4, reps=1)
+  [stream chunk 1102 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1103 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1104 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1105 verify] committed=8 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1106 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1107 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1108 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1109 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1109 (stale=4, reps=1)
+  [stream chunk 1110 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1111 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1112 verify] committed=8 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1113 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1114 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1115 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1116 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1116 (stale=4, reps=1)
+  [stream chunk 1117 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1118 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1119 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1120 verify] committed=8 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1121 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1122 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1123 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1124 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1124 (stale=4, reps=1)
+  [stream chunk 1125 verify] committed=32 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+[stream reanchor] at chunk 1125
+  [stream chunk 1135 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1136 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1137 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1138 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1139 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1139 (stale=4, reps=1)
+  [stream chunk 1140 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1141 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1142 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1143 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1144 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1144 (stale=4, reps=1)
+  [stream chunk 1145 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1146 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1147 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1148 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1149 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1149 (stale=4, reps=1)
+  [stream chunk 1150 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1151 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1152 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1153 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1154 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1155 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1155 (stale=4, reps=1)
+  [stream chunk 1156 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1157 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1158 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1159 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1160 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1160 (stale=4, reps=1)
+  [stream chunk 1161 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1162 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1163 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1164 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1165 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1165 (stale=4, reps=1)
+  [stream chunk 1166 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1167 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1168 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1169 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1170 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream reanchor] at chunk 1170
+  [stream chunk 1183 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1184 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1185 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1186 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1187 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1187 (stale=4, reps=1)
+  [stream chunk 1188 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1189 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1190 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1191 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1192 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1192 (stale=4, reps=1)
+  [stream chunk 1193 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1194 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1195 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1196 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1197 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1197 (stale=4, reps=1)
+  [stream chunk 1198 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1199 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1200 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1201 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1202 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+[stream degen] reset at chunk 1202 (stale=4, reps=1)
+  [stream chunk 1203 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 1204 verify] committed=5 draft_len=5 lcp=0 verify_steps=1 accepted_drafts=4 verified_commits=5
+Inference: 88486 ms, 144 text tokens (1.63 tok/s, encoding: 6134ms, decoding: 77349ms)
+Audio: 602.5 s processed in 88.5 s (6.81x realtime)

@@ -11,6 +11,14 @@ import ab
 
 
 class BenchmarkTests(unittest.TestCase):
+    def test_chunk_override_only_applies_to_streaming(self):
+        original = ab.cases(Path('fixtures'), Path('aligner'))
+        overridden = ab.cases(Path('fixtures'), Path('aligner'), 0.5)
+        for name, (args, stdin) in original.items():
+            expected = args + ['--stream-chunk-sec', '0.5'] if '--stream' in args else args
+            self.assertEqual(overridden[name], (expected, stdin))
+        self.assertEqual(original, ab.cases(Path('fixtures'), Path('aligner')))
+
     def test_phase_totals(self):
         d = ab.parse('Inference: 120 ms\nPrefill: 3 tokens (12 ms)\n'
                      'Decode: 2 tokens (20 ms, 10 ms/token)\n'

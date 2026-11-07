@@ -1,0 +1,780 @@
+{
+  "2min_stream": {
+    "method": "SequenceMatcher exact words, autojunk=False; not WER alignment",
+    "exact_matches": 272,
+    "reference_words": 280,
+    "prefix_gap": 0,
+    "suffix_gap": 0,
+    "longest_unmatched_span": 2,
+    "unmatched_spans": [
+      [
+        2,
+        3
+      ],
+      [
+        168,
+        170
+      ],
+      [
+        181,
+        182
+      ],
+      [
+        199,
+        200
+      ],
+      [
+        230,
+        232
+      ],
+      [
+        264,
+        265
+      ]
+    ],
+    "utterances": [
+      {
+        "id": "1272-135031-0000",
+        "ref_words": 26,
+        "exact_matches": 25
+      },
+      {
+        "id": "1272-135031-0001",
+        "ref_words": 28,
+        "exact_matches": 28
+      },
+      {
+        "id": "1272-135031-0002",
+        "ref_words": 31,
+        "exact_matches": 31
+      },
+      {
+        "id": "1272-135031-0003",
+        "ref_words": 15,
+        "exact_matches": 15
+      },
+      {
+        "id": "1272-135031-0004",
+        "ref_words": 13,
+        "exact_matches": 13
+      },
+      {
+        "id": "1272-135031-0005",
+        "ref_words": 15,
+        "exact_matches": 15
+      },
+      {
+        "id": "1272-135031-0006",
+        "ref_words": 14,
+        "exact_matches": 14
+      },
+      {
+        "id": "1272-135031-0007",
+        "ref_words": 10,
+        "exact_matches": 10
+      },
+      {
+        "id": "1272-135031-0008",
+        "ref_words": 9,
+        "exact_matches": 9
+      },
+      {
+        "id": "1272-135031-0009",
+        "ref_words": 5,
+        "exact_matches": 5
+      },
+      {
+        "id": "1272-135031-0010",
+        "ref_words": 30,
+        "exact_matches": 27
+      },
+      {
+        "id": "1272-135031-0011",
+        "ref_words": 4,
+        "exact_matches": 3
+      },
+      {
+        "id": "1272-135031-0012",
+        "ref_words": 5,
+        "exact_matches": 5
+      },
+      {
+        "id": "1272-135031-0013",
+        "ref_words": 6,
+        "exact_matches": 6
+      },
+      {
+        "id": "1272-135031-0014",
+        "ref_words": 3,
+        "exact_matches": 3
+      },
+      {
+        "id": "1272-135031-0015",
+        "ref_words": 17,
+        "exact_matches": 16
+      },
+      {
+        "id": "1272-135031-0016",
+        "ref_words": 2,
+        "exact_matches": 1
+      },
+      {
+        "id": "1272-135031-0017",
+        "ref_words": 16,
+        "exact_matches": 16
+      },
+      {
+        "id": "1272-135031-0018",
+        "ref_words": 7,
+        "exact_matches": 7
+      },
+      {
+        "id": "1272-135031-0019",
+        "ref_words": 5,
+        "exact_matches": 5
+      },
+      {
+        "id": "1272-135031-0020",
+        "ref_words": 13,
+        "exact_matches": 12
+      },
+      {
+        "id": "1272-135031-0021",
+        "ref_words": 6,
+        "exact_matches": 6
+      }
+    ],
+    "utterances_without_matches": []
+  },
+  "10min_stream": {
+    "method": "SequenceMatcher exact words, autojunk=False; not WER alignment",
+    "exact_matches": 1382,
+    "reference_words": 1418,
+    "prefix_gap": 0,
+    "suffix_gap": 0,
+    "longest_unmatched_span": 3,
+    "unmatched_spans": [
+      [
+        2,
+        3
+      ],
+      [
+        168,
+        170
+      ],
+      [
+        181,
+        182
+      ],
+      [
+        199,
+        200
+      ],
+      [
+        230,
+        232
+      ],
+      [
+        264,
+        265
+      ],
+      [
+        282,
+        284
+      ],
+      [
+        311,
+        312
+      ],
+      [
+        319,
+        320
+      ],
+      [
+        333,
+        334
+      ],
+      [
+        352,
+        355
+      ],
+      [
+        360,
+        361
+      ],
+      [
+        401,
+        402
+      ],
+      [
+        444,
+        445
+      ],
+      [
+        537,
+        538
+      ],
+      [
+        575,
+        576
+      ],
+      [
+        593,
+        595
+      ],
+      [
+        649,
+        650
+      ],
+      [
+        710,
+        711
+      ],
+      [
+        731,
+        732
+      ],
+      [
+        737,
+        738
+      ],
+      [
+        753,
+        754
+      ],
+      [
+        767,
+        768
+      ],
+      [
+        791,
+        793
+      ],
+      [
+        1030,
+        1031
+      ],
+      [
+        1150,
+        1152
+      ],
+      [
+        1328,
+        1330
+      ]
+    ],
+    "utterances": [
+      {
+        "id": "1272-135031-0000",
+        "ref_words": 26,
+        "exact_matches": 25
+      },
+      {
+        "id": "1272-135031-0001",
+        "ref_words": 28,
+        "exact_matches": 28
+      },
+      {
+        "id": "1272-135031-0002",
+        "ref_words": 31,
+        "exact_matches": 31
+      },
+      {
+        "id": "1272-135031-0003",
+        "ref_words": 15,
+        "exact_matches": 15
+      },
+      {
+        "id": "1272-135031-0004",
+        "ref_words": 13,
+        "exact_matches": 13
+      },
+      {
+        "id": "1272-135031-0005",
+        "ref_words": 15,
+        "exact_matches": 15
+      },
+      {
+        "id": "1272-135031-0006",
+        "ref_words": 14,
+        "exact_matches": 14
+      },
+      {
+        "id": "1272-135031-0007",
+        "ref_words": 10,
+        "exact_matches": 10
+      },
+      {
+        "id": "1272-135031-0008",
+        "ref_words": 9,
+        "exact_matches": 9
+      },
+      {
+        "id": "1272-135031-0009",
+        "ref_words": 5,
+        "exact_matches": 5
+      },
+      {
+        "id": "1272-135031-0010",
+        "ref_words": 30,
+        "exact_matches": 27
+      },
+      {
+        "id": "1272-135031-0011",
+        "ref_words": 4,
+        "exact_matches": 3
+      },
+      {
+        "id": "1272-135031-0012",
+        "ref_words": 5,
+        "exact_matches": 5
+      },
+      {
+        "id": "1272-135031-0013",
+        "ref_words": 6,
+        "exact_matches": 6
+      },
+      {
+        "id": "1272-135031-0014",
+        "ref_words": 3,
+        "exact_matches": 3
+      },
+      {
+        "id": "1272-135031-0015",
+        "ref_words": 17,
+        "exact_matches": 16
+      },
+      {
+        "id": "1272-135031-0016",
+        "ref_words": 2,
+        "exact_matches": 1
+      },
+      {
+        "id": "1272-135031-0017",
+        "ref_words": 16,
+        "exact_matches": 16
+      },
+      {
+        "id": "1272-135031-0018",
+        "ref_words": 7,
+        "exact_matches": 7
+      },
+      {
+        "id": "1272-135031-0019",
+        "ref_words": 5,
+        "exact_matches": 5
+      },
+      {
+        "id": "1272-135031-0020",
+        "ref_words": 13,
+        "exact_matches": 12
+      },
+      {
+        "id": "1272-135031-0021",
+        "ref_words": 6,
+        "exact_matches": 6
+      },
+      {
+        "id": "1272-135031-0022",
+        "ref_words": 3,
+        "exact_matches": 2
+      },
+      {
+        "id": "1272-135031-0023",
+        "ref_words": 22,
+        "exact_matches": 21
+      },
+      {
+        "id": "1272-135031-0024",
+        "ref_words": 38,
+        "exact_matches": 35
+      },
+      {
+        "id": "1272-141231-0000",
+        "ref_words": 9,
+        "exact_matches": 9
+      },
+      {
+        "id": "1272-141231-0001",
+        "ref_words": 16,
+        "exact_matches": 12
+      },
+      {
+        "id": "1272-141231-0002",
+        "ref_words": 31,
+        "exact_matches": 31
+      },
+      {
+        "id": "1272-141231-0003",
+        "ref_words": 15,
+        "exact_matches": 14
+      },
+      {
+        "id": "1272-141231-0004",
+        "ref_words": 10,
+        "exact_matches": 10
+      },
+      {
+        "id": "1272-141231-0005",
+        "ref_words": 18,
+        "exact_matches": 18
+      },
+      {
+        "id": "1272-141231-0006",
+        "ref_words": 9,
+        "exact_matches": 8
+      },
+      {
+        "id": "1272-141231-0007",
+        "ref_words": 12,
+        "exact_matches": 12
+      },
+      {
+        "id": "1272-141231-0008",
+        "ref_words": 10,
+        "exact_matches": 10
+      },
+      {
+        "id": "1272-141231-0009",
+        "ref_words": 18,
+        "exact_matches": 18
+      },
+      {
+        "id": "1272-141231-0010",
+        "ref_words": 24,
+        "exact_matches": 24
+      },
+      {
+        "id": "1272-141231-0011",
+        "ref_words": 12,
+        "exact_matches": 12
+      },
+      {
+        "id": "1272-141231-0012",
+        "ref_words": 20,
+        "exact_matches": 19
+      },
+      {
+        "id": "1272-141231-0013",
+        "ref_words": 2,
+        "exact_matches": 2
+      },
+      {
+        "id": "1272-141231-0014",
+        "ref_words": 19,
+        "exact_matches": 19
+      },
+      {
+        "id": "1272-141231-0015",
+        "ref_words": 12,
+        "exact_matches": 11
+      },
+      {
+        "id": "1272-141231-0016",
+        "ref_words": 2,
+        "exact_matches": 2
+      },
+      {
+        "id": "1272-141231-0017",
+        "ref_words": 10,
+        "exact_matches": 10
+      },
+      {
+        "id": "1272-141231-0018",
+        "ref_words": 14,
+        "exact_matches": 12
+      },
+      {
+        "id": "1272-141231-0019",
+        "ref_words": 13,
+        "exact_matches": 13
+      },
+      {
+        "id": "1272-141231-0020",
+        "ref_words": 9,
+        "exact_matches": 9
+      },
+      {
+        "id": "1272-141231-0021",
+        "ref_words": 11,
+        "exact_matches": 11
+      },
+      {
+        "id": "1272-141231-0022",
+        "ref_words": 20,
+        "exact_matches": 19
+      },
+      {
+        "id": "1272-141231-0023",
+        "ref_words": 23,
+        "exact_matches": 23
+      },
+      {
+        "id": "1272-141231-0024",
+        "ref_words": 6,
+        "exact_matches": 6
+      },
+      {
+        "id": "1272-141231-0025",
+        "ref_words": 20,
+        "exact_matches": 20
+      },
+      {
+        "id": "1272-141231-0026",
+        "ref_words": 13,
+        "exact_matches": 12
+      },
+      {
+        "id": "1272-141231-0027",
+        "ref_words": 16,
+        "exact_matches": 15
+      },
+      {
+        "id": "1272-141231-0028",
+        "ref_words": 12,
+        "exact_matches": 11
+      },
+      {
+        "id": "1272-141231-0029",
+        "ref_words": 18,
+        "exact_matches": 17
+      },
+      {
+        "id": "1272-141231-0030",
+        "ref_words": 17,
+        "exact_matches": 16
+      },
+      {
+        "id": "1272-141231-0031",
+        "ref_words": 18,
+        "exact_matches": 16
+      },
+      {
+        "id": "1272-141231-0032",
+        "ref_words": 13,
+        "exact_matches": 13
+      },
+      {
+        "id": "1462-170142-0000",
+        "ref_words": 11,
+        "exact_matches": 11
+      },
+      {
+        "id": "1462-170142-0001",
+        "ref_words": 26,
+        "exact_matches": 26
+      },
+      {
+        "id": "1462-170142-0002",
+        "ref_words": 15,
+        "exact_matches": 15
+      },
+      {
+        "id": "1462-170142-0003",
+        "ref_words": 7,
+        "exact_matches": 7
+      },
+      {
+        "id": "1462-170142-0004",
+        "ref_words": 22,
+        "exact_matches": 22
+      },
+      {
+        "id": "1462-170142-0005",
+        "ref_words": 37,
+        "exact_matches": 37
+      },
+      {
+        "id": "1462-170142-0006",
+        "ref_words": 18,
+        "exact_matches": 18
+      },
+      {
+        "id": "1462-170142-0007",
+        "ref_words": 8,
+        "exact_matches": 8
+      },
+      {
+        "id": "1462-170142-0008",
+        "ref_words": 15,
+        "exact_matches": 15
+      },
+      {
+        "id": "1462-170142-0009",
+        "ref_words": 17,
+        "exact_matches": 17
+      },
+      {
+        "id": "1462-170142-0010",
+        "ref_words": 11,
+        "exact_matches": 11
+      },
+      {
+        "id": "1462-170142-0011",
+        "ref_words": 11,
+        "exact_matches": 11
+      },
+      {
+        "id": "1462-170142-0012",
+        "ref_words": 16,
+        "exact_matches": 16
+      },
+      {
+        "id": "1462-170142-0013",
+        "ref_words": 9,
+        "exact_matches": 8
+      },
+      {
+        "id": "1462-170142-0014",
+        "ref_words": 5,
+        "exact_matches": 5
+      },
+      {
+        "id": "1462-170142-0015",
+        "ref_words": 7,
+        "exact_matches": 7
+      },
+      {
+        "id": "1462-170142-0016",
+        "ref_words": 19,
+        "exact_matches": 19
+      },
+      {
+        "id": "1462-170142-0017",
+        "ref_words": 8,
+        "exact_matches": 8
+      },
+      {
+        "id": "1462-170142-0018",
+        "ref_words": 8,
+        "exact_matches": 8
+      },
+      {
+        "id": "1462-170142-0019",
+        "ref_words": 27,
+        "exact_matches": 27
+      },
+      {
+        "id": "1462-170142-0020",
+        "ref_words": 18,
+        "exact_matches": 18
+      },
+      {
+        "id": "1462-170142-0021",
+        "ref_words": 27,
+        "exact_matches": 25
+      },
+      {
+        "id": "1462-170142-0022",
+        "ref_words": 10,
+        "exact_matches": 10
+      },
+      {
+        "id": "1462-170142-0023",
+        "ref_words": 10,
+        "exact_matches": 10
+      },
+      {
+        "id": "1462-170142-0024",
+        "ref_words": 4,
+        "exact_matches": 4
+      },
+      {
+        "id": "1462-170142-0025",
+        "ref_words": 13,
+        "exact_matches": 13
+      },
+      {
+        "id": "1462-170142-0026",
+        "ref_words": 13,
+        "exact_matches": 13
+      },
+      {
+        "id": "1462-170142-0027",
+        "ref_words": 10,
+        "exact_matches": 10
+      },
+      {
+        "id": "1462-170142-0028",
+        "ref_words": 8,
+        "exact_matches": 8
+      },
+      {
+        "id": "1462-170142-0029",
+        "ref_words": 8,
+        "exact_matches": 8
+      },
+      {
+        "id": "1462-170142-0030",
+        "ref_words": 6,
+        "exact_matches": 6
+      },
+      {
+        "id": "1462-170142-0031",
+        "ref_words": 13,
+        "exact_matches": 13
+      },
+      {
+        "id": "1462-170142-0032",
+        "ref_words": 8,
+        "exact_matches": 8
+      },
+      {
+        "id": "1462-170142-0033",
+        "ref_words": 12,
+        "exact_matches": 12
+      },
+      {
+        "id": "1462-170142-0034",
+        "ref_words": 8,
+        "exact_matches": 8
+      },
+      {
+        "id": "1462-170142-0035",
+        "ref_words": 7,
+        "exact_matches": 7
+      },
+      {
+        "id": "1462-170142-0036",
+        "ref_words": 12,
+        "exact_matches": 12
+      },
+      {
+        "id": "1462-170142-0037",
+        "ref_words": 11,
+        "exact_matches": 11
+      },
+      {
+        "id": "1462-170142-0038",
+        "ref_words": 15,
+        "exact_matches": 15
+      },
+      {
+        "id": "1462-170142-0039",
+        "ref_words": 14,
+        "exact_matches": 12
+      },
+      {
+        "id": "1462-170142-0040",
+        "ref_words": 14,
+        "exact_matches": 14
+      },
+      {
+        "id": "1462-170142-0041",
+        "ref_words": 18,
+        "exact_matches": 18
+      },
+      {
+        "id": "1462-170142-0042",
+        "ref_words": 6,
+        "exact_matches": 6
+      },
+      {
+        "id": "1462-170145-0000",
+        "ref_words": 41,
+        "exact_matches": 41
+      }
+    ],
+    "utterances_without_matches": []
+  }
+}

@@ -41,13 +41,41 @@ Long-audio results (three measured runs per side, alternating against main):
 | 602.465 s offline | 57.67 s | 57.87 s |
 | 602.465 s segmented (-S30) | 11.13 s | 11.31 s |
 
-All **17 benchmark cases** matched main, including forced-alignment JSON.
+In the November 6 R15 benchmark, all **17 cases** matched its main baseline,
+including forced-alignment JSON.
 On full LibriSpeech dev-clean, both builds scored **2.7591% offline WER**.
 Of 2,703 utterances, 2,702 transcriptions matched exactly and one differed by
 a comma. All 2,703 matched after WER normalization.
 
-File `--stream` returned partial transcripts on the two long recordings.
-Their timings and accuracy are reported separately from complete offline transcription.
+An unreleased source fix completes the final file `--stream` decode, which
+previously stopped after 32 tokens. November 7 follow-up results (three measured
+runs per side on a loaded M5 Pro, 0.6B model, 12 threads):
+
+| File `--stream` | WER before → after | Fixed median inference | Fixed median process wall |
+|---|---:|---:|---:|
+| 120.705 s | 91.7857% → **2.8571%** | 4.29 s | 4.41 s |
+| 602.465 s | 98.3780% → **2.8914%** | 54.21 s | 54.39 s |
+
+The old timings measured partial transcripts. A subsequent fix removes
+destructive intermediate file-stream resets and reuses unchanged decode input.
+File mode retains its deferred output defaults and complete context through EOF;
+memory and decoding work grow with recording length.
+[EOF fix](docs/benchmarks/2026-11-07-stream/README.md) and
+[small-chunk fix, coverage checks and timings](docs/benchmarks/2026-11-07-stream-reset/README.md).
+
+The small-chunk follow-up uses **0.5 s chunks**, with three measured runs per
+side on the same loaded desktop. All 22 / 102 source utterances retain matching
+text; the longest unmatched reference spans are only 2 / 3 words.
+Here, “before” includes the EOF-budget fix but retains intermediate resets.
+
+| File `--stream`, 0.5 s chunk | WER before → after | Fixed median inference | Fixed median process wall |
+|---|---:|---:|---:|
+| 120.705 s | 58.2143% → **2.8571%** | 7.55 s | 7.68 s |
+| 602.465 s | 91.7489% → **2.6093%** | 220.90 s | 221.13 s |
+
+The longer complete context makes 0.5-second file decoding more expensive
+than the default configuration; these timings should be compared within their
+respective chunk settings and output coverage.
 [All measurements and per-utterance comparison](docs/benchmarks/results.md).
 
 ## Quick Start
@@ -105,7 +133,7 @@ qwen-asr -d qwen3-aligner-0.6b -i audio.wav --align "Hello world" --align-langua
 | `-t <n>` | Thread count | performance cores |
 | `-S <secs>` | Segment target seconds | 0 (full) |
 | `--stream` | Streaming mode | off |
-| `--stream-chunk-sec <s>` | Chunk size for streaming | 2.0 |
+| `--stream-chunk-sec <s>` | Chunk size for streaming | 8.0 (2.0 for stdin) |
 | `--language <lang>` | Force output language (`en`, `zh`, `ja`, ...) | auto |
 | `--srt [path]` | Write SRT subtitles | `<input>.srt` |
 | `--vtt [path]` | Write WebVTT subtitles | `<input>.vtt` |

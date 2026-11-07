@@ -1,0 +1,21 @@
+{
+  "workspace": {
+    "command": "cargo test --release --workspace",
+    "passed": 96,
+    "failed": 0,
+    "ignored": 3
+  },
+  "file_stream_no_default": {
+    "command": "cargo test --release -p qwen-asr --no-default-features --test file_stream",
+    "passed": 1
+  },
+  "clippy": {
+    "command": "cargo clippy --workspace --all-targets -- -D warnings",
+    "passed": true
+  },
+  "format": {
+    "command": "cargo fmt --all --check",
+    "passed": true
+  },
+  "regression_red": "Original source fails file_stream_flushes_final_text: ends with \"Some things are worth bringing\" instead of the final phrase."
+}

@@ -1,0 +1,54 @@
+{
+  "cmd": [
+    "/Users/lizhuo/owork/q-asr/tmp/stream-fix/before",
+    "-d",
+    "/Users/lizhuo/owork/q-asr/qwen3-asr-0.6b",
+    "-i",
+    "/Users/lizhuo/owork/q-asr/bench/long/samples/long-2min.wav",
+    "--stream",
+    "-t",
+    "12",
+    "--debug"
+  ],
+  "before": {
+    "time": 1794029366.866658,
+    "loadavg": [
+      8.35009765625,
+      7.13427734375,
+      4.81787109375
+    ],
+    "processes": "  PID  %CPU COMM\n  444  98.9 /usr/sbin/BTLEServer\n77735  37.8 (managedappdistri)\n71522  31.1 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)\n  169  14.5 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer\n84447   7.6 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper.app/Contents/MacOS/Brave Browser Helper\n  180   4.3 /usr/sbin/coreaudiod\n94911   3.4 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (GPU).app/Contents/MacOS/Google Chrome Helper (GPU)\n22051   1.6 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)\n 3001   1.1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/157.0.8103.39/Helpers/Codex (Aperitif Renderer).app/Contents/MacOS/Codex (Aperitif Renderer)\n30667   1.1 /Users/lizhuo/Library/Developer/CoreSimulator/Devices/A9AD99C2-B40F-4DBE-8AC2-A957A1BC6CE0/data/Containers/Bundle/Application/86092570-2C7A-4CF4-953C-1D9223B68FEC/Runner.app/Runner\n88344   0.8 /System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService\n20227   0.7 /Users/lizhuo/Library/Developer/CoreSimulator/Devices/1298D133-57B2-44FB-9550-8C7586593A40/data/Containers/Bundle/Application/4B0FE83A-D7C8-4442-ABE3-5432B001C5EE/Runner.app/Runner\n77328   0.4 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared\n62710   0.4 /Applications/Docker.app/Contents/MacOS/com.docker.backend\n11557   0.4 /Users/lizhuo/Library/Developer/CoreSimulator/Devices/905A927E-6385-44B3-BFB2-8EEE84C1901F/data/Containers/Bundle/Application/C5AE7DCE-994D-4E5D-A7B9-A7ECA7C1A5D3/Runner.app/Runner",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7209059)\t100%; charged; 0:00 remaining present: true",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded",
+    "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                   406375.\nPages active:                                 800015.\nPages inactive:                               790755.\nPages speculative:                             18969.\nPages throttled:                                   0.\nPages wired down:                             430071.\nPages purgeable:                               22483.\n\"Translation faults\":                    43782658925.\nPages copy-on-write:                      4592617744.\nPages zero filled:                       22432567139.\nPages reactivated:                         312491353.\nPages purged:                              175297517.\nFile-backed pages:                            614377.\nAnonymous pages:                              995362.\nPages stored in compressor:                  2783386.\nPages occupied by compressor:                 638666.\nDecompressions:                            225031768.\nCompressions:                              294088845.\nPageins:                                   594931961.\nPageouts:                                    1864161.\nSwapins:                                      976406.\nSwapouts:                                    3015664.\nPages tagged:                                 239590.\nPages tagged resident:                        190946.\nPages tagged compressed:                       48644.\nPages tag-storage:                             98304.\nPages tag-storage holding tags:                 7475.\nPages tag-storage free:                          739.\nPages tag-storage non-tag pageable:            90081.\nPages tag-storage non-tag wired:                   9.\nBytes of compressed tags:                    8265600.\nTagged compressions:                         5790357.\nTagged decompressions:                       5138806.",
+    "swap_usage": "vm.swapusage: total = 21504.00M  used = 20577.62M  free = 926.38M  (encrypted)"
+  },
+  "after": {
+    "time": 1794029369.1854138,
+    "loadavg": [
+      8.48193359375,
+      7.181640625,
+      4.84814453125
+    ],
+    "processes": "  PID  %CPU COMM\n  444  96.4 /usr/sbin/BTLEServer\n20227  45.4 /Users/lizhuo/Library/Developer/CoreSimulator/Devices/1298D133-57B2-44FB-9550-8C7586593A40/data/Containers/Bundle/Application/4B0FE83A-D7C8-4442-ABE3-5432B001C5EE/Runner.app/Runner\n14202  27.5 /Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/SimRenderingServices.simdeviceio/Contents/XPCServices/SimMetalHost.xpc/Contents/MacOS/SimMetalHost\n71522  24.4 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)\n84447   6.4 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper.app/Contents/MacOS/Brave Browser Helper\n14200   6.3 /Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/SimRenderingServices.simdeviceio/Contents/XPCServices/SimRenderServer.xpc/Contents/MacOS/SimRenderServer\n  169   5.8 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer\n  180   4.3 /usr/sbin/coreaudiod\n14229   4.0 /private/var/run/com.apple.security.cryptexd/mnt/com.apple.iPhoneOS.SimulatorRuntime-v24.1.434.0.9bJtKx/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/usr/libexec/backboardd\n14203   3.5 /Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/SimRenderingServices.simdeviceio/Contents/XPCServices/SimMetalHost.xpc/Contents/MacOS/SimMetalHost\n94911   3.4 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (GPU).app/Contents/MacOS/Google Chrome Helper (GPU)\n14259   2.6 /private/var/run/com.apple.security.cryptexd/mnt/com.apple.iPhoneOS.SimulatorRuntime-v24.1.434.0.9bJtKx/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/usr/libexec/diagnosticd\n45807   1.9 /Applications/FuseBar.app/Contents/MacOS/FuseBar\n22051   1.8 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)\n30667   1.1 /Users/lizhuo/Library/Developer/CoreSimulator/Devices/A9AD99C2-B40F-4DBE-8AC2-A957A1BC6CE0/data/Containers/Bundle/Application/86092570-2C7A-4CF4-953C-1D9223B68FEC/Runner.app/Runner",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7209059)\t100%; charged; 0:00 remaining present: true",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded",
+    "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                   382613.\nPages active:                                 788849.\nPages inactive:                               769373.\nPages speculative:                             18979.\nPages throttled:                                   0.\nPages wired down:                             486767.\nPages purgeable:                               11579.\n\"Translation faults\":                    43782908391.\nPages copy-on-write:                      4592619323.\nPages zero filled:                       22432698927.\nPages reactivated:                         312491353.\nPages purged:                              175297519.\nFile-backed pages:                            614389.\nAnonymous pages:                              962812.\nPages stored in compressor:                  2783152.\nPages occupied by compressor:                 638549.\nDecompressions:                            225031769.\nCompressions:                              294088845.\nPageins:                                   594932027.\nPageouts:                                    1864161.\nSwapins:                                      976406.\nSwapouts:                                    3015664.\nPages tagged:                                 239589.\nPages tagged resident:                        190945.\nPages tagged compressed:                       48644.\nPages tag-storage:                             98304.\nPages tag-storage holding tags:                 7475.\nPages tag-storage free:                          741.\nPages tag-storage non-tag pageable:            90079.\nPages tag-storage non-tag wired:                   9.\nBytes of compressed tags:                    8265600.\nTagged compressions:                         5790357.\nTagged decompressions:                       5138806.",
+    "swap_usage": "vm.swapusage: total = 21504.00M  used = 20577.62M  free = 926.38M  (encrypted)"
+  },
+  "returncode": 0,
+  "timed_out": false,
+  "stdout_sha256": "37ad63b3d44820a08ff5906025a6f751a8923bc19f6650d7f4593c2b45fbcfb5",
+  "resource_usage": {
+    "ru_utime": 17.045668000000006,
+    "ru_stime": 0.8148479999999996,
+    "ru_minflt": 222308,
+    "ru_majflt": 0,
+    "ru_nvcsw": 0,
+    "ru_nivcsw": 67259
+  },
+  "metrics": {
+    "infer": 2130.0,
+    "wall": 2248.8252078182995
+  }
+}

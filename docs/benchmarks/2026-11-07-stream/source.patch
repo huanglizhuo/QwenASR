@@ -1,0 +1,106 @@
+diff --git a/crates/qwen-asr-cli/src/main.rs b/crates/qwen-asr-cli/src/main.rs
+index 49c97d73..cb38bc57 100644
+--- a/crates/qwen-asr-cli/src/main.rs
++++ b/crates/qwen-asr-cli/src/main.rs
+@@ -127,8 +127,10 @@ fn usage(prog: &str) {
+     eprintln!("  -S <secs>     Segment target seconds (default: 0 = full-audio decode)");
+     eprintln!("  -W <secs>     Segment-cutting silence search window ± seconds (default: 3.0)");
+     eprintln!("  --stream      Streaming mode: process in chunks with prefix rollback");
+-    eprintln!("  --stream-max-new-tokens <n>  Max generated tokens per stream step (default: 32)");
+-    eprintln!("  --stream-chunk-sec <secs>   Chunk size for streaming (default: 2.0, min ~1.0)");
++    eprintln!(
++        "  --stream-max-new-tokens <n>  Tokens per step (default: 32; file EOF: at least 2048)"
++    );
++    eprintln!("  --stream-chunk-sec <secs>   Chunk size (default: 8.0s; stdin 2.0s)");
+     eprintln!("  --enc-window-sec <secs>    Encoder attention window in seconds (1..8, default 8)");
+     eprintln!("  --past-text <yes|no|auto>  Reuse previously decoded text as context");
+     eprintln!("  --skip-silence              Drop long silent spans before inference");
+diff --git a/crates/qwen-asr/src/context.rs b/crates/qwen-asr/src/context.rs
+index 5fd90dfe..2ab7d9b3 100644
+--- a/crates/qwen-asr/src/context.rs
++++ b/crates/qwen-asr/src/context.rs
+@@ -233,6 +233,8 @@ pub struct QwenCtx {
+     pub stream_chunk_sec: f32,
+     pub stream_rollback: i32,
+     pub stream_unfixed_chunks: i32,
++    /// Token budget per incremental step. Finite-file `transcribe_stream`
++    /// uses at least 2048 at EOF to flush the accumulated hypothesis.
+     pub stream_max_new_tokens: i32,
+     pub past_text_conditioning: bool,
+     pub skip_silence: bool,
+diff --git a/crates/qwen-asr/src/transcribe.rs b/crates/qwen-asr/src/transcribe.rs
+index 1b4219a2..d5b3c5d2 100644
+--- a/crates/qwen-asr/src/transcribe.rs
++++ b/crates/qwen-asr/src/transcribe.rs
+@@ -20,6 +20,8 @@ const PREFIX_HEAD: &[i32] = &[151644, 8948, 198];
+ const PREFIX_TAIL: &[i32] = &[151645, 198, 151644, 872, 198, 151669];
+ const SUFFIX_BASE: &[i32] = &[151670, 151645, 198, 151644, 77091, 198];
+ 
++const MAX_DECODE_TOKENS: i32 = 2048;
++
+ // Streaming robustness constants (matching C reference)
+ const STREAM_DEGEN_MAX_PERIOD: usize = 6;
+ const STREAM_DEGEN_MIN_REPEATS: usize = 4;
+@@ -550,7 +552,7 @@ fn decode_segment_core(
+         dec_bufs,
+         &pre.next_embed,
+     );
+-    let max_tokens = 2048;
++    let max_tokens = MAX_DECODE_TOKENS;
+     let mut n_generated = 0;
+     let mut past_asr_text = weights.has_prefilled_asr_text || n_past > 0;
+ 
+@@ -1695,7 +1697,7 @@ fn collect_splits_lockstep(
+     };
+     let dim = cfg.dec_hidden;
+     let tok_emb = weights.decoder.tok_embeddings_bf16;
+-    let max_tokens = 2048;
++    let max_tokens = MAX_DECODE_TOKENS as usize;
+ 
+     /// A prefilled session that is decoding (or queued to decode).
+     struct LiveSeg {
+@@ -2259,6 +2261,9 @@ fn stream_decode_tail(
+ ///
+ /// Trades throughput for lower latency compared to offline mode. If no
+ /// `token_cb` is set, falls back to a single offline decode of the full audio.
++/// The final chunk uses at least the offline 2048-token budget to flush text
++/// deferred by `stream_unfixed_chunks`; intermediate chunks use
++/// `stream_max_new_tokens`.
+ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
+     let cfg = ctx.config.clone();
+     let dim = cfg.dec_hidden;
+@@ -2573,7 +2578,12 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
+             dim,
+             &mut tmp_embed,
+             token,
+-            max_new_tokens,
++            // EOF must drain the accumulated hypothesis, not just one step.
++            if is_final {
++                max_new_tokens.max(MAX_DECODE_TOKENS)
++            } else {
++                max_new_tokens
++            },
+             &prev_tail,
+             verify_enabled,
+             &mut tail_stats,
+@@ -2609,7 +2619,7 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
+         let (best_reps, _) = stream_tail_repeat_blocks(&raw_tokens, STREAM_DEGEN_MAX_PERIOD);
+         let is_degen = stale_count >= STREAM_STALE_CHUNKS || best_reps >= STREAM_DEGEN_MIN_REPEATS;
+ 
+-        if is_degen {
++        if !is_final && is_degen {
+             if kernels::verbose() >= 2 {
+                 eprintln!(
+                     "[stream degen] reset at chunk {} (stale={}, reps={})",
+@@ -2628,8 +2638,10 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
+             prev_tail_snapshot.clear();
+         }
+ 
++        // shortcut: non-final reanchors can lose held text; synchronize text/audio
++        // offsets before enabling early commit by default for finite files.
+         // Periodic re-anchor: reset context every STREAM_RESET_INTERVAL_CHUNKS chunks
+-        if chunk_idx > 0 && chunk_idx % STREAM_RESET_INTERVAL_CHUNKS == 0 {
++        if !is_final && chunk_idx > 0 && chunk_idx % STREAM_RESET_INTERVAL_CHUNKS == 0 {
+             if kernels::verbose() >= 2 {
+                 eprintln!("[stream reanchor] at chunk {}", chunk_idx);
+             }

@@ -12,6 +12,7 @@ qwen-asr-int8.sidecar
 /bench/.venv-bench/
 /bench/.venv-mlx-audio/
 /bench/__pycache__/
+/docs/benchmarks/**/__pycache__/
 /tmp/qwen3_asr_rs/
 /qwen3-aligner-0.6b
 /tmp/

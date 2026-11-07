@@ -40,10 +40,10 @@ def parse(err):
     return d
 
 
-def cases(fixtures, aligner):
+def cases(fixtures, aligner, stream_chunk_sec=None):
     sample = ROOT / 'bench/samples/audio.wav'
     long = ROOT / 'bench/long/samples'
-    return {
+    definitions = {
         'wav_offline': (['-i', str(sample)], None),
         'c28_offline': (['-i', str(fixtures / 'clip28s.wav')], None),
         'c4_offline': (['-i', str(fixtures / 'clip4s.wav')], None),
@@ -62,6 +62,11 @@ def cases(fixtures, aligner):
         'multi60': (['-i', ','.join(str(fixtures / f'multi60/m{i:02d}.wav') for i in range(60))], None),
         'srt_2min': (['-i', str(long / 'long-2min.wav'), '-S', '30', '--aligner-dir', str(aligner)], None),
     }
+    if stream_chunk_sec is not None:
+        for args, _ in definitions.values():
+            if '--stream' in args:
+                args += ['--stream-chunk-sec', str(stream_chunk_sec)]
+    return definitions
 
 
 def snapshot():
@@ -147,6 +152,7 @@ def main():
     ap.add_argument('--cases', required=True)
     ap.add_argument('--runs', type=int, default=3)
     ap.add_argument('--threads', type=int, default=12)
+    ap.add_argument('--stream-chunk-sec', type=float, help='Override chunk duration for streaming cases only')
     ap.add_argument('--profile', action='store_true', help='Collect batch phase diagnostics; adds profiling overhead')
     ap.add_argument('--env', action='append', default=[])
     ap.add_argument('--a-env', action='append', default=[])
@@ -160,7 +166,9 @@ def main():
     o = ap.parse_args()
     if o.runs < 1 or o.threads < 1 or o.timeout <= 0:
         ap.error('runs, threads and timeout must be positive')
-    definitions = cases(o.fixtures, o.aligner)
+    if o.stream_chunk_sec is not None and not 0 < o.stream_chunk_sec < float('inf'):
+        ap.error('stream chunk duration must be finite and positive')
+    definitions = cases(o.fixtures, o.aligner, o.stream_chunk_sec)
     selected = o.cases.split(',')
     if any(c not in definitions for c in selected) or len(set(selected)) != len(selected):
         ap.error(f'cases must be distinct members of {list(definitions)}')
@@ -178,6 +186,7 @@ def main():
     metadata = {'platform': platform.platform(), 'model': str(o.model.resolve()),
                 'cases': selected, 'fixtures': str(o.fixtures.resolve()), 'aligner': str(o.aligner.resolve()), 'binaries': {k: str(v) for k, v in binaries.items()},
                 'binary_sha256': hashes, 'threads': o.threads, 'runs': o.runs, 'profile': o.profile,
+                'stream_chunk_sec': o.stream_chunk_sec,
                 'overrides': {'common': o.env, 'A': o.a_env, 'B': o.b_env},
                 'git_head': subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip()}
     (o.out / 'metadata.json').write_text(json.dumps(metadata, indent=2) + '\n')

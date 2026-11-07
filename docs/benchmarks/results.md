@@ -137,13 +137,20 @@ strict transcript-identity check has one reproducible mismatch.
 | 602.465 s segmented | 3.1735% |
 | 602.465 s file `--stream` | **98.3780% (partial output)** |
 
-File `--stream` produces only a small portion of these long recordings in both
-main and the candidate. Its timing rows above measure partial-output execution,
+The November 6 file `--stream` runs produced only a small portion of these long
+recordings in both main and the candidate. Their timing rows above measure partial-output execution,
 **not complete long-audio transcription**. Matching main's bytes does not make
 these outputs accurate. The stdin streaming path behaves differently and was
 scored separately. Do not promote these file-streaming numbers as an offline-
 quality speedup. Full counts/CER: [long-accuracy.json](2026-11-06/long-accuracy.json).
 Concatenated samples are a regression workload, not an independent accuracy corpus.
+
+The default finite-file EOF truncation is fixed in the November 7 follow-up.
+See the [diagnosis, corrected WER and timing measurements](2026-11-07-stream/README.md).
+Historical rows above retain the original partial-output measurements.
+The subsequent [small-chunk follow-up](2026-11-07-stream-reset/README.md)
+fixes intermediate resets, verifies coverage of every source utterance, and
+measures both long recordings with 0.5-second chunks.
 
 ## Reproduce
 

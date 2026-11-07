@@ -1,0 +1,56 @@
+{
+  "cmd": [
+    "/Users/lizhuo/owork/q-asr/tmp/stream-reset/before",
+    "-d",
+    "/Users/lizhuo/owork/q-asr/qwen3-asr-0.6b",
+    "-i",
+    "/Users/lizhuo/owork/q-asr/bench/long/samples/long-2min.wav",
+    "--stream",
+    "--stream-chunk-sec",
+    "0.5",
+    "-t",
+    "12",
+    "--debug"
+  ],
+  "before": {
+    "time": 1794031428.316832,
+    "loadavg": [
+      8.83447265625,
+      8.03857421875,
+      8.384765625
+    ],
+    "processes": "  PID  %CPU COMM\n  444  99.1 /usr/sbin/BTLEServer\n31144  40.9 /Applications/cmux.app/Contents/MacOS/cmux\n  169  29.4 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer\n96526  19.2 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)\n84447  12.4 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper.app/Contents/MacOS/Brave Browser Helper\n84433  10.0 /Applications/Brave Browser.app/Contents/MacOS/Brave Browser\n  180   4.5 /usr/sbin/coreaudiod\n94911   3.6 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (GPU).app/Contents/MacOS/Google Chrome Helper (GPU)\n22051   1.8 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)\n84448   1.6 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper.app/Contents/MacOS/Brave Browser Helper\n85221   1.0 /Users/lizhuo/.local/bin/claude\n 3001   0.9 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/157.0.8103.39/Helpers/Codex (Aperitif Renderer).app/Contents/MacOS/Codex (Aperitif Renderer)\n  144   0.9 /usr/libexec/locationd\n  384   0.8 /System/Library/DriverExtensions/AppleCentauriAlpha.dext/AppleCentauriAlpha\n96563   0.7 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7209059)\t100%; charged; 0:00 remaining present: true",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded",
+    "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                   350578.\nPages active:                                 795799.\nPages inactive:                               774270.\nPages speculative:                             19660.\nPages throttled:                                   0.\nPages wired down:                             455910.\nPages purgeable:                               33561.\n\"Translation faults\":                    43848339884.\nPages copy-on-write:                      4594532854.\nPages zero filled:                       22468068233.\nPages reactivated:                         313018892.\nPages purged:                              175547728.\nFile-backed pages:                            632662.\nAnonymous pages:                              957065.\nPages stored in compressor:                  2861171.\nPages occupied by compressor:                 688565.\nDecompressions:                            225192084.\nCompressions:                              294373388.\nPageins:                                   595473025.\nPageouts:                                    1864979.\nSwapins:                                      976738.\nSwapouts:                                    3015664.\nPages tagged:                                 238239.\nPages tagged resident:                        188780.\nPages tagged compressed:                       49459.\nPages tag-storage:                             98304.\nPages tag-storage holding tags:                 7465.\nPages tag-storage free:                         1033.\nPages tag-storage non-tag pageable:            89797.\nPages tag-storage non-tag wired:                   9.\nBytes of compressed tags:                    8457472.\nTagged compressions:                         5797128.\nTagged decompressions:                       5143810.",
+    "swap_usage": "vm.swapusage: total = 21504.00M  used = 20569.62M  free = 934.38M  (encrypted)"
+  },
+  "after": {
+    "time": 1794031439.757422,
+    "loadavg": [
+      9.91015625,
+      8.298828125,
+      8.47314453125
+    ],
+    "processes": "  PID  %CPU COMM\n  444  98.5 /usr/sbin/BTLEServer\n20227  10.0 /Users/lizhuo/Library/Developer/CoreSimulator/Devices/1298D133-57B2-44FB-9550-8C7586593A40/data/Containers/Bundle/Application/4B0FE83A-D7C8-4442-ABE3-5432B001C5EE/Runner.app/Runner\n96526   6.9 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)\n  180   4.4 /usr/sbin/coreaudiod\n94911   4.1 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (GPU).app/Contents/MacOS/Google Chrome Helper (GPU)\n  169   3.0 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer\n14202   2.6 /Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/SimRenderingServices.simdeviceio/Contents/XPCServices/SimMetalHost.xpc/Contents/MacOS/SimMetalHost\n22051   1.8 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)\n85221   1.3 /Users/lizhuo/.local/bin/claude\n84447   1.3 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper.app/Contents/MacOS/Brave Browser Helper\n14208   1.1 /private/var/run/com.apple.security.cryptexd/mnt/com.apple.iPhoneOS.SimulatorRuntime-v24.1.434.0.9bJtKx/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/CoreServices/SpringBoard.app/SpringBoard\n 5287   1.0 /private/var/run/com.apple.security.cryptexd/mnt/com.apple.iPhoneOS.SimulatorRuntime-v24.1.434.0.9bJtKx/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/CoreServices/SpringBoard.app/SpringBoard\n 8939   1.0 /Users/lizhuo/tools/flutter/bin/cache/dart-sdk/bin/dartvm\n84433   1.0 /Applications/Brave Browser.app/Contents/MacOS/Brave Browser\n27286   1.0 /private/var/run/com.apple.security.cryptexd/mnt/com.apple.iPhoneOS.SimulatorRuntime-v24.1.434.0.9bJtKx/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/CoreServices/SpringBoard.app/SpringBoard",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7209059)\t100%; charged; 0:00 remaining present: true",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded",
+    "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                   292831.\nPages active:                                 793212.\nPages inactive:                               785464.\nPages speculative:                             19917.\nPages throttled:                                   0.\nPages wired down:                             505093.\nPages purgeable:                               32057.\n\"Translation faults\":                    43848848446.\nPages copy-on-write:                      4594542433.\nPages zero filled:                       22468378305.\nPages reactivated:                         313018960.\nPages purged:                              175547728.\nFile-backed pages:                            634454.\nAnonymous pages:                              964139.\nPages stored in compressor:                  2860926.\nPages occupied by compressor:                 688452.\nDecompressions:                            225192298.\nCompressions:                              294373388.\nPageins:                                   595474319.\nPageouts:                                    1864979.\nSwapins:                                      976738.\nSwapouts:                                    3015664.\nPages tagged:                                 238327.\nPages tagged resident:                        188868.\nPages tagged compressed:                       49459.\nPages tag-storage:                             98304.\nPages tag-storage holding tags:                 7465.\nPages tag-storage free:                         1057.\nPages tag-storage non-tag pageable:            89773.\nPages tag-storage non-tag wired:                   9.\nBytes of compressed tags:                    8457472.\nTagged compressions:                         5797128.\nTagged decompressions:                       5143810.",
+    "swap_usage": "vm.swapusage: total = 21504.00M  used = 20569.62M  free = 934.38M  (encrypted)"
+  },
+  "returncode": 0,
+  "timed_out": false,
+  "stdout_sha256": "7f53cdbeda610f8bd224fbbcb13b8b3cbb68924454b25936995e77ba626a2bb3",
+  "resource_usage": {
+    "ru_utime": 93.03999199999998,
+    "ru_stime": 3.7833570000000005,
+    "ru_minflt": 219773,
+    "ru_majflt": 0,
+    "ru_nvcsw": 1,
+    "ru_nivcsw": 491586
+  },
+  "metrics": {
+    "infer": 11209.0,
+    "wall": 11345.966458320618
+  }
+}

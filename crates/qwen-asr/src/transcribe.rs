@@ -20,6 +20,8 @@ const PREFIX_HEAD: &[i32] = &[151644, 8948, 198];
 const PREFIX_TAIL: &[i32] = &[151645, 198, 151644, 872, 198, 151669];
 const SUFFIX_BASE: &[i32] = &[151670, 151645, 198, 151644, 77091, 198];
 
+const MAX_DECODE_TOKENS: i32 = 2048;
+
 // Streaming robustness constants (matching C reference)
 const STREAM_DEGEN_MAX_PERIOD: usize = 6;
 const STREAM_DEGEN_MIN_REPEATS: usize = 4;
@@ -550,7 +552,7 @@ fn decode_segment_core(
         dec_bufs,
         &pre.next_embed,
     );
-    let max_tokens = 2048;
+    let max_tokens = MAX_DECODE_TOKENS;
     let mut n_generated = 0;
     let mut past_asr_text = weights.has_prefilled_asr_text || n_past > 0;
 
@@ -1695,7 +1697,7 @@ fn collect_splits_lockstep(
     };
     let dim = cfg.dec_hidden;
     let tok_emb = weights.decoder.tok_embeddings_bf16;
-    let max_tokens = 2048;
+    let max_tokens = MAX_DECODE_TOKENS as usize;
 
     /// A prefilled session that is decoding (or queued to decode).
     struct LiveSeg {
@@ -2259,6 +2261,12 @@ fn stream_decode_tail(
 ///
 /// Trades throughput for lower latency compared to offline mode. If no
 /// `token_cb` is set, falls back to a single offline decode of the full audio.
+/// The final chunk uses at least the offline 2048-token budget to flush text
+/// deferred by `stream_unfixed_chunks`; intermediate chunks use
+/// `stream_max_new_tokens`.
+/// File audio and text retain the same origin through EOF; their caches are
+/// not periodically trimmed without token-to-audio alignment. Memory therefore
+/// grows with the file's context, as it does for unsegmented offline decode.
 pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
     let cfg = ctx.config.clone();
     let dim = cfg.dec_hidden;
@@ -2324,13 +2332,9 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
     let mut enc_cache: Vec<EncWindow> = Vec::new();
     let mut enc_cached_seq_total = 0usize;
 
-    // Previous prefill row keys for LCP reuse
+    // Previous decode input keys for LCP reuse and identical-input detection.
     let mut prev_prefill_keys: Vec<PrefillRowKey> = Vec::new();
-
-    // Streaming robustness state
-    let mut stale_count = 0i32;
-    let mut prev_tail_snapshot: Vec<i32> = Vec::new();
-    let mut enc_cache_base_windows = 0usize;
+    let mut prev_last_key = None;
 
     while audio_cursor < audio_samples.len() {
         let chunk_t0 = get_time_ms();
@@ -2341,9 +2345,9 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         let t0 = get_time_ms();
         let full_end = (audio_cursor / enc_window_samples) * enc_window_samples;
 
-        // Cache completed windows (base offset accounts for windows cleared on re-anchor)
-        while (enc_cache_base_windows + enc_cache.len()) * enc_window_samples < full_end {
-            let ws = (enc_cache_base_windows + enc_cache.len()) * enc_window_samples;
+        // Cache completed windows; file text and audio keep the same origin through EOF.
+        while enc_cache.len() * enc_window_samples < full_end {
+            let ws = enc_cache.len() * enc_window_samples;
             let (mel, mel_frames) =
                 audio::mel_spectrogram(&audio_samples[ws..ws + enc_window_samples])?;
             let (win_enc, win_seq) =
@@ -2528,6 +2532,23 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
 
         let reused_prefill = prefill_lcp_len(&prev_prefill_keys, &prefill_keys, prefill_len);
 
+        // Identical input regenerates the same rollback tail and commits no new
+        // text. EOF must still decode/flush with its larger token budget.
+        if !is_final
+            && prev_prefill_keys.len() == prefill_len
+            && reused_prefill == prefill_len
+            && prev_last_key == Some(prefill_keys[prefill_len])
+        {
+            if kernels::verbose() >= 2 {
+                eprintln!(
+                    "  [stream chunk {chunk_idx}] unchanged decode input, reusing hypothesis"
+                );
+            }
+            ctx.perf_total_ms += elapsed_ms(chunk_t0);
+            chunk_idx += 1;
+            continue;
+        }
+
         ctx.kv_cache.len = reused_prefill;
         let delta_prefill = prefill_len - reused_prefill;
         if delta_prefill > 0 {
@@ -2545,6 +2566,7 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         // Save for next chunk
         prev_prefill_keys.clear();
         prev_prefill_keys.extend_from_slice(&prefill_keys[..prefill_len]);
+        prev_last_key = Some(prefill_keys[prefill_len]);
 
         let prefill_ms = elapsed_ms(t0);
         ctx.perf_decode_ms += prefill_ms;
@@ -2573,7 +2595,12 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
             dim,
             &mut tmp_embed,
             token,
-            max_new_tokens,
+            // EOF must drain the accumulated hypothesis, not just one step.
+            if is_final {
+                max_new_tokens.max(MAX_DECODE_TOKENS)
+            } else {
+                max_new_tokens
+            },
             &prev_tail,
             verify_enabled,
             &mut tail_stats,
@@ -2599,54 +2626,8 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         raw_tokens.truncate(n_prefix_tokens);
         raw_tokens.extend_from_slice(&chunk_tokens);
 
-        // Streaming degeneracy detection
-        if raw_tokens == prev_tail_snapshot {
-            stale_count += 1;
-        } else {
-            stale_count = 0;
-            prev_tail_snapshot = raw_tokens.clone();
-        }
-        let (best_reps, _) = stream_tail_repeat_blocks(&raw_tokens, STREAM_DEGEN_MAX_PERIOD);
-        let is_degen = stale_count >= STREAM_STALE_CHUNKS || best_reps >= STREAM_DEGEN_MIN_REPEATS;
-
-        if is_degen {
-            if kernels::verbose() >= 2 {
-                eprintln!(
-                    "[stream degen] reset at chunk {} (stale={}, reps={})",
-                    chunk_idx, stale_count, best_reps
-                );
-            }
-            let carry = stable_text_tokens.len().min(STREAM_RESET_CARRY_TOKENS);
-            let carry_start = stable_text_tokens.len() - carry;
-            raw_tokens.clear();
-            if carry > 0 {
-                raw_tokens.push(TOKEN_ASR_TEXT);
-                raw_tokens.extend_from_slice(&stable_text_tokens[carry_start..]);
-            }
-            prev_prefill_keys.clear();
-            stale_count = 0;
-            prev_tail_snapshot.clear();
-        }
-
-        // Periodic re-anchor: reset context every STREAM_RESET_INTERVAL_CHUNKS chunks
-        if chunk_idx > 0 && chunk_idx % STREAM_RESET_INTERVAL_CHUNKS == 0 {
-            if kernels::verbose() >= 2 {
-                eprintln!("[stream reanchor] at chunk {}", chunk_idx);
-            }
-            let carry = stable_text_tokens.len().min(STREAM_RESET_CARRY_TOKENS);
-            let carry_start = stable_text_tokens.len() - carry;
-            raw_tokens.clear();
-            if carry > 0 {
-                raw_tokens.push(TOKEN_ASR_TEXT);
-                raw_tokens.extend_from_slice(&stable_text_tokens[carry_start..]);
-            }
-            prev_prefill_keys.clear();
-            stale_count = 0;
-            prev_tail_snapshot.clear();
-            enc_cache_base_windows += enc_cache.len();
-            enc_cache.clear();
-            enc_cached_seq_total = 0;
-        }
+        // Keep rollback text and its audio context together. Trimming either
+        // without token-to-audio alignment can silently lose uncommitted words.
 
         // Parse text region
         let text_start = if !has_prefilled_asr_text(ctx) {

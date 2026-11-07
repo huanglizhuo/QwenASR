@@ -1,0 +1,54 @@
+{
+  "cmd": [
+    "/Users/lizhuo/owork/q-asr/tmp/stream-fix/before",
+    "-d",
+    "/Users/lizhuo/owork/q-asr/qwen3-asr-0.6b",
+    "-i",
+    "/Users/lizhuo/owork/q-asr/bench/long/samples/long-2min.wav",
+    "--stream",
+    "-t",
+    "12",
+    "--debug"
+  ],
+  "before": {
+    "time": 1794029364.545661,
+    "loadavg": [
+      8.35009765625,
+      7.13427734375,
+      4.81787109375
+    ],
+    "processes": "  PID  %CPU COMM\n  444  98.2 /usr/sbin/BTLEServer\n31144  71.6 /Applications/cmux.app/Contents/MacOS/cmux\n71522  25.2 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)\n 3001   9.7 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/157.0.8103.39/Helpers/Codex (Aperitif Renderer).app/Contents/MacOS/Codex (Aperitif Renderer)\n84447   6.6 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper.app/Contents/MacOS/Brave Browser Helper\n  169   6.1 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer\n  180   4.4 /usr/sbin/coreaudiod\n94911   3.6 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (GPU).app/Contents/MacOS/Google Chrome Helper (GPU)\n 2955   2.2 /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex\n22051   1.8 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)\n 2379   1.4 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT\n30667   1.0 /Users/lizhuo/Library/Developer/CoreSimulator/Devices/A9AD99C2-B40F-4DBE-8AC2-A957A1BC6CE0/data/Containers/Bundle/Application/86092570-2C7A-4CF4-953C-1D9223B68FEC/Runner.app/Runner\n32637   0.8 /usr/libexec/trustd\n88344   0.8 /System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService\n  384   0.7 /System/Library/DriverExtensions/AppleCentauriAlpha.dext/AppleCentauriAlpha",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7209059)\t100%; charged; 0:00 remaining present: true",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded",
+    "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                   401105.\nPages active:                                 808455.\nPages inactive:                               790817.\nPages speculative:                             18896.\nPages throttled:                                   0.\nPages wired down:                             427097.\nPages purgeable:                               28107.\n\"Translation faults\":                    43782395249.\nPages copy-on-write:                      4592614171.\nPages zero filled:                       22432464268.\nPages reactivated:                         312491346.\nPages purged:                              175297517.\nFile-backed pages:                            614293.\nAnonymous pages:                             1003875.\nPages stored in compressor:                  2783387.\nPages occupied by compressor:                 638666.\nDecompressions:                            225031756.\nCompressions:                              294088845.\nPageins:                                   594931833.\nPageouts:                                    1864161.\nSwapins:                                      976406.\nSwapouts:                                    3015664.\nPages tagged:                                 239639.\nPages tagged resident:                        190995.\nPages tagged compressed:                       48644.\nPages tag-storage:                             98304.\nPages tag-storage holding tags:                 7475.\nPages tag-storage free:                          736.\nPages tag-storage non-tag pageable:            90084.\nPages tag-storage non-tag wired:                   9.\nBytes of compressed tags:                    8265600.\nTagged compressions:                         5790357.\nTagged decompressions:                       5138806.",
+    "swap_usage": "vm.swapusage: total = 21504.00M  used = 20577.62M  free = 926.38M  (encrypted)"
+  },
+  "after": {
+    "time": 1794029366.79478,
+    "loadavg": [
+      8.35009765625,
+      7.13427734375,
+      4.81787109375
+    ],
+    "processes": "  PID  %CPU COMM\n  444  98.8 /usr/sbin/BTLEServer\n71522  29.0 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)\n  169  13.5 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer\n84447   7.4 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/156.1.98.60/Helpers/Brave Browser Helper.app/Contents/MacOS/Brave Browser Helper\n  180   4.4 /usr/sbin/coreaudiod\n94911   3.3 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (GPU).app/Contents/MacOS/Google Chrome Helper (GPU)\n 3001   1.8 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/157.0.8103.39/Helpers/Codex (Aperitif Renderer).app/Contents/MacOS/Codex (Aperitif Renderer)\n22051   1.7 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)\n43934   0.9 /usr/libexec/diagnosticd\n88344   0.9 /System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService\n30667   0.8 /Users/lizhuo/Library/Developer/CoreSimulator/Devices/A9AD99C2-B40F-4DBE-8AC2-A957A1BC6CE0/data/Containers/Bundle/Application/86092570-2C7A-4CF4-953C-1D9223B68FEC/Runner.app/Runner\n20227   0.5 /Users/lizhuo/Library/Developer/CoreSimulator/Devices/1298D133-57B2-44FB-9550-8C7586593A40/data/Containers/Bundle/Application/4B0FE83A-D7C8-4442-ABE3-5432B001C5EE/Runner.app/Runner\n 2379   0.4 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT\n 5383   0.3 /Users/lizhuo/.local/bin/codebase-memory-mcp\n  384   0.3 /System/Library/DriverExtensions/AppleCentauriAlpha.dext/AppleCentauriAlpha",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7209059)\t100%; charged; 0:00 remaining present: true",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded",
+    "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                   406302.\nPages active:                                 800061.\nPages inactive:                               790797.\nPages speculative:                             18967.\nPages throttled:                                   0.\nPages wired down:                             430093.\nPages purgeable:                               22483.\n\"Translation faults\":                    43782650492.\nPages copy-on-write:                      4592616856.\nPages zero filled:                       22432564529.\nPages reactivated:                         312491353.\nPages purged:                              175297517.\nFile-backed pages:                            614375.\nAnonymous pages:                              995450.\nPages stored in compressor:                  2783386.\nPages occupied by compressor:                 638666.\nDecompressions:                            225031768.\nCompressions:                              294088845.\nPageins:                                   594931956.\nPageouts:                                    1864161.\nSwapins:                                      976406.\nSwapouts:                                    3015664.\nPages tagged:                                 239601.\nPages tagged resident:                        190957.\nPages tagged compressed:                       48644.\nPages tag-storage:                             98304.\nPages tag-storage holding tags:                 7475.\nPages tag-storage free:                          739.\nPages tag-storage non-tag pageable:            90081.\nPages tag-storage non-tag wired:                   9.\nBytes of compressed tags:                    8265600.\nTagged compressions:                         5790357.\nTagged decompressions:                       5138806.",
+    "swap_usage": "vm.swapusage: total = 21504.00M  used = 20577.62M  free = 926.38M  (encrypted)"
+  },
+  "returncode": 0,
+  "timed_out": false,
+  "stdout_sha256": "37ad63b3d44820a08ff5906025a6f751a8923bc19f6650d7f4593c2b45fbcfb5",
+  "resource_usage": {
+    "ru_utime": 16.479848000000004,
+    "ru_stime": 0.7232209999999988,
+    "ru_minflt": 222111,
+    "ru_majflt": 0,
+    "ru_nvcsw": 1,
+    "ru_nivcsw": 55562
+  },
+  "metrics": {
+    "infer": 2040.0,
+    "wall": 2163.079167250544
+  }
+}
