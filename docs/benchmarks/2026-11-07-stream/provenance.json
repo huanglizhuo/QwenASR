@@ -1,0 +1,35 @@
+{
+  "base_commit": "06d27ffbc47c803d5ea19162739123b2bb3e68b9",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+  "platform": "macOS-26.7-arm64-arm-64bit",
+  "cpu": "Apple M5 Pro",
+  "build": "cargo build --release -p qwen-asr-cli; .cargo/config.toml: -C target-cpu=native; default features",
+  "before_source": "base_commit",
+  "after_source": "base_commit plus source.patch",
+  "binaries": {
+    "before": {
+      "path": "tmp/stream-fix/before",
+      "sha256": "5c186a43209fcba179b740c555774dc00d46e0c32e5fd8d5d9c5ec18a9cc1ce6"
+    },
+    "after": {
+      "path": "tmp/stream-fix/after",
+      "sha256": "f709259ee863faa929e13f004228f5e2b482f7f0bfaa8d3daac966b582077da7"
+    }
+  },
+  "samples": {
+    "long-2min": {
+      "path": "bench/long/samples/long-2min.wav",
+      "sha256": "bbff2406c3888857e17ae2eeb9cb799de9a02226dea564341bc49e57e29e15e8",
+      "duration_s": 120.7049375,
+      "reference_sha256": "b777ad675940a02de580b682892efce4ca3c135c97a4d359f2dceb10ef43b2a1"
+    },
+    "long-10min": {
+      "path": "bench/long/samples/long-10min.wav",
+      "sha256": "8b447bef0b73320a941f00d3f9cf5a131232422e990400eed6117920848211b2",
+      "duration_s": 602.464875,
+      "reference_sha256": "c2a7f001fb98f9c5e72d8a988682981e434a9f1bda882d4f8d5ccc02d02a99ba"
+    }
+  },
+  "conditions": "Loaded desktop, BTLEServer and simulator processes observed; no agent builds/tests overlap timing runs. See per-run snapshots."
+}

@@ -1,0 +1,194 @@
+{
+  "wav_stream": {
+    "before": {
+      "accuracy": {
+        "wer": 0.2972972972972973,
+        "cer": 0.3125,
+        "word_edits": 11,
+        "ref_words": 37,
+        "char_edits": 50,
+        "ref_chars": 160
+      },
+      "text_tokens": 32,
+      "repeatable_including_warmup": true,
+      "stdout_sha256": "d78b5f5dd25555370959b4dac43113d1810688808830abcb85e7443ab9c188fd",
+      "timing": {
+        "infer": {
+          "runs_ms": [
+            555.0,
+            552.0,
+            557.0
+          ],
+          "median_ms": 555.0
+        },
+        "wall": {
+          "runs_ms": [
+            673.004874959588,
+            669.1944170743227,
+            674.0038329735398
+          ],
+          "median_ms": 673.004874959588
+        }
+      }
+    },
+    "after": {
+      "accuracy": {
+        "wer": 0.0,
+        "cer": 0.0,
+        "word_edits": 0,
+        "ref_words": 37,
+        "char_edits": 0,
+        "ref_chars": 160
+      },
+      "text_tokens": 46,
+      "repeatable_including_warmup": true,
+      "stdout_sha256": "142294d9b3c546d0778ec6f8373597b403d07ef370e8bed430c9e74a01170255",
+      "timing": {
+        "infer": {
+          "runs_ms": [
+            649.0,
+            603.0,
+            596.0
+          ],
+          "median_ms": 603.0
+        },
+        "wall": {
+          "runs_ms": [
+            769.5185411721468,
+            719.6849579922855,
+            716.4291250519454
+          ],
+          "median_ms": 719.6849579922855
+        }
+      }
+    }
+  },
+  "2min_stream": {
+    "before": {
+      "accuracy": {
+        "wer": 0.9178571428571428,
+        "cer": 0.902376910016978,
+        "word_edits": 257,
+        "ref_words": 280,
+        "char_edits": 1063,
+        "ref_chars": 1178
+      },
+      "text_tokens": 32,
+      "repeatable_including_warmup": true,
+      "stdout_sha256": "37ad63b3d44820a08ff5906025a6f751a8923bc19f6650d7f4593c2b45fbcfb5",
+      "timing": {
+        "infer": {
+          "runs_ms": [
+            1974.0,
+            2040.0,
+            2130.0
+          ],
+          "median_ms": 2040.0
+        },
+        "wall": {
+          "runs_ms": [
+            2090.0302077643573,
+            2163.079167250544,
+            2248.8252078182995
+          ],
+          "median_ms": 2163.079167250544
+        }
+      }
+    },
+    "after": {
+      "accuracy": {
+        "wer": 0.02857142857142857,
+        "cer": 0.00933786078098472,
+        "word_edits": 8,
+        "ref_words": 280,
+        "char_edits": 11,
+        "ref_chars": 1178
+      },
+      "text_tokens": 370,
+      "repeatable_including_warmup": true,
+      "stdout_sha256": "d55fa81fdc0b780ff9cd9e0881f2ca903441b546dd34fe76bd54405dcb1f12eb",
+      "timing": {
+        "infer": {
+          "runs_ms": [
+            4076.0,
+            4738.0,
+            4290.0
+          ],
+          "median_ms": 4290.0
+        },
+        "wall": {
+          "runs_ms": [
+            4193.248957861215,
+            4858.2912078127265,
+            4411.190332844853
+          ],
+          "median_ms": 4411.190332844853
+        }
+      }
+    }
+  },
+  "10min_stream": {
+    "before": {
+      "accuracy": {
+        "wer": 0.9837799717912553,
+        "cer": 0.9812520378219759,
+        "word_edits": 1395,
+        "ref_words": 1418,
+        "char_edits": 6019,
+        "ref_chars": 6134
+      },
+      "text_tokens": 32,
+      "repeatable_including_warmup": true,
+      "stdout_sha256": "86bd35579f9e34efbf2ea30d09e498be0b79ce8002561d83b1896d6240a68da4",
+      "timing": {
+        "infer": {
+          "runs_ms": [
+            15232.0,
+            16616.0,
+            17576.0
+          ],
+          "median_ms": 16616.0
+        },
+        "wall": {
+          "runs_ms": [
+            15404.562917072326,
+            16803.88837493956,
+            17768.728042021394
+          ],
+          "median_ms": 16803.88837493956
+        }
+      }
+    },
+    "after": {
+      "accuracy": {
+        "wer": 0.028913963328631876,
+        "cer": 0.007988262145418977,
+        "word_edits": 41,
+        "ref_words": 1418,
+        "char_edits": 49,
+        "ref_chars": 6134
+      },
+      "text_tokens": 1764,
+      "repeatable_including_warmup": true,
+      "stdout_sha256": "3cbef859216f4ef54bd5d4ce6c1dad575aca7e75ef6b6fd8e1a833f45045c0d9",
+      "timing": {
+        "infer": {
+          "runs_ms": [
+            49045.0,
+            59449.0,
+            54209.0
+          ],
+          "median_ms": 54209.0
+        },
+        "wall": {
+          "runs_ms": [
+            49227.782499976456,
+            59653.003707993776,
+            54389.70299996436
+          ],
+          "median_ms": 54389.70299996436
+        }
+      }
+    }
+  }
+}

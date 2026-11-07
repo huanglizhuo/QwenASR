@@ -127,8 +127,10 @@ fn usage(prog: &str) {
     eprintln!("  -S <secs>     Segment target seconds (default: 0 = full-audio decode)");
     eprintln!("  -W <secs>     Segment-cutting silence search window ± seconds (default: 3.0)");
     eprintln!("  --stream      Streaming mode: process in chunks with prefix rollback");
-    eprintln!("  --stream-max-new-tokens <n>  Max generated tokens per stream step (default: 32)");
-    eprintln!("  --stream-chunk-sec <secs>   Chunk size for streaming (default: 2.0, min ~1.0)");
+    eprintln!(
+        "  --stream-max-new-tokens <n>  Tokens per step (default: 32; file EOF: at least 2048)"
+    );
+    eprintln!("  --stream-chunk-sec <secs>   Chunk size (default: 8.0s; stdin 2.0s)");
     eprintln!("  --enc-window-sec <secs>    Encoder attention window in seconds (1..8, default 8)");
     eprintln!("  --past-text <yes|no|auto>  Reuse previously decoded text as context");
     eprintln!("  --skip-silence              Drop long silent spans before inference");

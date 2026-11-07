@@ -233,6 +233,8 @@ pub struct QwenCtx {
     pub stream_chunk_sec: f32,
     pub stream_rollback: i32,
     pub stream_unfixed_chunks: i32,
+    /// Token budget per incremental step. Finite-file `transcribe_stream`
+    /// uses at least 2048 at EOF to flush the accumulated hypothesis.
     pub stream_max_new_tokens: i32,
     pub past_text_conditioning: bool,
     pub skip_silence: bool,

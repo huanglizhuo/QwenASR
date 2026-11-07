@@ -1,0 +1,17 @@
+{
+  "workspace": {
+    "command": "cargo test --release --workspace",
+    "passed": 96,
+    "failed": 0,
+    "ignored": 3
+  },
+  "file_stream_no_default": {
+    "command": "cargo test --release -p qwen-asr --no-default-features --test file_stream",
+    "passed": 1
+  },
+  "clippy_default_and_no_default": "cargo clippy --workspace --all-targets [--no-default-features] -- -D warnings; both passed",
+  "ab_harness_tests": 7,
+  "regression_red": "Old middle reset truncates the short fixture after \"worth bringing back, and\" when chunk_sec=duration/46.5 and unfixed_chunks=44.",
+  "format": "cargo fmt --all --check passed",
+  "benchmark": "16 successful invocations; repeatable outputs; byte-identical to complete no-dedup outputs; WER and coverage gates passed"
+}

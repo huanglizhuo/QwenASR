@@ -1,0 +1,1116 @@
+Thread pool: 12 threads
+Optimizations: vDSP/Accelerate, NEON, DotProd | 12 threads | aarch64
+Loading model from /Users/lizhuo/owork/q-asr/qwen3-asr-0.6b
+Detected: Qwen3-ASR-0.6B
+Loading encoder weights...
+Loading decoder weights...
+Model loaded in 87 ms
+QASR_METRIC int8 prefill=0 encoder=0
+  [stream chunk 99 verify] committed=32 draft_len=0 lcp=0 verify_steps=0 accepted_drafts=0 verified_commits=0
+  [stream chunk 100 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 101 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 102 verify] committed=32 draft_len=5 lcp=1 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 103 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 104 verify] committed=14 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 105 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 106] unchanged decode input, reusing hypothesis
+  [stream chunk 107] unchanged decode input, reusing hypothesis
+  [stream chunk 108] unchanged decode input, reusing hypothesis
+  [stream chunk 109] unchanged decode input, reusing hypothesis
+  [stream chunk 110] unchanged decode input, reusing hypothesis
+  [stream chunk 111 verify] committed=32 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 112 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 113] unchanged decode input, reusing hypothesis
+  [stream chunk 114] unchanged decode input, reusing hypothesis
+  [stream chunk 115] unchanged decode input, reusing hypothesis
+  [stream chunk 116] unchanged decode input, reusing hypothesis
+  [stream chunk 117] unchanged decode input, reusing hypothesis
+  [stream chunk 118] unchanged decode input, reusing hypothesis
+  [stream chunk 119] unchanged decode input, reusing hypothesis
+  [stream chunk 120] unchanged decode input, reusing hypothesis
+  [stream chunk 121] unchanged decode input, reusing hypothesis
+  [stream chunk 122] unchanged decode input, reusing hypothesis
+  [stream chunk 123] unchanged decode input, reusing hypothesis
+  [stream chunk 124] unchanged decode input, reusing hypothesis
+  [stream chunk 125] unchanged decode input, reusing hypothesis
+  [stream chunk 126] unchanged decode input, reusing hypothesis
+  [stream chunk 127 verify] committed=28 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 128 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 129] unchanged decode input, reusing hypothesis
+  [stream chunk 130] unchanged decode input, reusing hypothesis
+  [stream chunk 131] unchanged decode input, reusing hypothesis
+  [stream chunk 132] unchanged decode input, reusing hypothesis
+  [stream chunk 133] unchanged decode input, reusing hypothesis
+  [stream chunk 134] unchanged decode input, reusing hypothesis
+  [stream chunk 135] unchanged decode input, reusing hypothesis
+  [stream chunk 136] unchanged decode input, reusing hypothesis
+  [stream chunk 137] unchanged decode input, reusing hypothesis
+  [stream chunk 138] unchanged decode input, reusing hypothesis
+  [stream chunk 139] unchanged decode input, reusing hypothesis
+  [stream chunk 140] unchanged decode input, reusing hypothesis
+  [stream chunk 141] unchanged decode input, reusing hypothesis
+  [stream chunk 142] unchanged decode input, reusing hypothesis
+  [stream chunk 143 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 144 verify] committed=12 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 145 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 146] unchanged decode input, reusing hypothesis
+  [stream chunk 147] unchanged decode input, reusing hypothesis
+  [stream chunk 148] unchanged decode input, reusing hypothesis
+  [stream chunk 149] unchanged decode input, reusing hypothesis
+  [stream chunk 150] unchanged decode input, reusing hypothesis
+  [stream chunk 151] unchanged decode input, reusing hypothesis
+  [stream chunk 152] unchanged decode input, reusing hypothesis
+  [stream chunk 153] unchanged decode input, reusing hypothesis
+  [stream chunk 154] unchanged decode input, reusing hypothesis
+  [stream chunk 155] unchanged decode input, reusing hypothesis
+  [stream chunk 156] unchanged decode input, reusing hypothesis
+  [stream chunk 157] unchanged decode input, reusing hypothesis
+  [stream chunk 158] unchanged decode input, reusing hypothesis
+  [stream chunk 159 verify] committed=26 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 160 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 161] unchanged decode input, reusing hypothesis
+  [stream chunk 162] unchanged decode input, reusing hypothesis
+  [stream chunk 163] unchanged decode input, reusing hypothesis
+  [stream chunk 164] unchanged decode input, reusing hypothesis
+  [stream chunk 165] unchanged decode input, reusing hypothesis
+  [stream chunk 166] unchanged decode input, reusing hypothesis
+  [stream chunk 167] unchanged decode input, reusing hypothesis
+  [stream chunk 168] unchanged decode input, reusing hypothesis
+  [stream chunk 169] unchanged decode input, reusing hypothesis
+  [stream chunk 170] unchanged decode input, reusing hypothesis
+  [stream chunk 171] unchanged decode input, reusing hypothesis
+  [stream chunk 172] unchanged decode input, reusing hypothesis
+  [stream chunk 173] unchanged decode input, reusing hypothesis
+  [stream chunk 174] unchanged decode input, reusing hypothesis
+  [stream chunk 175 verify] committed=24 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 176 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 177] unchanged decode input, reusing hypothesis
+  [stream chunk 178] unchanged decode input, reusing hypothesis
+  [stream chunk 179] unchanged decode input, reusing hypothesis
+  [stream chunk 180] unchanged decode input, reusing hypothesis
+  [stream chunk 181] unchanged decode input, reusing hypothesis
+  [stream chunk 182] unchanged decode input, reusing hypothesis
+  [stream chunk 183] unchanged decode input, reusing hypothesis
+  [stream chunk 184] unchanged decode input, reusing hypothesis
+  [stream chunk 185] unchanged decode input, reusing hypothesis
+  [stream chunk 186] unchanged decode input, reusing hypothesis
+  [stream chunk 187] unchanged decode input, reusing hypothesis
+  [stream chunk 188] unchanged decode input, reusing hypothesis
+  [stream chunk 189] unchanged decode input, reusing hypothesis
+  [stream chunk 190] unchanged decode input, reusing hypothesis
+  [stream chunk 191 verify] committed=28 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 192 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 193] unchanged decode input, reusing hypothesis
+  [stream chunk 194] unchanged decode input, reusing hypothesis
+  [stream chunk 195] unchanged decode input, reusing hypothesis
+  [stream chunk 196] unchanged decode input, reusing hypothesis
+  [stream chunk 197] unchanged decode input, reusing hypothesis
+  [stream chunk 198] unchanged decode input, reusing hypothesis
+  [stream chunk 199] unchanged decode input, reusing hypothesis
+  [stream chunk 200] unchanged decode input, reusing hypothesis
+  [stream chunk 201] unchanged decode input, reusing hypothesis
+  [stream chunk 202] unchanged decode input, reusing hypothesis
+  [stream chunk 203] unchanged decode input, reusing hypothesis
+  [stream chunk 204] unchanged decode input, reusing hypothesis
+  [stream chunk 205] unchanged decode input, reusing hypothesis
+  [stream chunk 206] unchanged decode input, reusing hypothesis
+  [stream chunk 207 verify] committed=27 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 208 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 209] unchanged decode input, reusing hypothesis
+  [stream chunk 210] unchanged decode input, reusing hypothesis
+  [stream chunk 211] unchanged decode input, reusing hypothesis
+  [stream chunk 212] unchanged decode input, reusing hypothesis
+  [stream chunk 213] unchanged decode input, reusing hypothesis
+  [stream chunk 214] unchanged decode input, reusing hypothesis
+  [stream chunk 215] unchanged decode input, reusing hypothesis
+  [stream chunk 216] unchanged decode input, reusing hypothesis
+  [stream chunk 217] unchanged decode input, reusing hypothesis
+  [stream chunk 218] unchanged decode input, reusing hypothesis
+  [stream chunk 219] unchanged decode input, reusing hypothesis
+  [stream chunk 220] unchanged decode input, reusing hypothesis
+  [stream chunk 221] unchanged decode input, reusing hypothesis
+  [stream chunk 222] unchanged decode input, reusing hypothesis
+  [stream chunk 223 verify] committed=28 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 224 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 225] unchanged decode input, reusing hypothesis
+  [stream chunk 226] unchanged decode input, reusing hypothesis
+  [stream chunk 227] unchanged decode input, reusing hypothesis
+  [stream chunk 228] unchanged decode input, reusing hypothesis
+  [stream chunk 229] unchanged decode input, reusing hypothesis
+  [stream chunk 230] unchanged decode input, reusing hypothesis
+  [stream chunk 231] unchanged decode input, reusing hypothesis
+  [stream chunk 232] unchanged decode input, reusing hypothesis
+  [stream chunk 233] unchanged decode input, reusing hypothesis
+  [stream chunk 234] unchanged decode input, reusing hypothesis
+  [stream chunk 235] unchanged decode input, reusing hypothesis
+  [stream chunk 236] unchanged decode input, reusing hypothesis
+  [stream chunk 237] unchanged decode input, reusing hypothesis
+  [stream chunk 238] unchanged decode input, reusing hypothesis
+  [stream chunk 239 verify] committed=30 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 240 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 241] unchanged decode input, reusing hypothesis
+  [stream chunk 242] unchanged decode input, reusing hypothesis
+  [stream chunk 243] unchanged decode input, reusing hypothesis
+  [stream chunk 244] unchanged decode input, reusing hypothesis
+  [stream chunk 245] unchanged decode input, reusing hypothesis
+  [stream chunk 246] unchanged decode input, reusing hypothesis
+  [stream chunk 247] unchanged decode input, reusing hypothesis
+  [stream chunk 248] unchanged decode input, reusing hypothesis
+  [stream chunk 249] unchanged decode input, reusing hypothesis
+  [stream chunk 250] unchanged decode input, reusing hypothesis
+  [stream chunk 251] unchanged decode input, reusing hypothesis
+  [stream chunk 252] unchanged decode input, reusing hypothesis
+  [stream chunk 253] unchanged decode input, reusing hypothesis
+  [stream chunk 254] unchanged decode input, reusing hypothesis
+  [stream chunk 255 verify] committed=30 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 256 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 257] unchanged decode input, reusing hypothesis
+  [stream chunk 258] unchanged decode input, reusing hypothesis
+  [stream chunk 259] unchanged decode input, reusing hypothesis
+  [stream chunk 260] unchanged decode input, reusing hypothesis
+  [stream chunk 261] unchanged decode input, reusing hypothesis
+  [stream chunk 262] unchanged decode input, reusing hypothesis
+  [stream chunk 263] unchanged decode input, reusing hypothesis
+  [stream chunk 264] unchanged decode input, reusing hypothesis
+  [stream chunk 265] unchanged decode input, reusing hypothesis
+  [stream chunk 266] unchanged decode input, reusing hypothesis
+  [stream chunk 267] unchanged decode input, reusing hypothesis
+  [stream chunk 268] unchanged decode input, reusing hypothesis
+  [stream chunk 269] unchanged decode input, reusing hypothesis
+  [stream chunk 270] unchanged decode input, reusing hypothesis
+  [stream chunk 271 verify] committed=28 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 272 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 273] unchanged decode input, reusing hypothesis
+  [stream chunk 274] unchanged decode input, reusing hypothesis
+  [stream chunk 275] unchanged decode input, reusing hypothesis
+  [stream chunk 276] unchanged decode input, reusing hypothesis
+  [stream chunk 277] unchanged decode input, reusing hypothesis
+  [stream chunk 278] unchanged decode input, reusing hypothesis
+  [stream chunk 279] unchanged decode input, reusing hypothesis
+  [stream chunk 280] unchanged decode input, reusing hypothesis
+  [stream chunk 281] unchanged decode input, reusing hypothesis
+  [stream chunk 282] unchanged decode input, reusing hypothesis
+  [stream chunk 283] unchanged decode input, reusing hypothesis
+  [stream chunk 284] unchanged decode input, reusing hypothesis
+  [stream chunk 285] unchanged decode input, reusing hypothesis
+  [stream chunk 286] unchanged decode input, reusing hypothesis
+  [stream chunk 287 verify] committed=32 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 288 verify] committed=9 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 289 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 290] unchanged decode input, reusing hypothesis
+  [stream chunk 291] unchanged decode input, reusing hypothesis
+  [stream chunk 292] unchanged decode input, reusing hypothesis
+  [stream chunk 293] unchanged decode input, reusing hypothesis
+  [stream chunk 294] unchanged decode input, reusing hypothesis
+  [stream chunk 295] unchanged decode input, reusing hypothesis
+  [stream chunk 296] unchanged decode input, reusing hypothesis
+  [stream chunk 297] unchanged decode input, reusing hypothesis
+  [stream chunk 298] unchanged decode input, reusing hypothesis
+  [stream chunk 299] unchanged decode input, reusing hypothesis
+  [stream chunk 300] unchanged decode input, reusing hypothesis
+  [stream chunk 301] unchanged decode input, reusing hypothesis
+  [stream chunk 302] unchanged decode input, reusing hypothesis
+  [stream chunk 303 verify] committed=25 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 304 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 305] unchanged decode input, reusing hypothesis
+  [stream chunk 306] unchanged decode input, reusing hypothesis
+  [stream chunk 307] unchanged decode input, reusing hypothesis
+  [stream chunk 308] unchanged decode input, reusing hypothesis
+  [stream chunk 309] unchanged decode input, reusing hypothesis
+  [stream chunk 310] unchanged decode input, reusing hypothesis
+  [stream chunk 311] unchanged decode input, reusing hypothesis
+  [stream chunk 312] unchanged decode input, reusing hypothesis
+  [stream chunk 313] unchanged decode input, reusing hypothesis
+  [stream chunk 314] unchanged decode input, reusing hypothesis
+  [stream chunk 315] unchanged decode input, reusing hypothesis
+  [stream chunk 316] unchanged decode input, reusing hypothesis
+  [stream chunk 317] unchanged decode input, reusing hypothesis
+  [stream chunk 318] unchanged decode input, reusing hypothesis
+  [stream chunk 319 verify] committed=28 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 320 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 321] unchanged decode input, reusing hypothesis
+  [stream chunk 322] unchanged decode input, reusing hypothesis
+  [stream chunk 323] unchanged decode input, reusing hypothesis
+  [stream chunk 324] unchanged decode input, reusing hypothesis
+  [stream chunk 325] unchanged decode input, reusing hypothesis
+  [stream chunk 326] unchanged decode input, reusing hypothesis
+  [stream chunk 327] unchanged decode input, reusing hypothesis
+  [stream chunk 328] unchanged decode input, reusing hypothesis
+  [stream chunk 329] unchanged decode input, reusing hypothesis
+  [stream chunk 330] unchanged decode input, reusing hypothesis
+  [stream chunk 331] unchanged decode input, reusing hypothesis
+  [stream chunk 332] unchanged decode input, reusing hypothesis
+  [stream chunk 333] unchanged decode input, reusing hypothesis
+  [stream chunk 334] unchanged decode input, reusing hypothesis
+  [stream chunk 335 verify] committed=30 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 336 verify] committed=6 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 337 verify] committed=4 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 338 verify] committed=6 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 339 verify] committed=4 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 340 verify] committed=6 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 341 verify] committed=4 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 342 verify] committed=6 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 343 verify] committed=4 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 344 verify] committed=6 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 345 verify] committed=4 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 346 verify] committed=6 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 347 verify] committed=4 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 348 verify] committed=6 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 349 verify] committed=4 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 350 verify] committed=6 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 351 verify] committed=25 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 352 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 353] unchanged decode input, reusing hypothesis
+  [stream chunk 354] unchanged decode input, reusing hypothesis
+  [stream chunk 355] unchanged decode input, reusing hypothesis
+  [stream chunk 356] unchanged decode input, reusing hypothesis
+  [stream chunk 357] unchanged decode input, reusing hypothesis
+  [stream chunk 358] unchanged decode input, reusing hypothesis
+  [stream chunk 359] unchanged decode input, reusing hypothesis
+  [stream chunk 360] unchanged decode input, reusing hypothesis
+  [stream chunk 361] unchanged decode input, reusing hypothesis
+  [stream chunk 362] unchanged decode input, reusing hypothesis
+  [stream chunk 363] unchanged decode input, reusing hypothesis
+  [stream chunk 364] unchanged decode input, reusing hypothesis
+  [stream chunk 365] unchanged decode input, reusing hypothesis
+  [stream chunk 366] unchanged decode input, reusing hypothesis
+  [stream chunk 367 verify] committed=26 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 368 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 369] unchanged decode input, reusing hypothesis
+  [stream chunk 370] unchanged decode input, reusing hypothesis
+  [stream chunk 371] unchanged decode input, reusing hypothesis
+  [stream chunk 372] unchanged decode input, reusing hypothesis
+  [stream chunk 373] unchanged decode input, reusing hypothesis
+  [stream chunk 374] unchanged decode input, reusing hypothesis
+  [stream chunk 375] unchanged decode input, reusing hypothesis
+  [stream chunk 376] unchanged decode input, reusing hypothesis
+  [stream chunk 377] unchanged decode input, reusing hypothesis
+  [stream chunk 378] unchanged decode input, reusing hypothesis
+  [stream chunk 379] unchanged decode input, reusing hypothesis
+  [stream chunk 380] unchanged decode input, reusing hypothesis
+  [stream chunk 381] unchanged decode input, reusing hypothesis
+  [stream chunk 382] unchanged decode input, reusing hypothesis
+  [stream chunk 383 verify] committed=28 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 384 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 385] unchanged decode input, reusing hypothesis
+  [stream chunk 386] unchanged decode input, reusing hypothesis
+  [stream chunk 387] unchanged decode input, reusing hypothesis
+  [stream chunk 388] unchanged decode input, reusing hypothesis
+  [stream chunk 389] unchanged decode input, reusing hypothesis
+  [stream chunk 390] unchanged decode input, reusing hypothesis
+  [stream chunk 391] unchanged decode input, reusing hypothesis
+  [stream chunk 392] unchanged decode input, reusing hypothesis
+  [stream chunk 393] unchanged decode input, reusing hypothesis
+  [stream chunk 394] unchanged decode input, reusing hypothesis
+  [stream chunk 395] unchanged decode input, reusing hypothesis
+  [stream chunk 396] unchanged decode input, reusing hypothesis
+  [stream chunk 397] unchanged decode input, reusing hypothesis
+  [stream chunk 398] unchanged decode input, reusing hypothesis
+  [stream chunk 399 verify] committed=24 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 400 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 401] unchanged decode input, reusing hypothesis
+  [stream chunk 402] unchanged decode input, reusing hypothesis
+  [stream chunk 403] unchanged decode input, reusing hypothesis
+  [stream chunk 404] unchanged decode input, reusing hypothesis
+  [stream chunk 405] unchanged decode input, reusing hypothesis
+  [stream chunk 406] unchanged decode input, reusing hypothesis
+  [stream chunk 407] unchanged decode input, reusing hypothesis
+  [stream chunk 408] unchanged decode input, reusing hypothesis
+  [stream chunk 409] unchanged decode input, reusing hypothesis
+  [stream chunk 410] unchanged decode input, reusing hypothesis
+  [stream chunk 411] unchanged decode input, reusing hypothesis
+  [stream chunk 412] unchanged decode input, reusing hypothesis
+  [stream chunk 413] unchanged decode input, reusing hypothesis
+  [stream chunk 414] unchanged decode input, reusing hypothesis
+  [stream chunk 415 verify] committed=22 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 416 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 417] unchanged decode input, reusing hypothesis
+  [stream chunk 418] unchanged decode input, reusing hypothesis
+  [stream chunk 419] unchanged decode input, reusing hypothesis
+  [stream chunk 420] unchanged decode input, reusing hypothesis
+  [stream chunk 421] unchanged decode input, reusing hypothesis
+  [stream chunk 422] unchanged decode input, reusing hypothesis
+  [stream chunk 423] unchanged decode input, reusing hypothesis
+  [stream chunk 424] unchanged decode input, reusing hypothesis
+  [stream chunk 425] unchanged decode input, reusing hypothesis
+  [stream chunk 426] unchanged decode input, reusing hypothesis
+  [stream chunk 427] unchanged decode input, reusing hypothesis
+  [stream chunk 428] unchanged decode input, reusing hypothesis
+  [stream chunk 429] unchanged decode input, reusing hypothesis
+  [stream chunk 430] unchanged decode input, reusing hypothesis
+  [stream chunk 431 verify] committed=26 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 432 verify] committed=5 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 433] unchanged decode input, reusing hypothesis
+  [stream chunk 434] unchanged decode input, reusing hypothesis
+  [stream chunk 435] unchanged decode input, reusing hypothesis
+  [stream chunk 436] unchanged decode input, reusing hypothesis
+  [stream chunk 437] unchanged decode input, reusing hypothesis
+  [stream chunk 438] unchanged decode input, reusing hypothesis
+  [stream chunk 439] unchanged decode input, reusing hypothesis
+  [stream chunk 440] unchanged decode input, reusing hypothesis
+  [stream chunk 441] unchanged decode input, reusing hypothesis
+  [stream chunk 442] unchanged decode input, reusing hypothesis
+  [stream chunk 443] unchanged decode input, reusing hypothesis
+  [stream chunk 444] unchanged decode input, reusing hypothesis
+  [stream chunk 445] unchanged decode input, reusing hypothesis
+  [stream chunk 446] unchanged decode input, reusing hypothesis
+  [stream chunk 447 verify] committed=28 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 448 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 449] unchanged decode input, reusing hypothesis
+  [stream chunk 450] unchanged decode input, reusing hypothesis
+  [stream chunk 451] unchanged decode input, reusing hypothesis
+  [stream chunk 452] unchanged decode input, reusing hypothesis
+  [stream chunk 453] unchanged decode input, reusing hypothesis
+  [stream chunk 454] unchanged decode input, reusing hypothesis
+  [stream chunk 455] unchanged decode input, reusing hypothesis
+  [stream chunk 456] unchanged decode input, reusing hypothesis
+  [stream chunk 457] unchanged decode input, reusing hypothesis
+  [stream chunk 458] unchanged decode input, reusing hypothesis
+  [stream chunk 459] unchanged decode input, reusing hypothesis
+  [stream chunk 460] unchanged decode input, reusing hypothesis
+  [stream chunk 461] unchanged decode input, reusing hypothesis
+  [stream chunk 462] unchanged decode input, reusing hypothesis
+  [stream chunk 463 verify] committed=24 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 464 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 465] unchanged decode input, reusing hypothesis
+  [stream chunk 466] unchanged decode input, reusing hypothesis
+  [stream chunk 467] unchanged decode input, reusing hypothesis
+  [stream chunk 468] unchanged decode input, reusing hypothesis
+  [stream chunk 469] unchanged decode input, reusing hypothesis
+  [stream chunk 470] unchanged decode input, reusing hypothesis
+  [stream chunk 471] unchanged decode input, reusing hypothesis
+  [stream chunk 472] unchanged decode input, reusing hypothesis
+  [stream chunk 473] unchanged decode input, reusing hypothesis
+  [stream chunk 474] unchanged decode input, reusing hypothesis
+  [stream chunk 475] unchanged decode input, reusing hypothesis
+  [stream chunk 476] unchanged decode input, reusing hypothesis
+  [stream chunk 477] unchanged decode input, reusing hypothesis
+  [stream chunk 478] unchanged decode input, reusing hypothesis
+  [stream chunk 479 verify] committed=29 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 480 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 481] unchanged decode input, reusing hypothesis
+  [stream chunk 482] unchanged decode input, reusing hypothesis
+  [stream chunk 483] unchanged decode input, reusing hypothesis
+  [stream chunk 484] unchanged decode input, reusing hypothesis
+  [stream chunk 485] unchanged decode input, reusing hypothesis
+  [stream chunk 486] unchanged decode input, reusing hypothesis
+  [stream chunk 487] unchanged decode input, reusing hypothesis
+  [stream chunk 488] unchanged decode input, reusing hypothesis
+  [stream chunk 489] unchanged decode input, reusing hypothesis
+  [stream chunk 490] unchanged decode input, reusing hypothesis
+  [stream chunk 491] unchanged decode input, reusing hypothesis
+  [stream chunk 492] unchanged decode input, reusing hypothesis
+  [stream chunk 493] unchanged decode input, reusing hypothesis
+  [stream chunk 494] unchanged decode input, reusing hypothesis
+  [stream chunk 495 verify] committed=26 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 496 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 497] unchanged decode input, reusing hypothesis
+  [stream chunk 498] unchanged decode input, reusing hypothesis
+  [stream chunk 499] unchanged decode input, reusing hypothesis
+  [stream chunk 500] unchanged decode input, reusing hypothesis
+  [stream chunk 501] unchanged decode input, reusing hypothesis
+  [stream chunk 502] unchanged decode input, reusing hypothesis
+  [stream chunk 503] unchanged decode input, reusing hypothesis
+  [stream chunk 504] unchanged decode input, reusing hypothesis
+  [stream chunk 505] unchanged decode input, reusing hypothesis
+  [stream chunk 506] unchanged decode input, reusing hypothesis
+  [stream chunk 507] unchanged decode input, reusing hypothesis
+  [stream chunk 508] unchanged decode input, reusing hypothesis
+  [stream chunk 509] unchanged decode input, reusing hypothesis
+  [stream chunk 510] unchanged decode input, reusing hypothesis
+  [stream chunk 511 verify] committed=28 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 512 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 513] unchanged decode input, reusing hypothesis
+  [stream chunk 514] unchanged decode input, reusing hypothesis
+  [stream chunk 515] unchanged decode input, reusing hypothesis
+  [stream chunk 516] unchanged decode input, reusing hypothesis
+  [stream chunk 517] unchanged decode input, reusing hypothesis
+  [stream chunk 518] unchanged decode input, reusing hypothesis
+  [stream chunk 519] unchanged decode input, reusing hypothesis
+  [stream chunk 520] unchanged decode input, reusing hypothesis
+  [stream chunk 521] unchanged decode input, reusing hypothesis
+  [stream chunk 522] unchanged decode input, reusing hypothesis
+  [stream chunk 523] unchanged decode input, reusing hypothesis
+  [stream chunk 524] unchanged decode input, reusing hypothesis
+  [stream chunk 525] unchanged decode input, reusing hypothesis
+  [stream chunk 526] unchanged decode input, reusing hypothesis
+  [stream chunk 527 verify] committed=22 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 528 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 529] unchanged decode input, reusing hypothesis
+  [stream chunk 530] unchanged decode input, reusing hypothesis
+  [stream chunk 531] unchanged decode input, reusing hypothesis
+  [stream chunk 532] unchanged decode input, reusing hypothesis
+  [stream chunk 533] unchanged decode input, reusing hypothesis
+  [stream chunk 534] unchanged decode input, reusing hypothesis
+  [stream chunk 535] unchanged decode input, reusing hypothesis
+  [stream chunk 536] unchanged decode input, reusing hypothesis
+  [stream chunk 537] unchanged decode input, reusing hypothesis
+  [stream chunk 538] unchanged decode input, reusing hypothesis
+  [stream chunk 539] unchanged decode input, reusing hypothesis
+  [stream chunk 540] unchanged decode input, reusing hypothesis
+  [stream chunk 541] unchanged decode input, reusing hypothesis
+  [stream chunk 542] unchanged decode input, reusing hypothesis
+  [stream chunk 543 verify] committed=27 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 544 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 545] unchanged decode input, reusing hypothesis
+  [stream chunk 546] unchanged decode input, reusing hypothesis
+  [stream chunk 547] unchanged decode input, reusing hypothesis
+  [stream chunk 548] unchanged decode input, reusing hypothesis
+  [stream chunk 549] unchanged decode input, reusing hypothesis
+  [stream chunk 550] unchanged decode input, reusing hypothesis
+  [stream chunk 551] unchanged decode input, reusing hypothesis
+  [stream chunk 552] unchanged decode input, reusing hypothesis
+  [stream chunk 553] unchanged decode input, reusing hypothesis
+  [stream chunk 554] unchanged decode input, reusing hypothesis
+  [stream chunk 555] unchanged decode input, reusing hypothesis
+  [stream chunk 556] unchanged decode input, reusing hypothesis
+  [stream chunk 557] unchanged decode input, reusing hypothesis
+  [stream chunk 558] unchanged decode input, reusing hypothesis
+  [stream chunk 559 verify] committed=25 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 560 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 561] unchanged decode input, reusing hypothesis
+  [stream chunk 562] unchanged decode input, reusing hypothesis
+  [stream chunk 563] unchanged decode input, reusing hypothesis
+  [stream chunk 564] unchanged decode input, reusing hypothesis
+  [stream chunk 565] unchanged decode input, reusing hypothesis
+  [stream chunk 566] unchanged decode input, reusing hypothesis
+  [stream chunk 567] unchanged decode input, reusing hypothesis
+  [stream chunk 568] unchanged decode input, reusing hypothesis
+  [stream chunk 569] unchanged decode input, reusing hypothesis
+  [stream chunk 570] unchanged decode input, reusing hypothesis
+  [stream chunk 571] unchanged decode input, reusing hypothesis
+  [stream chunk 572] unchanged decode input, reusing hypothesis
+  [stream chunk 573] unchanged decode input, reusing hypothesis
+  [stream chunk 574] unchanged decode input, reusing hypothesis
+  [stream chunk 575 verify] committed=24 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 576 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 577] unchanged decode input, reusing hypothesis
+  [stream chunk 578] unchanged decode input, reusing hypothesis
+  [stream chunk 579] unchanged decode input, reusing hypothesis
+  [stream chunk 580] unchanged decode input, reusing hypothesis
+  [stream chunk 581] unchanged decode input, reusing hypothesis
+  [stream chunk 582] unchanged decode input, reusing hypothesis
+  [stream chunk 583] unchanged decode input, reusing hypothesis
+  [stream chunk 584] unchanged decode input, reusing hypothesis
+  [stream chunk 585] unchanged decode input, reusing hypothesis
+  [stream chunk 586] unchanged decode input, reusing hypothesis
+  [stream chunk 587] unchanged decode input, reusing hypothesis
+  [stream chunk 588] unchanged decode input, reusing hypothesis
+  [stream chunk 589] unchanged decode input, reusing hypothesis
+  [stream chunk 590] unchanged decode input, reusing hypothesis
+  [stream chunk 591 verify] committed=28 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 592 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 593] unchanged decode input, reusing hypothesis
+  [stream chunk 594] unchanged decode input, reusing hypothesis
+  [stream chunk 595] unchanged decode input, reusing hypothesis
+  [stream chunk 596] unchanged decode input, reusing hypothesis
+  [stream chunk 597] unchanged decode input, reusing hypothesis
+  [stream chunk 598] unchanged decode input, reusing hypothesis
+  [stream chunk 599] unchanged decode input, reusing hypothesis
+  [stream chunk 600] unchanged decode input, reusing hypothesis
+  [stream chunk 601] unchanged decode input, reusing hypothesis
+  [stream chunk 602] unchanged decode input, reusing hypothesis
+  [stream chunk 603] unchanged decode input, reusing hypothesis
+  [stream chunk 604] unchanged decode input, reusing hypothesis
+  [stream chunk 605] unchanged decode input, reusing hypothesis
+  [stream chunk 606] unchanged decode input, reusing hypothesis
+  [stream chunk 607 verify] committed=25 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 608 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 609] unchanged decode input, reusing hypothesis
+  [stream chunk 610] unchanged decode input, reusing hypothesis
+  [stream chunk 611] unchanged decode input, reusing hypothesis
+  [stream chunk 612] unchanged decode input, reusing hypothesis
+  [stream chunk 613] unchanged decode input, reusing hypothesis
+  [stream chunk 614] unchanged decode input, reusing hypothesis
+  [stream chunk 615] unchanged decode input, reusing hypothesis
+  [stream chunk 616] unchanged decode input, reusing hypothesis
+  [stream chunk 617] unchanged decode input, reusing hypothesis
+  [stream chunk 618] unchanged decode input, reusing hypothesis
+  [stream chunk 619] unchanged decode input, reusing hypothesis
+  [stream chunk 620] unchanged decode input, reusing hypothesis
+  [stream chunk 621] unchanged decode input, reusing hypothesis
+  [stream chunk 622] unchanged decode input, reusing hypothesis
+  [stream chunk 623 verify] committed=23 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 624 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 625] unchanged decode input, reusing hypothesis
+  [stream chunk 626] unchanged decode input, reusing hypothesis
+  [stream chunk 627] unchanged decode input, reusing hypothesis
+  [stream chunk 628] unchanged decode input, reusing hypothesis
+  [stream chunk 629] unchanged decode input, reusing hypothesis
+  [stream chunk 630] unchanged decode input, reusing hypothesis
+  [stream chunk 631] unchanged decode input, reusing hypothesis
+  [stream chunk 632] unchanged decode input, reusing hypothesis
+  [stream chunk 633] unchanged decode input, reusing hypothesis
+  [stream chunk 634] unchanged decode input, reusing hypothesis
+  [stream chunk 635] unchanged decode input, reusing hypothesis
+  [stream chunk 636] unchanged decode input, reusing hypothesis
+  [stream chunk 637] unchanged decode input, reusing hypothesis
+  [stream chunk 638] unchanged decode input, reusing hypothesis
+  [stream chunk 639 verify] committed=24 draft_len=5 lcp=1 verify_steps=1 accepted_drafts=0 verified_commits=1
+  [stream chunk 640 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 641] unchanged decode input, reusing hypothesis
+  [stream chunk 642] unchanged decode input, reusing hypothesis
+  [stream chunk 643] unchanged decode input, reusing hypothesis
+  [stream chunk 644] unchanged decode input, reusing hypothesis
+  [stream chunk 645] unchanged decode input, reusing hypothesis
+  [stream chunk 646] unchanged decode input, reusing hypothesis
+  [stream chunk 647] unchanged decode input, reusing hypothesis
+  [stream chunk 648] unchanged decode input, reusing hypothesis
+  [stream chunk 649] unchanged decode input, reusing hypothesis
+  [stream chunk 650] unchanged decode input, reusing hypothesis
+  [stream chunk 651] unchanged decode input, reusing hypothesis
+  [stream chunk 652] unchanged decode input, reusing hypothesis
+  [stream chunk 653] unchanged decode input, reusing hypothesis
+  [stream chunk 654] unchanged decode input, reusing hypothesis
+  [stream chunk 655 verify] committed=29 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 656 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 657] unchanged decode input, reusing hypothesis
+  [stream chunk 658] unchanged decode input, reusing hypothesis
+  [stream chunk 659] unchanged decode input, reusing hypothesis
+  [stream chunk 660] unchanged decode input, reusing hypothesis
+  [stream chunk 661] unchanged decode input, reusing hypothesis
+  [stream chunk 662] unchanged decode input, reusing hypothesis
+  [stream chunk 663] unchanged decode input, reusing hypothesis
+  [stream chunk 664] unchanged decode input, reusing hypothesis
+  [stream chunk 665] unchanged decode input, reusing hypothesis
+  [stream chunk 666] unchanged decode input, reusing hypothesis
+  [stream chunk 667] unchanged decode input, reusing hypothesis
+  [stream chunk 668] unchanged decode input, reusing hypothesis
+  [stream chunk 669] unchanged decode input, reusing hypothesis
+  [stream chunk 670] unchanged decode input, reusing hypothesis
+  [stream chunk 671 verify] committed=25 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 672 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 673] unchanged decode input, reusing hypothesis
+  [stream chunk 674] unchanged decode input, reusing hypothesis
+  [stream chunk 675] unchanged decode input, reusing hypothesis
+  [stream chunk 676] unchanged decode input, reusing hypothesis
+  [stream chunk 677] unchanged decode input, reusing hypothesis
+  [stream chunk 678] unchanged decode input, reusing hypothesis
+  [stream chunk 679] unchanged decode input, reusing hypothesis
+  [stream chunk 680] unchanged decode input, reusing hypothesis
+  [stream chunk 681] unchanged decode input, reusing hypothesis
+  [stream chunk 682] unchanged decode input, reusing hypothesis
+  [stream chunk 683] unchanged decode input, reusing hypothesis
+  [stream chunk 684] unchanged decode input, reusing hypothesis
+  [stream chunk 685] unchanged decode input, reusing hypothesis
+  [stream chunk 686] unchanged decode input, reusing hypothesis
+  [stream chunk 687 verify] committed=25 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 688 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 689] unchanged decode input, reusing hypothesis
+  [stream chunk 690] unchanged decode input, reusing hypothesis
+  [stream chunk 691] unchanged decode input, reusing hypothesis
+  [stream chunk 692] unchanged decode input, reusing hypothesis
+  [stream chunk 693] unchanged decode input, reusing hypothesis
+  [stream chunk 694] unchanged decode input, reusing hypothesis
+  [stream chunk 695] unchanged decode input, reusing hypothesis
+  [stream chunk 696] unchanged decode input, reusing hypothesis
+  [stream chunk 697] unchanged decode input, reusing hypothesis
+  [stream chunk 698] unchanged decode input, reusing hypothesis
+  [stream chunk 699] unchanged decode input, reusing hypothesis
+  [stream chunk 700] unchanged decode input, reusing hypothesis
+  [stream chunk 701] unchanged decode input, reusing hypothesis
+  [stream chunk 702] unchanged decode input, reusing hypothesis
+  [stream chunk 703 verify] committed=25 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 704 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 705] unchanged decode input, reusing hypothesis
+  [stream chunk 706] unchanged decode input, reusing hypothesis
+  [stream chunk 707] unchanged decode input, reusing hypothesis
+  [stream chunk 708] unchanged decode input, reusing hypothesis
+  [stream chunk 709] unchanged decode input, reusing hypothesis
+  [stream chunk 710] unchanged decode input, reusing hypothesis
+  [stream chunk 711] unchanged decode input, reusing hypothesis
+  [stream chunk 712] unchanged decode input, reusing hypothesis
+  [stream chunk 713] unchanged decode input, reusing hypothesis
+  [stream chunk 714] unchanged decode input, reusing hypothesis
+  [stream chunk 715] unchanged decode input, reusing hypothesis
+  [stream chunk 716] unchanged decode input, reusing hypothesis
+  [stream chunk 717] unchanged decode input, reusing hypothesis
+  [stream chunk 718] unchanged decode input, reusing hypothesis
+  [stream chunk 719 verify] committed=27 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 720 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 721] unchanged decode input, reusing hypothesis
+  [stream chunk 722] unchanged decode input, reusing hypothesis
+  [stream chunk 723] unchanged decode input, reusing hypothesis
+  [stream chunk 724] unchanged decode input, reusing hypothesis
+  [stream chunk 725] unchanged decode input, reusing hypothesis
+  [stream chunk 726] unchanged decode input, reusing hypothesis
+  [stream chunk 727] unchanged decode input, reusing hypothesis
+  [stream chunk 728] unchanged decode input, reusing hypothesis
+  [stream chunk 729] unchanged decode input, reusing hypothesis
+  [stream chunk 730] unchanged decode input, reusing hypothesis
+  [stream chunk 731] unchanged decode input, reusing hypothesis
+  [stream chunk 732] unchanged decode input, reusing hypothesis
+  [stream chunk 733] unchanged decode input, reusing hypothesis
+  [stream chunk 734] unchanged decode input, reusing hypothesis
+  [stream chunk 735 verify] committed=31 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 736 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 737] unchanged decode input, reusing hypothesis
+  [stream chunk 738] unchanged decode input, reusing hypothesis
+  [stream chunk 739] unchanged decode input, reusing hypothesis
+  [stream chunk 740] unchanged decode input, reusing hypothesis
+  [stream chunk 741] unchanged decode input, reusing hypothesis
+  [stream chunk 742] unchanged decode input, reusing hypothesis
+  [stream chunk 743] unchanged decode input, reusing hypothesis
+  [stream chunk 744] unchanged decode input, reusing hypothesis
+  [stream chunk 745] unchanged decode input, reusing hypothesis
+  [stream chunk 746] unchanged decode input, reusing hypothesis
+  [stream chunk 747] unchanged decode input, reusing hypothesis
+  [stream chunk 748] unchanged decode input, reusing hypothesis
+  [stream chunk 749] unchanged decode input, reusing hypothesis
+  [stream chunk 750] unchanged decode input, reusing hypothesis
+  [stream chunk 751 verify] committed=28 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 752 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 753] unchanged decode input, reusing hypothesis
+  [stream chunk 754] unchanged decode input, reusing hypothesis
+  [stream chunk 755] unchanged decode input, reusing hypothesis
+  [stream chunk 756] unchanged decode input, reusing hypothesis
+  [stream chunk 757] unchanged decode input, reusing hypothesis
+  [stream chunk 758] unchanged decode input, reusing hypothesis
+  [stream chunk 759] unchanged decode input, reusing hypothesis
+  [stream chunk 760] unchanged decode input, reusing hypothesis
+  [stream chunk 761] unchanged decode input, reusing hypothesis
+  [stream chunk 762] unchanged decode input, reusing hypothesis
+  [stream chunk 763] unchanged decode input, reusing hypothesis
+  [stream chunk 764] unchanged decode input, reusing hypothesis
+  [stream chunk 765] unchanged decode input, reusing hypothesis
+  [stream chunk 766] unchanged decode input, reusing hypothesis
+  [stream chunk 767 verify] committed=31 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 768 verify] committed=4 draft_len=5 lcp=3 verify_steps=1 accepted_drafts=2 verified_commits=3
+  [stream chunk 769 verify] committed=6 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 770 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 771] unchanged decode input, reusing hypothesis
+  [stream chunk 772] unchanged decode input, reusing hypothesis
+  [stream chunk 773] unchanged decode input, reusing hypothesis
+  [stream chunk 774] unchanged decode input, reusing hypothesis
+  [stream chunk 775] unchanged decode input, reusing hypothesis
+  [stream chunk 776] unchanged decode input, reusing hypothesis
+  [stream chunk 777] unchanged decode input, reusing hypothesis
+  [stream chunk 778] unchanged decode input, reusing hypothesis
+  [stream chunk 779] unchanged decode input, reusing hypothesis
+  [stream chunk 780] unchanged decode input, reusing hypothesis
+  [stream chunk 781] unchanged decode input, reusing hypothesis
+  [stream chunk 782] unchanged decode input, reusing hypothesis
+  [stream chunk 783 verify] committed=24 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 784 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 785] unchanged decode input, reusing hypothesis
+  [stream chunk 786] unchanged decode input, reusing hypothesis
+  [stream chunk 787] unchanged decode input, reusing hypothesis
+  [stream chunk 788] unchanged decode input, reusing hypothesis
+  [stream chunk 789] unchanged decode input, reusing hypothesis
+  [stream chunk 790] unchanged decode input, reusing hypothesis
+  [stream chunk 791] unchanged decode input, reusing hypothesis
+  [stream chunk 792] unchanged decode input, reusing hypothesis
+  [stream chunk 793] unchanged decode input, reusing hypothesis
+  [stream chunk 794] unchanged decode input, reusing hypothesis
+  [stream chunk 795] unchanged decode input, reusing hypothesis
+  [stream chunk 796] unchanged decode input, reusing hypothesis
+  [stream chunk 797] unchanged decode input, reusing hypothesis
+  [stream chunk 798] unchanged decode input, reusing hypothesis
+  [stream chunk 799 verify] committed=30 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 800 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 801] unchanged decode input, reusing hypothesis
+  [stream chunk 802] unchanged decode input, reusing hypothesis
+  [stream chunk 803] unchanged decode input, reusing hypothesis
+  [stream chunk 804] unchanged decode input, reusing hypothesis
+  [stream chunk 805] unchanged decode input, reusing hypothesis
+  [stream chunk 806] unchanged decode input, reusing hypothesis
+  [stream chunk 807] unchanged decode input, reusing hypothesis
+  [stream chunk 808] unchanged decode input, reusing hypothesis
+  [stream chunk 809] unchanged decode input, reusing hypothesis
+  [stream chunk 810] unchanged decode input, reusing hypothesis
+  [stream chunk 811] unchanged decode input, reusing hypothesis
+  [stream chunk 812] unchanged decode input, reusing hypothesis
+  [stream chunk 813] unchanged decode input, reusing hypothesis
+  [stream chunk 814] unchanged decode input, reusing hypothesis
+  [stream chunk 815 verify] committed=32 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 816 verify] committed=9 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 817 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 818] unchanged decode input, reusing hypothesis
+  [stream chunk 819] unchanged decode input, reusing hypothesis
+  [stream chunk 820] unchanged decode input, reusing hypothesis
+  [stream chunk 821] unchanged decode input, reusing hypothesis
+  [stream chunk 822] unchanged decode input, reusing hypothesis
+  [stream chunk 823] unchanged decode input, reusing hypothesis
+  [stream chunk 824] unchanged decode input, reusing hypothesis
+  [stream chunk 825] unchanged decode input, reusing hypothesis
+  [stream chunk 826] unchanged decode input, reusing hypothesis
+  [stream chunk 827] unchanged decode input, reusing hypothesis
+  [stream chunk 828] unchanged decode input, reusing hypothesis
+  [stream chunk 829] unchanged decode input, reusing hypothesis
+  [stream chunk 830] unchanged decode input, reusing hypothesis
+  [stream chunk 831 verify] committed=27 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 832 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 833] unchanged decode input, reusing hypothesis
+  [stream chunk 834] unchanged decode input, reusing hypothesis
+  [stream chunk 835] unchanged decode input, reusing hypothesis
+  [stream chunk 836] unchanged decode input, reusing hypothesis
+  [stream chunk 837] unchanged decode input, reusing hypothesis
+  [stream chunk 838] unchanged decode input, reusing hypothesis
+  [stream chunk 839] unchanged decode input, reusing hypothesis
+  [stream chunk 840] unchanged decode input, reusing hypothesis
+  [stream chunk 841] unchanged decode input, reusing hypothesis
+  [stream chunk 842] unchanged decode input, reusing hypothesis
+  [stream chunk 843] unchanged decode input, reusing hypothesis
+  [stream chunk 844] unchanged decode input, reusing hypothesis
+  [stream chunk 845] unchanged decode input, reusing hypothesis
+  [stream chunk 846] unchanged decode input, reusing hypothesis
+  [stream chunk 847 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 848 verify] committed=10 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 849 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 850] unchanged decode input, reusing hypothesis
+  [stream chunk 851] unchanged decode input, reusing hypothesis
+  [stream chunk 852] unchanged decode input, reusing hypothesis
+  [stream chunk 853] unchanged decode input, reusing hypothesis
+  [stream chunk 854] unchanged decode input, reusing hypothesis
+  [stream chunk 855] unchanged decode input, reusing hypothesis
+  [stream chunk 856] unchanged decode input, reusing hypothesis
+  [stream chunk 857] unchanged decode input, reusing hypothesis
+  [stream chunk 858] unchanged decode input, reusing hypothesis
+  [stream chunk 859] unchanged decode input, reusing hypothesis
+  [stream chunk 860] unchanged decode input, reusing hypothesis
+  [stream chunk 861] unchanged decode input, reusing hypothesis
+  [stream chunk 862] unchanged decode input, reusing hypothesis
+  [stream chunk 863 verify] committed=27 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 864 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 865] unchanged decode input, reusing hypothesis
+  [stream chunk 866] unchanged decode input, reusing hypothesis
+  [stream chunk 867] unchanged decode input, reusing hypothesis
+  [stream chunk 868] unchanged decode input, reusing hypothesis
+  [stream chunk 869] unchanged decode input, reusing hypothesis
+  [stream chunk 870] unchanged decode input, reusing hypothesis
+  [stream chunk 871] unchanged decode input, reusing hypothesis
+  [stream chunk 872] unchanged decode input, reusing hypothesis
+  [stream chunk 873] unchanged decode input, reusing hypothesis
+  [stream chunk 874] unchanged decode input, reusing hypothesis
+  [stream chunk 875] unchanged decode input, reusing hypothesis
+  [stream chunk 876] unchanged decode input, reusing hypothesis
+  [stream chunk 877] unchanged decode input, reusing hypothesis
+  [stream chunk 878] unchanged decode input, reusing hypothesis
+  [stream chunk 879 verify] committed=30 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 880 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 881] unchanged decode input, reusing hypothesis
+  [stream chunk 882] unchanged decode input, reusing hypothesis
+  [stream chunk 883] unchanged decode input, reusing hypothesis
+  [stream chunk 884] unchanged decode input, reusing hypothesis
+  [stream chunk 885] unchanged decode input, reusing hypothesis
+  [stream chunk 886] unchanged decode input, reusing hypothesis
+  [stream chunk 887] unchanged decode input, reusing hypothesis
+  [stream chunk 888] unchanged decode input, reusing hypothesis
+  [stream chunk 889] unchanged decode input, reusing hypothesis
+  [stream chunk 890] unchanged decode input, reusing hypothesis
+  [stream chunk 891] unchanged decode input, reusing hypothesis
+  [stream chunk 892] unchanged decode input, reusing hypothesis
+  [stream chunk 893] unchanged decode input, reusing hypothesis
+  [stream chunk 894] unchanged decode input, reusing hypothesis
+  [stream chunk 895 verify] committed=26 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 896 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 897] unchanged decode input, reusing hypothesis
+  [stream chunk 898] unchanged decode input, reusing hypothesis
+  [stream chunk 899] unchanged decode input, reusing hypothesis
+  [stream chunk 900] unchanged decode input, reusing hypothesis
+  [stream chunk 901] unchanged decode input, reusing hypothesis
+  [stream chunk 902] unchanged decode input, reusing hypothesis
+  [stream chunk 903] unchanged decode input, reusing hypothesis
+  [stream chunk 904] unchanged decode input, reusing hypothesis
+  [stream chunk 905] unchanged decode input, reusing hypothesis
+  [stream chunk 906] unchanged decode input, reusing hypothesis
+  [stream chunk 907] unchanged decode input, reusing hypothesis
+  [stream chunk 908] unchanged decode input, reusing hypothesis
+  [stream chunk 909] unchanged decode input, reusing hypothesis
+  [stream chunk 910] unchanged decode input, reusing hypothesis
+  [stream chunk 911 verify] committed=28 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 912 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 913] unchanged decode input, reusing hypothesis
+  [stream chunk 914] unchanged decode input, reusing hypothesis
+  [stream chunk 915] unchanged decode input, reusing hypothesis
+  [stream chunk 916] unchanged decode input, reusing hypothesis
+  [stream chunk 917] unchanged decode input, reusing hypothesis
+  [stream chunk 918] unchanged decode input, reusing hypothesis
+  [stream chunk 919] unchanged decode input, reusing hypothesis
+  [stream chunk 920] unchanged decode input, reusing hypothesis
+  [stream chunk 921] unchanged decode input, reusing hypothesis
+  [stream chunk 922] unchanged decode input, reusing hypothesis
+  [stream chunk 923] unchanged decode input, reusing hypothesis
+  [stream chunk 924] unchanged decode input, reusing hypothesis
+  [stream chunk 925] unchanged decode input, reusing hypothesis
+  [stream chunk 926] unchanged decode input, reusing hypothesis
+  [stream chunk 927 verify] committed=32 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 928 verify] committed=7 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 929 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 930] unchanged decode input, reusing hypothesis
+  [stream chunk 931] unchanged decode input, reusing hypothesis
+  [stream chunk 932] unchanged decode input, reusing hypothesis
+  [stream chunk 933] unchanged decode input, reusing hypothesis
+  [stream chunk 934] unchanged decode input, reusing hypothesis
+  [stream chunk 935] unchanged decode input, reusing hypothesis
+  [stream chunk 936] unchanged decode input, reusing hypothesis
+  [stream chunk 937] unchanged decode input, reusing hypothesis
+  [stream chunk 938] unchanged decode input, reusing hypothesis
+  [stream chunk 939] unchanged decode input, reusing hypothesis
+  [stream chunk 940] unchanged decode input, reusing hypothesis
+  [stream chunk 941] unchanged decode input, reusing hypothesis
+  [stream chunk 942] unchanged decode input, reusing hypothesis
+  [stream chunk 943 verify] committed=23 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 944 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 945] unchanged decode input, reusing hypothesis
+  [stream chunk 946] unchanged decode input, reusing hypothesis
+  [stream chunk 947] unchanged decode input, reusing hypothesis
+  [stream chunk 948] unchanged decode input, reusing hypothesis
+  [stream chunk 949] unchanged decode input, reusing hypothesis
+  [stream chunk 950] unchanged decode input, reusing hypothesis
+  [stream chunk 951] unchanged decode input, reusing hypothesis
+  [stream chunk 952] unchanged decode input, reusing hypothesis
+  [stream chunk 953] unchanged decode input, reusing hypothesis
+  [stream chunk 954] unchanged decode input, reusing hypothesis
+  [stream chunk 955] unchanged decode input, reusing hypothesis
+  [stream chunk 956] unchanged decode input, reusing hypothesis
+  [stream chunk 957] unchanged decode input, reusing hypothesis
+  [stream chunk 958] unchanged decode input, reusing hypothesis
+  [stream chunk 959 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 960 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 961] unchanged decode input, reusing hypothesis
+  [stream chunk 962] unchanged decode input, reusing hypothesis
+  [stream chunk 963] unchanged decode input, reusing hypothesis
+  [stream chunk 964] unchanged decode input, reusing hypothesis
+  [stream chunk 965] unchanged decode input, reusing hypothesis
+  [stream chunk 966] unchanged decode input, reusing hypothesis
+  [stream chunk 967] unchanged decode input, reusing hypothesis
+  [stream chunk 968] unchanged decode input, reusing hypothesis
+  [stream chunk 969] unchanged decode input, reusing hypothesis
+  [stream chunk 970] unchanged decode input, reusing hypothesis
+  [stream chunk 971] unchanged decode input, reusing hypothesis
+  [stream chunk 972] unchanged decode input, reusing hypothesis
+  [stream chunk 973] unchanged decode input, reusing hypothesis
+  [stream chunk 974] unchanged decode input, reusing hypothesis
+  [stream chunk 975 verify] committed=32 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 976 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 977] unchanged decode input, reusing hypothesis
+  [stream chunk 978] unchanged decode input, reusing hypothesis
+  [stream chunk 979] unchanged decode input, reusing hypothesis
+  [stream chunk 980] unchanged decode input, reusing hypothesis
+  [stream chunk 981] unchanged decode input, reusing hypothesis
+  [stream chunk 982] unchanged decode input, reusing hypothesis
+  [stream chunk 983] unchanged decode input, reusing hypothesis
+  [stream chunk 984] unchanged decode input, reusing hypothesis
+  [stream chunk 985] unchanged decode input, reusing hypothesis
+  [stream chunk 986] unchanged decode input, reusing hypothesis
+  [stream chunk 987] unchanged decode input, reusing hypothesis
+  [stream chunk 988] unchanged decode input, reusing hypothesis
+  [stream chunk 989] unchanged decode input, reusing hypothesis
+  [stream chunk 990] unchanged decode input, reusing hypothesis
+  [stream chunk 991 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 992 verify] committed=10 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 993 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 994] unchanged decode input, reusing hypothesis
+  [stream chunk 995] unchanged decode input, reusing hypothesis
+  [stream chunk 996] unchanged decode input, reusing hypothesis
+  [stream chunk 997] unchanged decode input, reusing hypothesis
+  [stream chunk 998] unchanged decode input, reusing hypothesis
+  [stream chunk 999] unchanged decode input, reusing hypothesis
+  [stream chunk 1000] unchanged decode input, reusing hypothesis
+  [stream chunk 1001] unchanged decode input, reusing hypothesis
+  [stream chunk 1002] unchanged decode input, reusing hypothesis
+  [stream chunk 1003] unchanged decode input, reusing hypothesis
+  [stream chunk 1004] unchanged decode input, reusing hypothesis
+  [stream chunk 1005] unchanged decode input, reusing hypothesis
+  [stream chunk 1006] unchanged decode input, reusing hypothesis
+  [stream chunk 1007 verify] committed=27 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1008 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1009] unchanged decode input, reusing hypothesis
+  [stream chunk 1010] unchanged decode input, reusing hypothesis
+  [stream chunk 1011] unchanged decode input, reusing hypothesis
+  [stream chunk 1012] unchanged decode input, reusing hypothesis
+  [stream chunk 1013] unchanged decode input, reusing hypothesis
+  [stream chunk 1014] unchanged decode input, reusing hypothesis
+  [stream chunk 1015] unchanged decode input, reusing hypothesis
+  [stream chunk 1016] unchanged decode input, reusing hypothesis
+  [stream chunk 1017] unchanged decode input, reusing hypothesis
+  [stream chunk 1018] unchanged decode input, reusing hypothesis
+  [stream chunk 1019] unchanged decode input, reusing hypothesis
+  [stream chunk 1020] unchanged decode input, reusing hypothesis
+  [stream chunk 1021] unchanged decode input, reusing hypothesis
+  [stream chunk 1022] unchanged decode input, reusing hypothesis
+  [stream chunk 1023 verify] committed=31 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1024 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1025] unchanged decode input, reusing hypothesis
+  [stream chunk 1026] unchanged decode input, reusing hypothesis
+  [stream chunk 1027] unchanged decode input, reusing hypothesis
+  [stream chunk 1028] unchanged decode input, reusing hypothesis
+  [stream chunk 1029] unchanged decode input, reusing hypothesis
+  [stream chunk 1030] unchanged decode input, reusing hypothesis
+  [stream chunk 1031] unchanged decode input, reusing hypothesis
+  [stream chunk 1032] unchanged decode input, reusing hypothesis
+  [stream chunk 1033] unchanged decode input, reusing hypothesis
+  [stream chunk 1034] unchanged decode input, reusing hypothesis
+  [stream chunk 1035] unchanged decode input, reusing hypothesis
+  [stream chunk 1036] unchanged decode input, reusing hypothesis
+  [stream chunk 1037] unchanged decode input, reusing hypothesis
+  [stream chunk 1038] unchanged decode input, reusing hypothesis
+  [stream chunk 1039 verify] committed=29 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1040 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1041] unchanged decode input, reusing hypothesis
+  [stream chunk 1042] unchanged decode input, reusing hypothesis
+  [stream chunk 1043] unchanged decode input, reusing hypothesis
+  [stream chunk 1044] unchanged decode input, reusing hypothesis
+  [stream chunk 1045] unchanged decode input, reusing hypothesis
+  [stream chunk 1046] unchanged decode input, reusing hypothesis
+  [stream chunk 1047] unchanged decode input, reusing hypothesis
+  [stream chunk 1048] unchanged decode input, reusing hypothesis
+  [stream chunk 1049] unchanged decode input, reusing hypothesis
+  [stream chunk 1050] unchanged decode input, reusing hypothesis
+  [stream chunk 1051] unchanged decode input, reusing hypothesis
+  [stream chunk 1052] unchanged decode input, reusing hypothesis
+  [stream chunk 1053] unchanged decode input, reusing hypothesis
+  [stream chunk 1054] unchanged decode input, reusing hypothesis
+  [stream chunk 1055 verify] committed=30 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 1056 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1057] unchanged decode input, reusing hypothesis
+  [stream chunk 1058] unchanged decode input, reusing hypothesis
+  [stream chunk 1059] unchanged decode input, reusing hypothesis
+  [stream chunk 1060] unchanged decode input, reusing hypothesis
+  [stream chunk 1061] unchanged decode input, reusing hypothesis
+  [stream chunk 1062] unchanged decode input, reusing hypothesis
+  [stream chunk 1063] unchanged decode input, reusing hypothesis
+  [stream chunk 1064] unchanged decode input, reusing hypothesis
+  [stream chunk 1065] unchanged decode input, reusing hypothesis
+  [stream chunk 1066] unchanged decode input, reusing hypothesis
+  [stream chunk 1067] unchanged decode input, reusing hypothesis
+  [stream chunk 1068] unchanged decode input, reusing hypothesis
+  [stream chunk 1069] unchanged decode input, reusing hypothesis
+  [stream chunk 1070] unchanged decode input, reusing hypothesis
+  [stream chunk 1071 verify] committed=26 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 1072 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1073] unchanged decode input, reusing hypothesis
+  [stream chunk 1074] unchanged decode input, reusing hypothesis
+  [stream chunk 1075] unchanged decode input, reusing hypothesis
+  [stream chunk 1076] unchanged decode input, reusing hypothesis
+  [stream chunk 1077] unchanged decode input, reusing hypothesis
+  [stream chunk 1078] unchanged decode input, reusing hypothesis
+  [stream chunk 1079] unchanged decode input, reusing hypothesis
+  [stream chunk 1080] unchanged decode input, reusing hypothesis
+  [stream chunk 1081] unchanged decode input, reusing hypothesis
+  [stream chunk 1082] unchanged decode input, reusing hypothesis
+  [stream chunk 1083] unchanged decode input, reusing hypothesis
+  [stream chunk 1084] unchanged decode input, reusing hypothesis
+  [stream chunk 1085] unchanged decode input, reusing hypothesis
+  [stream chunk 1086] unchanged decode input, reusing hypothesis
+  [stream chunk 1087 verify] committed=31 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 1088 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1089] unchanged decode input, reusing hypothesis
+  [stream chunk 1090] unchanged decode input, reusing hypothesis
+  [stream chunk 1091] unchanged decode input, reusing hypothesis
+  [stream chunk 1092] unchanged decode input, reusing hypothesis
+  [stream chunk 1093] unchanged decode input, reusing hypothesis
+  [stream chunk 1094] unchanged decode input, reusing hypothesis
+  [stream chunk 1095] unchanged decode input, reusing hypothesis
+  [stream chunk 1096] unchanged decode input, reusing hypothesis
+  [stream chunk 1097] unchanged decode input, reusing hypothesis
+  [stream chunk 1098] unchanged decode input, reusing hypothesis
+  [stream chunk 1099] unchanged decode input, reusing hypothesis
+  [stream chunk 1100] unchanged decode input, reusing hypothesis
+  [stream chunk 1101] unchanged decode input, reusing hypothesis
+  [stream chunk 1102] unchanged decode input, reusing hypothesis
+  [stream chunk 1103 verify] committed=32 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 1104 verify] committed=7 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1105 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1106] unchanged decode input, reusing hypothesis
+  [stream chunk 1107] unchanged decode input, reusing hypothesis
+  [stream chunk 1108] unchanged decode input, reusing hypothesis
+  [stream chunk 1109] unchanged decode input, reusing hypothesis
+  [stream chunk 1110] unchanged decode input, reusing hypothesis
+  [stream chunk 1111] unchanged decode input, reusing hypothesis
+  [stream chunk 1112] unchanged decode input, reusing hypothesis
+  [stream chunk 1113] unchanged decode input, reusing hypothesis
+  [stream chunk 1114] unchanged decode input, reusing hypothesis
+  [stream chunk 1115] unchanged decode input, reusing hypothesis
+  [stream chunk 1116] unchanged decode input, reusing hypothesis
+  [stream chunk 1117] unchanged decode input, reusing hypothesis
+  [stream chunk 1118] unchanged decode input, reusing hypothesis
+  [stream chunk 1119 verify] committed=32 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1120 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1121] unchanged decode input, reusing hypothesis
+  [stream chunk 1122] unchanged decode input, reusing hypothesis
+  [stream chunk 1123] unchanged decode input, reusing hypothesis
+  [stream chunk 1124] unchanged decode input, reusing hypothesis
+  [stream chunk 1125] unchanged decode input, reusing hypothesis
+  [stream chunk 1126] unchanged decode input, reusing hypothesis
+  [stream chunk 1127] unchanged decode input, reusing hypothesis
+  [stream chunk 1128] unchanged decode input, reusing hypothesis
+  [stream chunk 1129] unchanged decode input, reusing hypothesis
+  [stream chunk 1130] unchanged decode input, reusing hypothesis
+  [stream chunk 1131] unchanged decode input, reusing hypothesis
+  [stream chunk 1132] unchanged decode input, reusing hypothesis
+  [stream chunk 1133] unchanged decode input, reusing hypothesis
+  [stream chunk 1134] unchanged decode input, reusing hypothesis
+  [stream chunk 1135 verify] committed=26 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 1136 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1137] unchanged decode input, reusing hypothesis
+  [stream chunk 1138] unchanged decode input, reusing hypothesis
+  [stream chunk 1139] unchanged decode input, reusing hypothesis
+  [stream chunk 1140] unchanged decode input, reusing hypothesis
+  [stream chunk 1141] unchanged decode input, reusing hypothesis
+  [stream chunk 1142] unchanged decode input, reusing hypothesis
+  [stream chunk 1143] unchanged decode input, reusing hypothesis
+  [stream chunk 1144] unchanged decode input, reusing hypothesis
+  [stream chunk 1145] unchanged decode input, reusing hypothesis
+  [stream chunk 1146] unchanged decode input, reusing hypothesis
+  [stream chunk 1147] unchanged decode input, reusing hypothesis
+  [stream chunk 1148] unchanged decode input, reusing hypothesis
+  [stream chunk 1149] unchanged decode input, reusing hypothesis
+  [stream chunk 1150] unchanged decode input, reusing hypothesis
+  [stream chunk 1151 verify] committed=32 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 1152 verify] committed=7 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1153 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1154] unchanged decode input, reusing hypothesis
+  [stream chunk 1155] unchanged decode input, reusing hypothesis
+  [stream chunk 1156] unchanged decode input, reusing hypothesis
+  [stream chunk 1157] unchanged decode input, reusing hypothesis
+  [stream chunk 1158] unchanged decode input, reusing hypothesis
+  [stream chunk 1159] unchanged decode input, reusing hypothesis
+  [stream chunk 1160] unchanged decode input, reusing hypothesis
+  [stream chunk 1161] unchanged decode input, reusing hypothesis
+  [stream chunk 1162] unchanged decode input, reusing hypothesis
+  [stream chunk 1163] unchanged decode input, reusing hypothesis
+  [stream chunk 1164] unchanged decode input, reusing hypothesis
+  [stream chunk 1165] unchanged decode input, reusing hypothesis
+  [stream chunk 1166] unchanged decode input, reusing hypothesis
+  [stream chunk 1167 verify] committed=27 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1168 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1169] unchanged decode input, reusing hypothesis
+  [stream chunk 1170] unchanged decode input, reusing hypothesis
+  [stream chunk 1171] unchanged decode input, reusing hypothesis
+  [stream chunk 1172] unchanged decode input, reusing hypothesis
+  [stream chunk 1173] unchanged decode input, reusing hypothesis
+  [stream chunk 1174] unchanged decode input, reusing hypothesis
+  [stream chunk 1175] unchanged decode input, reusing hypothesis
+  [stream chunk 1176] unchanged decode input, reusing hypothesis
+  [stream chunk 1177] unchanged decode input, reusing hypothesis
+  [stream chunk 1178] unchanged decode input, reusing hypothesis
+  [stream chunk 1179] unchanged decode input, reusing hypothesis
+  [stream chunk 1180] unchanged decode input, reusing hypothesis
+  [stream chunk 1181] unchanged decode input, reusing hypothesis
+  [stream chunk 1182] unchanged decode input, reusing hypothesis
+  [stream chunk 1183 verify] committed=29 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 1184 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1185] unchanged decode input, reusing hypothesis
+  [stream chunk 1186] unchanged decode input, reusing hypothesis
+  [stream chunk 1187] unchanged decode input, reusing hypothesis
+  [stream chunk 1188] unchanged decode input, reusing hypothesis
+  [stream chunk 1189] unchanged decode input, reusing hypothesis
+  [stream chunk 1190] unchanged decode input, reusing hypothesis
+  [stream chunk 1191] unchanged decode input, reusing hypothesis
+  [stream chunk 1192] unchanged decode input, reusing hypothesis
+  [stream chunk 1193] unchanged decode input, reusing hypothesis
+  [stream chunk 1194] unchanged decode input, reusing hypothesis
+  [stream chunk 1195] unchanged decode input, reusing hypothesis
+  [stream chunk 1196] unchanged decode input, reusing hypothesis
+  [stream chunk 1197] unchanged decode input, reusing hypothesis
+  [stream chunk 1198] unchanged decode input, reusing hypothesis
+  [stream chunk 1199 verify] committed=28 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+  [stream chunk 1200 verify] committed=5 draft_len=5 lcp=5 verify_steps=1 accepted_drafts=4 verified_commits=5
+  [stream chunk 1201] unchanged decode input, reusing hypothesis
+  [stream chunk 1202] unchanged decode input, reusing hypothesis
+  [stream chunk 1203] unchanged decode input, reusing hypothesis
+  [stream chunk 1204 verify] committed=12 draft_len=5 lcp=4 verify_steps=1 accepted_drafts=3 verified_commits=4
+Inference: 221551 ms, 1763 text tokens (7.96 tok/s, encoding: 5866ms, decoding: 212409ms)
+Audio: 602.5 s processed in 221.6 s (2.72x realtime)
