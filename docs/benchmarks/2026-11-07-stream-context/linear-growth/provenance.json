@@ -1,0 +1,20 @@
+{
+  "baseline_commit": "6a88ff620f2f1cabbdbe7ce1925fe702f0a03a5b",
+  "candidate": "baseline + source.patch; no floating-point kernel or model-context changes",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: aarch64-apple-darwin\nrelease: 1.97.1\nLLVM version: 22.1.6",
+  "cpu": "Apple M5 Pro",
+  "memory_bytes": 51539607552,
+  "build_command": "cargo build --release -p qwen-asr-cli",
+  "target_flags": "# macOS host (Apple Silicon): schedule for the building machine\n[target.aarch64-apple-darwin]\nrustflags = [\"-C\", \"target-cpu=native\"]\n\n# iOS targets\n[target.aarch64-apple-ios]\nrustflags = [\"-C\", \"target-cpu=apple-a14\"]\n\n[target.aarch64-apple-ios-sim]\nrustflags = [\"-C\", \"target-cpu=apple-a14\"]\n\n# Android targets\n[target.aarch64-linux-android]\n# Set linker via environment: CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=aarch64-linux-android28-clang\nrustflags = [\"-C\", \"target-cpu=cortex-a76\"]\n\n[target.armv7-linux-androideabi]\nrustflags = [\"-C\", \"target-cpu=cortex-a53\"]\n",
+  "source_patch_sha256": "e05e2acc1390eed5742db765dc06b1477cef4faa0f2500107b50b1ad1016da2b",
+  "binaries": {
+    "before": {
+      "path": "/Users/lizhuo/owork/q-asr/tmp/stream-bound/before",
+      "sha256": "bb24df72f681c515bc6e7d5beb919f79517ba2879212986f9d909fe678ea70a9"
+    },
+    "after": {
+      "path": "/Users/lizhuo/owork/q-asr/tmp/stream-bound/after-final",
+      "sha256": "26774c54c11f784d5fcca49a9e39add978ea95bcd968fbbe9fd9a0add72437db"
+    }
+  }
+}

@@ -36,6 +36,12 @@ full `vm_stat` and swap-usage output. Each row includes child-process
 `resource_usage` deltas for user/system CPU seconds, minor/major faults, and
 voluntary/involuntary context switches. These cover the whole process and
 its threads, not just decode; context-switch counts are not yield-call counts.
+When `/usr/bin/time` is available on macOS (BSD `-l`) or Linux (GNU `-v`),
+`metrics.peak_rss_bytes` records each invocation's peak resident set in bytes.
+It is not the cumulative `RUSAGE_CHILDREN` high-water mark. Raw timer output is
+retained in stderr, and `measurement_cmd` records the wrapper; wall time includes
+its small launch overhead. Without a supported timer, RSS is omitted. Timeouts
+kill the complete benchmark process group, including the timer.
 Compare VM counter deltas: existing swap usage alone does not prove active
 swapping. `metadata.json` records binary
 hashes and explicit environment overrides. Inherited `QWEN_ASR_*` variables

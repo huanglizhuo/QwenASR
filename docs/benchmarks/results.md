@@ -152,6 +152,18 @@ The subsequent [small-chunk follow-up](2026-11-07-stream-reset/README.md)
 fixes intermediate resets, verifies coverage of every source utterance, and
 measures both long recordings with 0.5-second chunks.
 
+The [allocation follow-up](2026-11-07-stream-context/README.md) compares the
+complete 0.11.2 baseline with exact-output input reuse and lower-overhead KV
+growth. Three alternating measured pairs (0.5 s chunks, 0.6B, 12 threads) keep
+WER at **2.8571% / 2.6093%**, with byte-identical transcripts. For 10 minutes,
+median peak RSS falls **8.943 → 7.265 GiB (−18.77%)**; inference changes
+**186.650 → 182.250 s (−2.36%)** and process wall **186.827 → 182.432 s**.
+The paired inference changes span −3.66% to +3.03% on the loaded desktop, so the
+small timing difference is not a stable speedup claim. The 2-minute medians are
+7.463 → 7.406 s inference and 3.440 → 3.430 GiB RSS. Context is retained in full;
+the rejected bounded-context prototypes and the earlier linear-growth A/B are
+documented separately in that report.
+
 ## Reproduce
 
 ```sh

@@ -1,0 +1,27 @@
+{
+  "workspace": {
+    "command": "cargo test --release --workspace",
+    "passed": 97,
+    "failed": 0,
+    "ignored": 3
+  },
+  "file_stream_no_default": {
+    "command": "cargo test --release -p qwen-asr --no-default-features --test file_stream",
+    "passed": 1,
+    "model_backed": true
+  },
+  "clippy": "cargo clippy --workspace --all-targets [--no-default-features] -- -D warnings; both passed",
+  "format": "cargo fmt --all --check passed",
+  "ab_harness_tests": 9,
+  "offline_10min": "byte-identical to complete baseline",
+  "ab_invocations": 16,
+  "ab_exact_output": "passed across both binaries, warmups and repetitions",
+  "wer_and_coverage": "analyze.py passed; 8/280 and 37/1418 word edits unchanged; no missing utterance or endpoints",
+  "cache_regression": "Old doubling failed spare-capacity check at 2049 positions; final policy preserves all active K/V bits across layers, heads and growths.",
+  "source_and_binary_hashes": "verified against provenance.json",
+  "limits": [
+    "No default context truncation; logical context and memory still grow with recording length.",
+    "Loaded M5 Pro, not idle-machine acceptance.",
+    "Full 2703-item corpus and 1.7B were not rerun."
+  ]
+}

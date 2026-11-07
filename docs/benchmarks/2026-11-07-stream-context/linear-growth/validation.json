@@ -1,0 +1,15 @@
+{
+  "workspace": {
+    "command": "cargo test --release --workspace",
+    "passed": 97,
+    "failed": 0,
+    "ignored": 3
+  },
+  "file_stream_no_default": "passed with model",
+  "clippy_default_and_no_default": "passed with warnings denied",
+  "format": "passed",
+  "ab_harness_tests": 9,
+  "offline_10min": "before/after byte-identical",
+  "ab": "16 successful invocations, transcripts byte-identical, WER unchanged, all supplemental completeness checks passed",
+  "note": "First 1024-position growth policy; final candidate has separate verification."
+}

@@ -2300,9 +2300,9 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
     }
 
     let audio_samples = if ctx.skip_silence {
-        audio::compact_silence_fast(samples)
+        std::borrow::Cow::Owned(audio::compact_silence_fast(samples))
     } else {
-        samples.to_vec()
+        std::borrow::Cow::Borrowed(samples)
     };
 
     let tokenizer = load_tokenizer(ctx)?;
@@ -2332,9 +2332,10 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
     let mut enc_cache: Vec<EncWindow> = Vec::new();
     let mut enc_cached_seq_total = 0usize;
 
-    // Previous decode input keys for LCP reuse and identical-input detection.
+    // LCP keys plus the exact mutable part of the previous decode input.
     let mut prev_prefill_keys: Vec<PrefillRowKey> = Vec::new();
-    let mut prev_last_key = None;
+    let mut prev_enc_seq_len = 0;
+    let mut prev_prefix_tokens = Vec::new();
 
     while audio_cursor < audio_samples.len() {
         let chunk_t0 = get_time_ms();
@@ -2409,6 +2410,25 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         } else {
             0
         };
+
+        // Completed encoder windows are immutable. Compare the exact text
+        // prefix before allocating/copying the growing embedding matrix.
+        if !is_final
+            && enc_seq_len == prev_enc_seq_len
+            && raw_tokens[..n_prefix_tokens] == prev_prefix_tokens
+        {
+            if kernels::verbose() >= 2 {
+                eprintln!(
+                    "  [stream chunk {chunk_idx}] unchanged decode input, reusing hypothesis"
+                );
+            }
+            ctx.perf_total_ms += elapsed_ms(chunk_t0);
+            chunk_idx += 1;
+            continue;
+        }
+        prev_enc_seq_len = enc_seq_len;
+        prev_prefix_tokens.clear();
+        prev_prefix_tokens.extend_from_slice(&raw_tokens[..n_prefix_tokens]);
 
         // Build input embeddings
         let n_prompt_tokens = ctx.prompt_tokens.as_ref().map_or(0, |t| t.len());
@@ -2532,23 +2552,6 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
 
         let reused_prefill = prefill_lcp_len(&prev_prefill_keys, &prefill_keys, prefill_len);
 
-        // Identical input regenerates the same rollback tail and commits no new
-        // text. EOF must still decode/flush with its larger token budget.
-        if !is_final
-            && prev_prefill_keys.len() == prefill_len
-            && reused_prefill == prefill_len
-            && prev_last_key == Some(prefill_keys[prefill_len])
-        {
-            if kernels::verbose() >= 2 {
-                eprintln!(
-                    "  [stream chunk {chunk_idx}] unchanged decode input, reusing hypothesis"
-                );
-            }
-            ctx.perf_total_ms += elapsed_ms(chunk_t0);
-            chunk_idx += 1;
-            continue;
-        }
-
         ctx.kv_cache.len = reused_prefill;
         let delta_prefill = prefill_len - reused_prefill;
         if delta_prefill > 0 {
@@ -2566,7 +2569,6 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         // Save for next chunk
         prev_prefill_keys.clear();
         prev_prefill_keys.extend_from_slice(&prefill_keys[..prefill_len]);
-        prev_last_key = Some(prefill_keys[prefill_len]);
 
         let prefill_ms = elapsed_ms(t0);
         ctx.perf_decode_ms += prefill_ms;
@@ -2679,6 +2681,12 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
         chunk_idx += 1;
     }
 
+    if kernels::verbose() >= 2 {
+        eprintln!(
+            "  [stream context] kv_len={} kv_capacity={}",
+            ctx.kv_cache.len, ctx.kv_cache.max_seq
+        );
+    }
     Some(String::from_utf8_lossy(&result_bytes).trim().to_string())
 } // ========================================================================
   // Incremental Streaming API

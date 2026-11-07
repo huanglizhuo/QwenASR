@@ -1,0 +1,72 @@
+{
+  "cmd": [
+    "/Users/lizhuo/owork/q-asr/tmp/stream-bound/before",
+    "-d",
+    "/Users/lizhuo/owork/q-asr/qwen3-asr-0.6b",
+    "-i",
+    "/Users/lizhuo/owork/q-asr/bench/long/samples/long-10min.wav",
+    "--stream",
+    "--stream-chunk-sec",
+    "0.5",
+    "-t",
+    "12",
+    "--debug"
+  ],
+  "measurement_cmd": [
+    "/usr/bin/time",
+    "-l",
+    "/Users/lizhuo/owork/q-asr/tmp/stream-bound/before",
+    "-d",
+    "/Users/lizhuo/owork/q-asr/qwen3-asr-0.6b",
+    "-i",
+    "/Users/lizhuo/owork/q-asr/bench/long/samples/long-10min.wav",
+    "--stream",
+    "--stream-chunk-sec",
+    "0.5",
+    "-t",
+    "12",
+    "--debug"
+  ],
+  "before": {
+    "time": 1794060034.637791,
+    "loadavg": [
+      11.0595703125,
+      10.861328125,
+      9.26611328125
+    ],
+    "processes": "  PID  %CPU COMM\n  444  99.8 /usr/sbin/BTLEServer\n  180   4.3 /usr/sbin/coreaudiod\n94911   3.4 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (GPU).app/Contents/MacOS/Google Chrome Helper (GPU)\n22051   1.5 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)\n30667   0.7 /Users/lizhuo/Library/Developer/CoreSimulator/Devices/A9AD99C2-B40F-4DBE-8AC2-A957A1BC6CE0/data/Containers/Bundle/Application/86092570-2C7A-4CF4-953C-1D9223B68FEC/Runner.app/Runner\n  169   0.7 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer\n20227   0.6 /Users/lizhuo/Library/Developer/CoreSimulator/Devices/1298D133-57B2-44FB-9550-8C7586593A40/data/Containers/Bundle/Application/4B0FE83A-D7C8-4442-ABE3-5432B001C5EE/Runner.app/Runner\n96097   0.4 /Library/Frameworks/Python.framework/Versions/3.10/Resources/Python.app/Contents/MacOS/Python\n11557   0.4 /Users/lizhuo/Library/Developer/CoreSimulator/Devices/905A927E-6385-44B3-BFB2-8EEE84C1901F/data/Containers/Bundle/Application/C5AE7DCE-994D-4E5D-A7B9-A7ECA7C1A5D3/Runner.app/Runner\n  384   0.2 /System/Library/DriverExtensions/AppleCentauriAlpha.dext/AppleCentauriAlpha\n27286   0.1 /private/var/run/com.apple.security.cryptexd/mnt/com.apple.iPhoneOS.SimulatorRuntime-v24.1.434.0.9bJtKx/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/CoreServices/SpringBoard.app/SpringBoard\n39091   0.1 /private/var/run/com.apple.security.cryptexd/mnt/com.apple.iPhoneOS.SimulatorRuntime-v24.1.434.0.9bJtKx/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/Frameworks/AudioToolbox.framework/systemsoundserver-simd\n62710   0.1 /Applications/Docker.app/Contents/MacOS/com.docker.backend\n14339   0.1 /private/var/run/com.apple.security.cryptexd/mnt/com.apple.iPhoneOS.SimulatorRuntime-v24.1.434.0.9bJtKx/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/usr/sbin/cfprefsd\n  162   0.1 /usr/sbin/bluetoothd",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7209059)\t100%; charged; 0:00 remaining present: true",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded",
+    "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                   479798.\nPages active:                                 722732.\nPages inactive:                               737847.\nPages speculative:                             29153.\nPages throttled:                                   0.\nPages wired down:                             424298.\nPages purgeable:                               23836.\n\"Translation faults\":                    44336954173.\nPages copy-on-write:                      4615568407.\nPages zero filled:                       22714725244.\nPages reactivated:                         314910178.\nPages purged:                              178050293.\nFile-backed pages:                            667749.\nAnonymous pages:                              821983.\nPages stored in compressor:                  2902249.\nPages occupied by compressor:                 691534.\nDecompressions:                            226299625.\nCompressions:                              296132918.\nPageins:                                   605587749.\nPageouts:                                    1867912.\nSwapins:                                      978023.\nSwapouts:                                    3015664.\nPages tagged:                                 239241.\nPages tagged resident:                        188878.\nPages tagged compressed:                       50363.\nPages tag-storage:                             98304.\nPages tag-storage holding tags:                 7445.\nPages tag-storage free:                          654.\nPages tag-storage non-tag pageable:            90196.\nPages tag-storage non-tag wired:                   9.\nBytes of compressed tags:                    8532416.\nTagged compressions:                         5822673.\nTagged decompressions:                       5167862.",
+    "swap_usage": "vm.swapusage: total = 21504.00M  used = 20545.62M  free = 958.38M  (encrypted)"
+  },
+  "after": {
+    "time": 1794060218.908585,
+    "loadavg": [
+      10.63916015625,
+      10.7841796875,
+      9.53759765625
+    ],
+    "processes": "  PID  %CPU COMM\n  444  99.4 /usr/sbin/BTLEServer\n  180   4.0 /usr/sbin/coreaudiod\n94911   3.1 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (GPU).app/Contents/MacOS/Google Chrome Helper (GPU)\n31144   1.7 /Applications/cmux.app/Contents/MacOS/cmux\n22051   1.5 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/154.0.8037.95/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)\n11557   1.0 /Users/lizhuo/Library/Developer/CoreSimulator/Devices/905A927E-6385-44B3-BFB2-8EEE84C1901F/data/Containers/Bundle/Application/C5AE7DCE-994D-4E5D-A7B9-A7ECA7C1A5D3/Runner.app/Runner\n20227   0.8 /Users/lizhuo/Library/Developer/CoreSimulator/Devices/1298D133-57B2-44FB-9550-8C7586593A40/data/Containers/Bundle/Application/4B0FE83A-D7C8-4442-ABE3-5432B001C5EE/Runner.app/Runner\n30667   0.6 /Users/lizhuo/Library/Developer/CoreSimulator/Devices/A9AD99C2-B40F-4DBE-8AC2-A957A1BC6CE0/data/Containers/Bundle/Application/86092570-2C7A-4CF4-953C-1D9223B68FEC/Runner.app/Runner\n  384   0.5 /System/Library/DriverExtensions/AppleCentauriAlpha.dext/AppleCentauriAlpha\n  169   0.5 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer\n  162   0.2 /usr/sbin/bluetoothd\n62710   0.2 /Applications/Docker.app/Contents/MacOS/com.docker.backend\n  293   0.1 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores\n22221   0.1 /Users/lizhuo/.npm/_npx/a909fc2a75becf48/node_modules/@esbuild/darwin-arm64/bin/esbuild\n40719   0.1 /private/var/run/com.apple.security.cryptexd/mnt/com.apple.iPhoneOS.SimulatorRuntime-v24.1.434.0.9bJtKx/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/Frameworks/AudioToolbox.framework/systemsoundserver-simd",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7209059)\t100%; charged; 0:00 remaining present: true",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded",
+    "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                   473605.\nPages active:                                 730396.\nPages inactive:                               735395.\nPages speculative:                             31034.\nPages throttled:                                   0.\nPages wired down:                             423139.\nPages purgeable:                               21310.\n\"Translation faults\":                    44339943230.\nPages copy-on-write:                      4615689067.\nPages zero filled:                       22716393486.\nPages reactivated:                         314910864.\nPages purged:                              178065956.\nFile-backed pages:                            670186.\nAnonymous pages:                              826639.\nPages stored in compressor:                  2901630.\nPages occupied by compressor:                 691307.\nDecompressions:                            226301131.\nCompressions:                              296132918.\nPageins:                                   605592605.\nPageouts:                                    1867912.\nSwapins:                                      978023.\nSwapouts:                                    3015664.\nPages tagged:                                 239271.\nPages tagged resident:                        188917.\nPages tagged compressed:                       50354.\nPages tag-storage:                             98304.\nPages tag-storage holding tags:                 7445.\nPages tag-storage free:                          483.\nPages tag-storage non-tag pageable:            90367.\nPages tag-storage non-tag wired:                   9.\nBytes of compressed tags:                    8529536.\nTagged compressions:                         5822673.\nTagged decompressions:                       5167871.",
+    "swap_usage": "vm.swapusage: total = 21504.00M  used = 20545.62M  free = 958.38M  (encrypted)"
+  },
+  "returncode": 0,
+  "timed_out": false,
+  "stdout_sha256": "a58829e0feb73989100e273436f362af240460b54fe3b395932f76bc881643df",
+  "resource_usage": {
+    "ru_utime": 1501.644225,
+    "ru_stime": 13.641293000000005,
+    "ru_minflt": 912134,
+    "ru_majflt": 1,
+    "ru_nvcsw": 1,
+    "ru_nivcsw": 1539292
+  },
+  "metrics": {
+    "infer": 184012.0,
+    "peak_rss_bytes": 9534259200,
+    "wall": 184183.01570788026
+  }
+}

@@ -47,7 +47,7 @@ On full LibriSpeech dev-clean, both builds scored **2.7591% offline WER**.
 Of 2,703 utterances, 2,702 transcriptions matched exactly and one differed by
 a comma. All 2,703 matched after WER normalization.
 
-An unreleased source fix completes the final file `--stream` decode, which
+`qwen-asr` 0.11.2 completes the final file `--stream` decode, which
 previously stopped after 32 tokens. November 7 follow-up results (three measured
 runs per side on a loaded M5 Pro, 0.6B model, 12 threads):
 
@@ -63,19 +63,23 @@ memory and decoding work grow with recording length.
 [EOF fix](docs/benchmarks/2026-11-07-stream/README.md) and
 [small-chunk fix, coverage checks and timings](docs/benchmarks/2026-11-07-stream-reset/README.md).
 
-The small-chunk follow-up uses **0.5 s chunks**, with three measured runs per
-side on the same loaded desktop. All 22 / 102 source utterances retain matching
-text; the longest unmatched reference spans are only 2 / 3 words.
-Here, “before” includes the EOF-budget fix but retains intermediate resets.
+The latest allocation follow-up uses **0.5 s chunks**, comparing the complete
+0.11.2 baseline with the current source in three alternating measured pairs on
+a loaded M5 Pro. All transcripts are byte-identical; all 22 / 102 source
+utterances retain matching text, with no beginning/end gap.
 
-| File `--stream`, 0.5 s chunk | WER before → after | Fixed median inference | Fixed median process wall |
-|---|---:|---:|---:|
-| 120.705 s | 58.2143% → **2.8571%** | 7.55 s | 7.68 s |
-| 602.465 s | 91.7489% → **2.6093%** | 220.90 s | 221.13 s |
+| File `--stream`, 0.5 s chunk | Unchanged WER | Inference baseline → current | Process wall baseline → current | Peak RSS baseline → current |
+|---|---:|---:|---:|---:|
+| 120.705 s | **2.8571%** | 7.463 → 7.406 s | 7.569 → 7.514 s | 3.440 → 3.430 GiB |
+| 602.465 s | **2.6093%** | 186.650 → 182.250 s | 186.827 → 182.432 s | **8.943 → 7.265 GiB** |
 
-The longer complete context makes 0.5-second file decoding more expensive
-than the default configuration; these timings should be compared within their
-respective chunk settings and output coverage.
+The 10-minute peak-memory median drops **18.8%**. Its inference median improves
+2.4%, but paired changes range from −3.7% to +3.0%; this is not evidence of a
+stable speedup. All context is retained: the change reduces excess KV allocation
+and repeated input preparation. Bounded-context variants failed the WER gate
+and were not enabled. Small-chunk decoding remains more expensive than the
+default deferred-output configuration.
+[Allocation measurements and rejected context experiments](docs/benchmarks/2026-11-07-stream-context/README.md).
 [All measurements and per-utterance comparison](docs/benchmarks/results.md).
 
 ## Quick Start

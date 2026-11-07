@@ -448,32 +448,34 @@ impl KvCache {
             return;
         }
 
-        let mut new_max = self.max_seq;
+        let mut new_max = self.max_seq.max(1);
         while new_max < required {
-            new_max *= 2;
+            // Keep amortized growth without doubling long-context allocations.
+            new_max += if new_max <= 1024 {
+                new_max
+            } else {
+                new_max / 2
+            };
         }
 
         let old_head_stride = self.max_seq * self.head_dim;
         let new_head_stride = new_max * self.head_dim;
         let total = self.n_layers * self.n_kv_heads * new_head_stride;
 
-        let mut new_k = superpage_vec::<f32>(total);
-        let mut new_v = superpage_vec::<f32>(total);
-
         let copy_len = self.len * self.head_dim;
-        for l in 0..self.n_layers {
-            for h in 0..self.n_kv_heads {
-                let old_off = (l * self.n_kv_heads + h) * old_head_stride;
-                let new_off = (l * self.n_kv_heads + h) * new_head_stride;
-                new_k[new_off..new_off + copy_len]
-                    .copy_from_slice(&self.k[old_off..old_off + copy_len]);
-                new_v[new_off..new_off + copy_len]
-                    .copy_from_slice(&self.v[old_off..old_off + copy_len]);
+        // Release old K before allocating new V to bound transient memory.
+        for cache in [&mut self.k, &mut self.v] {
+            let mut grown = superpage_vec::<f32>(total);
+            for l in 0..self.n_layers {
+                for h in 0..self.n_kv_heads {
+                    let old_off = (l * self.n_kv_heads + h) * old_head_stride;
+                    let new_off = (l * self.n_kv_heads + h) * new_head_stride;
+                    grown[new_off..new_off + copy_len]
+                        .copy_from_slice(&cache[old_off..old_off + copy_len]);
+                }
             }
+            *cache = grown;
         }
-
-        self.k = new_k;
-        self.v = new_v;
         self.max_seq = new_max;
     }
 
@@ -795,7 +797,7 @@ fn decoder_prefill_impl(
     // Ensure KV cache
     let needed = kv_cache.len + seq_len;
     if needed > kv_cache.max_seq {
-        kv_cache.grow(needed + 1024);
+        kv_cache.grow(needed);
     }
 
     bufs.ensure_prefill(seq_len, cfg);
@@ -1187,7 +1189,7 @@ pub fn decoder_forward(
     let pos = kv_cache.len;
 
     if pos >= kv_cache.max_seq {
-        kv_cache.grow(pos + 1024);
+        kv_cache.grow(pos + 1);
     }
 
     rope.ensure(pos + 1, head_dim, theta);
@@ -1815,7 +1817,7 @@ pub fn decoder_forward_batched(
         s.bufs.x[..dim].copy_from_slice(&s.input_embed[..dim]);
         let p = s.kv_cache.len;
         if p >= s.kv_cache.max_seq {
-            s.kv_cache.grow(p + 1024);
+            s.kv_cache.grow(p + 1);
         }
         s.rope.ensure(p + 1, head_dim, theta);
         pos[bi] = p;

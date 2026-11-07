@@ -3,6 +3,7 @@ import io
 import json
 import os
 from pathlib import Path
+import platform
 import sys
 import tempfile
 import unittest
@@ -24,6 +25,28 @@ class BenchmarkTests(unittest.TestCase):
                      'Decode: 2 tokens (20 ms, 10 ms/token)\n'
                      'Decode: 3 tokens (45 ms, 15 ms/token)\n')
         self.assertEqual(d, {'infer': 120, 'prefill': 12, 'dec_ms': 65, 'dec_tok': 5, 'ms_tok': 13})
+
+    def test_peak_rss_units_and_summary(self):
+        self.assertEqual(ab.parse('  123456 maximum resident set size\n')['peak_rss_bytes'], 123456)
+        self.assertEqual(ab.parse('\tMaximum resident set size (kbytes): 123\n')['peak_rss_bytes'], 123 * 1024)
+        rows = [dict(case='memory', who=who, warmup=False, stdout_sha256='same',
+                     metrics={'peak_rss_bytes': value}) for who, value in [('A', 4096), ('B', 2048)]]
+        with contextlib.redirect_stdout(io.StringIO()):
+            summary, failed = ab.summarize(rows)
+        self.assertFalse(failed)
+        self.assertEqual(summary['memory']['metrics']['peak_rss_bytes']['delta_pct'], -50)
+
+    @unittest.skipUnless(platform.system() in ('Darwin', 'Linux') and Path('/usr/bin/time').is_file(),
+                         'requires BSD or GNU time')
+    def test_peak_rss_is_per_process_and_preserves_stdout(self):
+        with tempfile.TemporaryDirectory() as d:
+            large = ab.run(Path(sys.executable), ['-c', 'x = bytearray(64 * 1024 * 1024); print("same")'],
+                           None, dict(os.environ), Path(d) / 'large', 5)
+            small = ab.run(Path(sys.executable), ['-c', 'print("same")'],
+                           None, dict(os.environ), Path(d) / 'small', 5)
+            self.assertEqual(large['stdout_sha256'], small['stdout_sha256'])
+            self.assertGreater(large['metrics']['peak_rss_bytes'] - small['metrics']['peak_rss_bytes'],
+                               32 * 1024 * 1024)
 
     def test_batch_profile_metrics_stay_separate_from_serial_decode(self):
         d = ab.parse('[profile] batch_decode: 100.0ms (4 calls, 25.00ms avg)\n'

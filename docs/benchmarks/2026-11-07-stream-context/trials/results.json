@@ -1,0 +1,265 @@
+{
+  "purpose": "Rejected exploratory trials, not an alternating timing acceptance pass. Do not compare these timings as controlled performance results. Full build/log scratch remains under tmp/stream-bound locally; only transcripts and diagnostic metrics retained here.",
+  "baseline_word_edits": {
+    "2min": 8,
+    "10min": 37
+  },
+  "trials": [
+    {
+      "variant": "independent60",
+      "binary_sha256": "573a6015be07e4004ca7a2018840801b5361e4c9c8b708b8b1caaff4d4820166",
+      "cases": {
+        "2min": {
+          "accuracy": {
+            "ref_words": 280,
+            "word_edits": 8,
+            "wer": 0.02857142857142857,
+            "ref_chars": 1178,
+            "char_edits": 11,
+            "cer": 0.00933786078098472
+          },
+          "stdout_sha256": "6f342426059c3a54d0f7d0587cce27dd72d2a47a9bc408d484b1520a4e0fbdd2",
+          "diagnostic_inference_ms": 6120.0,
+          "peak_rss_bytes": 3587833856
+        },
+        "10min": {
+          "accuracy": {
+            "ref_words": 1418,
+            "word_edits": 39,
+            "wer": 0.027503526093088856,
+            "ref_chars": 6134,
+            "char_edits": 58,
+            "cer": 0.009455493968046952
+          },
+          "stdout_sha256": "e02b152539355f7ff3ceb0c8689bb586ddc991d50efeb143dcafefee7da3142f",
+          "diagnostic_inference_ms": 31587.0,
+          "peak_rss_bytes": 3666296832
+        }
+      }
+    },
+    {
+      "variant": "independent30",
+      "binary_sha256": "23273f877b140e4ac722cacc41978805b8fecbd0c39f84602d8f87b73327e540",
+      "cases": {
+        "2min": {
+          "accuracy": {
+            "ref_words": 280,
+            "word_edits": 10,
+            "wer": 0.03571428571428571,
+            "ref_chars": 1178,
+            "char_edits": 19,
+            "cer": 0.016129032258064516
+          },
+          "stdout_sha256": "a69814dd99619f9e5d00ea4b7b134489326d3c716e2a6c95f29d7ea459700a91",
+          "diagnostic_inference_ms": 4449.0,
+          "peak_rss_bytes": 3519299584
+        },
+        "10min": {
+          "accuracy": {
+            "ref_words": 1418,
+            "word_edits": 50,
+            "wer": 0.03526093088857546,
+            "ref_chars": 6134,
+            "char_edits": 79,
+            "cer": 0.012879034887512226
+          },
+          "stdout_sha256": "9875ce1ae1588f70a852e9448f7d0f2ca81f229fb93ed2fe0a00523b810ce63b",
+          "diagnostic_inference_ms": 25878.0,
+          "peak_rss_bytes": 3601235968
+        }
+      }
+    },
+    {
+      "variant": "independent90",
+      "binary_sha256": "52bcf5b35ab122299c973d66ec9dfcc9541128b8481065d5040d5b62cf1bc59e",
+      "cases": {
+        "2min": {
+          "accuracy": {
+            "ref_words": 280,
+            "word_edits": 9,
+            "wer": 0.03214285714285714,
+            "ref_chars": 1178,
+            "char_edits": 15,
+            "cer": 0.012733446519524618
+          },
+          "stdout_sha256": "55b2af8fe1a147436b02904b8e136a5e1e42a991dc9ba89ca0c6ac4ecbbee164",
+          "diagnostic_inference_ms": 6137.0,
+          "peak_rss_bytes": 3635036160
+        },
+        "10min": {
+          "accuracy": {
+            "ref_words": 1418,
+            "word_edits": 44,
+            "wer": 0.031029619181946404,
+            "ref_chars": 6134,
+            "char_edits": 75,
+            "cer": 0.012226931855233127
+          },
+          "stdout_sha256": "813f3098d227aaed7c95e5458db7bf584c8c7ce4b79f94b4c31f081b0c987b19",
+          "diagnostic_inference_ms": 32878.0,
+          "peak_rss_bytes": 3704406016
+        }
+      }
+    },
+    {
+      "variant": "independent120",
+      "binary_sha256": "63ce39fd8f6f54418b646125ab1df58e6f5c55066ade319c5c5cfe3a3d03e146",
+      "cases": {
+        "2min": {
+          "accuracy": {
+            "ref_words": 280,
+            "word_edits": 8,
+            "wer": 0.02857142857142857,
+            "ref_chars": 1178,
+            "char_edits": 11,
+            "cer": 0.00933786078098472
+          },
+          "stdout_sha256": "f713f0017a4c7f1b1e8544f672ff8d2642518361c6d24096aafd05b7d1633284",
+          "diagnostic_inference_ms": 9222.0,
+          "peak_rss_bytes": 3694624768
+        },
+        "10min": {
+          "accuracy": {
+            "ref_words": 1418,
+            "word_edits": 49,
+            "wer": 0.03455571227080395,
+            "ref_chars": 6134,
+            "char_edits": 75,
+            "cer": 0.012226931855233127
+          },
+          "stdout_sha256": "f279414e99dcecbda9694162f561b97e198a363bf4919161362f53d62eaad8a1",
+          "diagnostic_inference_ms": 42734.0,
+          "peak_rss_bytes": 3775692800
+        }
+      }
+    },
+    {
+      "variant": "audio-carry60",
+      "binary_sha256": "dd8b6b620dc01045c7e8a59351afe13fefc34b616f57445de1a014f42d740906",
+      "cases": {
+        "2min": {
+          "accuracy": {
+            "ref_words": 280,
+            "word_edits": 8,
+            "wer": 0.02857142857142857,
+            "ref_chars": 1178,
+            "char_edits": 11,
+            "cer": 0.00933786078098472
+          },
+          "stdout_sha256": "f713f0017a4c7f1b1e8544f672ff8d2642518361c6d24096aafd05b7d1633284",
+          "diagnostic_inference_ms": 7854.0,
+          "peak_rss_bytes": 3689447424
+        },
+        "10min": {
+          "accuracy": {
+            "ref_words": 1418,
+            "word_edits": 41,
+            "wer": 0.028913963328631876,
+            "ref_chars": 6134,
+            "char_edits": 56,
+            "cer": 0.009129442451907402
+          },
+          "stdout_sha256": "5ba598e1204cf08c6b758b3927128136c3cee297ece7482f02559cdb0c580437",
+          "diagnostic_inference_ms": 53693.0,
+          "peak_rss_bytes": 4823777280
+        }
+      }
+    },
+    {
+      "variant": "audio-carry30",
+      "binary_sha256": "591e9f2efad77ce62668a89cd19f688f5a96178f3d96396e0bb695d36305ddde",
+      "cases": {
+        "2min": {
+          "accuracy": {
+            "ref_words": 280,
+            "word_edits": 10,
+            "wer": 0.03571428571428571,
+            "ref_chars": 1178,
+            "char_edits": 19,
+            "cer": 0.016129032258064516
+          },
+          "stdout_sha256": "78f7549fc4dc0b9ef1e2c35e38c1f798758970dce49dcd9b7319e128d2897597",
+          "diagnostic_inference_ms": 6683.0,
+          "peak_rss_bytes": 3587440640
+        },
+        "10min": {
+          "accuracy": {
+            "ref_words": 1418,
+            "word_edits": 38,
+            "wer": 0.02679830747531735,
+            "ref_chars": 6134,
+            "char_edits": 59,
+            "cer": 0.009618519726116726
+          },
+          "stdout_sha256": "34e046d3b855b3a3588ba41229fe9f93370a85a7c4f7446eb9445531dfe7d9a4",
+          "diagnostic_inference_ms": 40006.0,
+          "peak_rss_bytes": 3659251712
+        }
+      }
+    },
+    {
+      "variant": "audio-carry30-lookahead",
+      "binary_sha256": "58d0e6cff594fc7cc03978ec35aae52824a674401cc4ef4a6ab5ea128e07f1b3",
+      "cases": {
+        "2min": {
+          "accuracy": {
+            "ref_words": 280,
+            "word_edits": 10,
+            "wer": 0.03571428571428571,
+            "ref_chars": 1178,
+            "char_edits": 19,
+            "cer": 0.016129032258064516
+          },
+          "stdout_sha256": "62a1fb8f1518859c1e6664d9ea1f84bc1e6e3f0c563b91f55929c8f4064457d5",
+          "diagnostic_inference_ms": 6425.0,
+          "peak_rss_bytes": 3598336000
+        },
+        "10min": {
+          "accuracy": {
+            "ref_words": 1418,
+            "word_edits": 43,
+            "wer": 0.030324400564174896,
+            "ref_chars": 6134,
+            "char_edits": 80,
+            "cer": 0.013042060645582002
+          },
+          "stdout_sha256": "df4e4bb2ddf480daefac7d618d43872af9eca739d2a068222df6251940df11e4",
+          "diagnostic_inference_ms": 38609.0,
+          "peak_rss_bytes": 3672473600
+        }
+      }
+    },
+    {
+      "variant": "text-carry60",
+      "binary_sha256": "ebb7dd994535c32a43f03c233d03a01025cd6b11f924c8d1cfd5c4a462d03142",
+      "cases": {
+        "2min": {
+          "accuracy": {
+            "ref_words": 280,
+            "word_edits": 9,
+            "wer": 0.03214285714285714,
+            "ref_chars": 1178,
+            "char_edits": 12,
+            "cer": 0.010186757215619695
+          },
+          "stdout_sha256": "de6d8b0e96e3e3d18e57794c5b90b5dc0aae2b41e10214a58a2cb4329fc0fc67",
+          "diagnostic_inference_ms": 6350.0,
+          "peak_rss_bytes": 3597139968
+        },
+        "10min": {
+          "accuracy": {
+            "ref_words": 1418,
+            "word_edits": 322,
+            "wer": 0.22708039492242596,
+            "ref_chars": 6134,
+            "char_edits": 1081,
+            "cer": 0.1762308444734268
+          },
+          "stdout_sha256": "b3755ac28b1cbf3648c40de34c8a7d5e88bb7a280908de72e3c0378058d461ed",
+          "diagnostic_inference_ms": 37433.0,
+          "peak_rss_bytes": 3677814784
+        }
+      }
+    }
+  ]
+}

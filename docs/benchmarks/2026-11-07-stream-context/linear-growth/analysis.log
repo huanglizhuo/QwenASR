@@ -1,0 +1,5 @@
+2min_stream before WER 0.02857142857142857 longest unmatched 2 utterances without matches 0 inference ms 7519.0 peak RSS bytes 3693658112
+2min_stream after WER 0.02857142857142857 longest unmatched 2 utterances without matches 0 inference ms 7688.0 peak RSS bytes 3685908480
+10min_stream before WER 0.02609308885754584 longest unmatched 3 utterances without matches 0 inference ms 184505.0 peak RSS bytes 9534259200
+10min_stream after WER 0.02609308885754584 longest unmatched 3 utterances without matches 0 inference ms 186944.0 peak RSS bytes 8376598528
+All runs, exact-output, unchanged WER and supplemental completeness checks passed.

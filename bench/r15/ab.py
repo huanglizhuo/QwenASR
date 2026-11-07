@@ -8,6 +8,7 @@ from pathlib import Path
 import platform
 import re
 import resource
+import signal
 import statistics
 import subprocess
 import time
@@ -37,6 +38,14 @@ def parse(err):
         if values:
             d[f'{name}_ms'] = sum(float(ms) for ms, _ in values)
             d[f'{name}_calls'] = sum(int(calls) for _, calls in values)
+    # BSD time reports bytes; GNU time reports KiB. Neither is a cumulative
+    # RUSAGE_CHILDREN high-water mark from earlier benchmark invocations.
+    bsd_rss = re.search(r'^\s*(\d+)\s+maximum resident set size\s*$', err, re.M)
+    gnu_rss = re.search(r'^\s*Maximum resident set size \(kbytes\):\s*(\d+)\s*$', err, re.M)
+    if bsd_rss:
+        d['peak_rss_bytes'] = int(bsd_rss[1])
+    elif gnu_rss:
+        d['peak_rss_bytes'] = int(gnu_rss[1]) * 1024
     return d
 
 
@@ -83,21 +92,29 @@ def snapshot():
 
 def run(binary, args, stdin_path, env, prefix, timeout):
     cmd = [str(binary), *args]
+    timer_flag = {'Darwin': '-l', 'Linux': '-v'}.get(platform.system())
+    measured_cmd = ['/usr/bin/time', timer_flag, *cmd] if timer_flag and Path('/usr/bin/time').is_file() else cmd
     before = snapshot()
     start = time.monotonic()
     timed_out = False
     with (open(stdin_path, 'rb') if stdin_path else open(os.devnull, 'rb')) as fin:
         usage_before = resource.getrusage(resource.RUSAGE_CHILDREN)
-        try:
-            p = subprocess.run(cmd, stdin=fin, capture_output=True, env=env, timeout=timeout)
-        except subprocess.TimeoutExpired as exc:
-            timed_out = True
-            p = subprocess.CompletedProcess(cmd, 124, exc.stdout or b'', exc.stderr or b'')
+        with subprocess.Popen(measured_cmd, stdin=fin, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              env=env, start_new_session=True) as child:
+            try:
+                stdout, stderr = child.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                # Killing only time would leave the benchmark running and holding its pipes.
+                os.killpg(child.pid, signal.SIGKILL)
+                stdout, stderr = child.communicate()
+            p = subprocess.CompletedProcess(cmd, 124 if timed_out else child.returncode, stdout, stderr)
         usage_after = resource.getrusage(resource.RUSAGE_CHILDREN)
     wall = (time.monotonic() - start) * 1000
     prefix.with_suffix('.stdout').write_bytes(p.stdout)
     prefix.with_suffix('.stderr').write_bytes(p.stderr)
-    row = {'cmd': cmd, 'before': before, 'after': snapshot(), 'returncode': p.returncode, 'timed_out': timed_out,
+    row = {'cmd': cmd, 'measurement_cmd': measured_cmd,
+           'before': before, 'after': snapshot(), 'returncode': p.returncode, 'timed_out': timed_out,
            'stdout_sha256': hashlib.sha256(p.stdout).hexdigest(),
            'resource_usage': {key: getattr(usage_after, key) - getattr(usage_before, key)
                               for key in ('ru_utime', 'ru_stime', 'ru_minflt', 'ru_majflt', 'ru_nvcsw', 'ru_nivcsw')},
@@ -123,7 +140,7 @@ def summarize(rows, max_decode_regression=None):
         measured = [r for r in all_rows if not r['warmup']]
         result = {'identical': identical, 'metrics': {}}
         print(f'== {case}: exact outputs={identical}', flush=True)
-        keys = ('wall', 'infer', 'encoder', 'prefill', 'dec_ms', 'dec_tok', 'ms_tok')
+        keys = ('wall', 'infer', 'encoder', 'prefill', 'dec_ms', 'dec_tok', 'ms_tok', 'peak_rss_bytes')
         keys += tuple(f'{name}_{unit}' for name in BATCH_PROFILE_COUNTERS for unit in ('ms', 'calls'))
         for key in keys:
             if not all(key in r['metrics'] for r in measured):

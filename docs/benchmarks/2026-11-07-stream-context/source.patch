@@ -1,0 +1,182 @@
+diff --git a/crates/qwen-asr/src/decoder.rs b/crates/qwen-asr/src/decoder.rs
+index 807025ca..b2e841c0 100644
+--- a/crates/qwen-asr/src/decoder.rs
++++ b/crates/qwen-asr/src/decoder.rs
+@@ -448,32 +448,34 @@ impl KvCache {
+             return;
+         }
+ 
+-        let mut new_max = self.max_seq;
++        let mut new_max = self.max_seq.max(1);
+         while new_max < required {
+-            new_max *= 2;
++            // Keep amortized growth without doubling long-context allocations.
++            new_max += if new_max <= 1024 {
++                new_max
++            } else {
++                new_max / 2
++            };
+         }
+ 
+         let old_head_stride = self.max_seq * self.head_dim;
+         let new_head_stride = new_max * self.head_dim;
+         let total = self.n_layers * self.n_kv_heads * new_head_stride;
+ 
+-        let mut new_k = superpage_vec::<f32>(total);
+-        let mut new_v = superpage_vec::<f32>(total);
+-
+         let copy_len = self.len * self.head_dim;
+-        for l in 0..self.n_layers {
+-            for h in 0..self.n_kv_heads {
+-                let old_off = (l * self.n_kv_heads + h) * old_head_stride;
+-                let new_off = (l * self.n_kv_heads + h) * new_head_stride;
+-                new_k[new_off..new_off + copy_len]
+-                    .copy_from_slice(&self.k[old_off..old_off + copy_len]);
+-                new_v[new_off..new_off + copy_len]
+-                    .copy_from_slice(&self.v[old_off..old_off + copy_len]);
++        // Release old K before allocating new V to bound transient memory.
++        for cache in [&mut self.k, &mut self.v] {
++            let mut grown = superpage_vec::<f32>(total);
++            for l in 0..self.n_layers {
++                for h in 0..self.n_kv_heads {
++                    let old_off = (l * self.n_kv_heads + h) * old_head_stride;
++                    let new_off = (l * self.n_kv_heads + h) * new_head_stride;
++                    grown[new_off..new_off + copy_len]
++                        .copy_from_slice(&cache[old_off..old_off + copy_len]);
++                }
+             }
++            *cache = grown;
+         }
+-
+-        self.k = new_k;
+-        self.v = new_v;
+         self.max_seq = new_max;
+     }
+ 
+@@ -795,7 +797,7 @@ fn decoder_prefill_impl(
+     // Ensure KV cache
+     let needed = kv_cache.len + seq_len;
+     if needed > kv_cache.max_seq {
+-        kv_cache.grow(needed + 1024);
++        kv_cache.grow(needed);
+     }
+ 
+     bufs.ensure_prefill(seq_len, cfg);
+@@ -1187,7 +1189,7 @@ pub fn decoder_forward(
+     let pos = kv_cache.len;
+ 
+     if pos >= kv_cache.max_seq {
+-        kv_cache.grow(pos + 1024);
++        kv_cache.grow(pos + 1);
+     }
+ 
+     rope.ensure(pos + 1, head_dim, theta);
+@@ -1815,7 +1817,7 @@ pub fn decoder_forward_batched(
+         s.bufs.x[..dim].copy_from_slice(&s.input_embed[..dim]);
+         let p = s.kv_cache.len;
+         if p >= s.kv_cache.max_seq {
+-            s.kv_cache.grow(p + 1024);
++            s.kv_cache.grow(p + 1);
+         }
+         s.rope.ensure(p + 1, head_dim, theta);
+         pos[bi] = p;
+diff --git a/crates/qwen-asr/src/transcribe.rs b/crates/qwen-asr/src/transcribe.rs
+index a2dbc331..7364c237 100644
+--- a/crates/qwen-asr/src/transcribe.rs
++++ b/crates/qwen-asr/src/transcribe.rs
+@@ -2300,9 +2300,9 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
+     }
+ 
+     let audio_samples = if ctx.skip_silence {
+-        audio::compact_silence_fast(samples)
++        std::borrow::Cow::Owned(audio::compact_silence_fast(samples))
+     } else {
+-        samples.to_vec()
++        std::borrow::Cow::Borrowed(samples)
+     };
+ 
+     let tokenizer = load_tokenizer(ctx)?;
+@@ -2332,9 +2332,10 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
+     let mut enc_cache: Vec<EncWindow> = Vec::new();
+     let mut enc_cached_seq_total = 0usize;
+ 
+-    // Previous decode input keys for LCP reuse and identical-input detection.
++    // LCP keys plus the exact mutable part of the previous decode input.
+     let mut prev_prefill_keys: Vec<PrefillRowKey> = Vec::new();
+-    let mut prev_last_key = None;
++    let mut prev_enc_seq_len = 0;
++    let mut prev_prefix_tokens = Vec::new();
+ 
+     while audio_cursor < audio_samples.len() {
+         let chunk_t0 = get_time_ms();
+@@ -2410,6 +2411,25 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
+             0
+         };
+ 
++        // Completed encoder windows are immutable. Compare the exact text
++        // prefix before allocating/copying the growing embedding matrix.
++        if !is_final
++            && enc_seq_len == prev_enc_seq_len
++            && raw_tokens[..n_prefix_tokens] == prev_prefix_tokens
++        {
++            if kernels::verbose() >= 2 {
++                eprintln!(
++                    "  [stream chunk {chunk_idx}] unchanged decode input, reusing hypothesis"
++                );
++            }
++            ctx.perf_total_ms += elapsed_ms(chunk_t0);
++            chunk_idx += 1;
++            continue;
++        }
++        prev_enc_seq_len = enc_seq_len;
++        prev_prefix_tokens.clear();
++        prev_prefix_tokens.extend_from_slice(&raw_tokens[..n_prefix_tokens]);
++
+         // Build input embeddings
+         let n_prompt_tokens = ctx.prompt_tokens.as_ref().map_or(0, |t| t.len());
+         let n_force_prompt_tokens = ctx.force_prompt_tokens.as_ref().map_or(0, |t| t.len());
+@@ -2532,23 +2552,6 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
+ 
+         let reused_prefill = prefill_lcp_len(&prev_prefill_keys, &prefill_keys, prefill_len);
+ 
+-        // Identical input regenerates the same rollback tail and commits no new
+-        // text. EOF must still decode/flush with its larger token budget.
+-        if !is_final
+-            && prev_prefill_keys.len() == prefill_len
+-            && reused_prefill == prefill_len
+-            && prev_last_key == Some(prefill_keys[prefill_len])
+-        {
+-            if kernels::verbose() >= 2 {
+-                eprintln!(
+-                    "  [stream chunk {chunk_idx}] unchanged decode input, reusing hypothesis"
+-                );
+-            }
+-            ctx.perf_total_ms += elapsed_ms(chunk_t0);
+-            chunk_idx += 1;
+-            continue;
+-        }
+-
+         ctx.kv_cache.len = reused_prefill;
+         let delta_prefill = prefill_len - reused_prefill;
+         if delta_prefill > 0 {
+@@ -2566,7 +2569,6 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
+         // Save for next chunk
+         prev_prefill_keys.clear();
+         prev_prefill_keys.extend_from_slice(&prefill_keys[..prefill_len]);
+-        prev_last_key = Some(prefill_keys[prefill_len]);
+ 
+         let prefill_ms = elapsed_ms(t0);
+         ctx.perf_decode_ms += prefill_ms;
+@@ -2679,6 +2681,12 @@ pub fn transcribe_stream(ctx: &mut QwenCtx, samples: &[f32]) -> Option<String> {
+         chunk_idx += 1;
+     }
+ 
++    if kernels::verbose() >= 2 {
++        eprintln!(
++            "  [stream context] kv_len={} kv_capacity={}",
++            ctx.kv_cache.len, ctx.kv_cache.max_seq
++        );
++    }
+     Some(String::from_utf8_lossy(&result_bytes).trim().to_string())
+ } // ========================================================================
+   // Incremental Streaming API
