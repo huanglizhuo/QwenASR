@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.4](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.11.3...qwen-asr-v0.11.4) (2026-11-12)
+
+
+### Bug Fixes
+
+* **kernels:** stop new pool workers from skipping the first dispatch ([8892f88](https://github.com/huanglizhuo/QwenASR/commit/8892f88fbff8de1a0d035874d7ebecf7de93cbb1))
+* pool startup race behind the macOS CI hang, and release-please retries ([5117323](https://github.com/huanglizhuo/QwenASR/commit/51173237ab110f6f61d87e1e94a1cbdb2cb0018a))
+
 ## [0.11.3](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.11.2...qwen-asr-v0.11.3) (2026-11-12)
 
 
