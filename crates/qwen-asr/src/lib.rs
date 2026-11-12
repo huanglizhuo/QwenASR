@@ -72,7 +72,8 @@ pub mod subtitle;
 pub mod tokenizer;
 pub mod transcribe;
 
-/// Returns a list of compile-time optimization flags enabled for this build.
+/// Returns the optimization flags enabled for this build, plus `SME` when the
+/// SME + NEON hybrid GEMM is active on this CPU (detected at runtime).
 pub fn optimization_flags() -> Vec<&'static str> {
     let mut flags = Vec::new();
 
@@ -92,6 +93,9 @@ pub fn optimization_flags() -> Vec<&'static str> {
         flags.push("NEON");
         if cfg!(target_feature = "dotprod") {
             flags.push("DotProd");
+        }
+        if kernels::sme_gemm_enabled() {
+            flags.push("SME");
         }
     } else if cfg!(target_arch = "x86_64") {
         if cfg!(target_feature = "avx2") {

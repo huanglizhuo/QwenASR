@@ -249,6 +249,16 @@ pub fn verbose() -> i32 {
 // ========================================================================
 
 mod pool;
+#[cfg(all(feature = "blas", target_os = "macos", target_arch = "aarch64"))]
+mod sme;
+
+/// Whether the SME + NEON hybrid GEMM (R16-1) is active in this process.
+pub fn sme_gemm_enabled() -> bool {
+    #[cfg(all(feature = "blas", target_os = "macos", target_arch = "aarch64"))]
+    return sme::enabled();
+    #[allow(unreachable_code)]
+    false
+}
 
 pub(crate) use pool::parallel_for;
 pub(crate) use pool::parallel_for_dynamic;
@@ -1371,6 +1381,21 @@ pub(crate) fn seg_parallel_blas() -> bool {
     true
 }
 
+/// Whether `linear` / `linear_accumulate` of this shape take the pooled
+/// multi-threaded GEMM path: each slice needs enough columns for an efficient
+/// BLAS kernel, and the whole product enough MACs to amortize the pool
+/// dispatch. Every pooled sgemm has `seq_len >= 2` rows.
+#[cfg(feature = "blas")]
+fn pooled_linear_shape(seq_len: usize, in_dim: usize, out_dim: usize) -> bool {
+    const MIN_COLS: usize = 128;
+    const MIN_MACS: usize = 1 << 22;
+    linear_pooled_gemm()
+        && get_num_threads() > 1
+        && seq_len >= 2
+        && out_dim >= 2 * MIN_COLS
+        && seq_len * in_dim * out_dim >= MIN_MACS
+}
+
 /// Pool-parallel `y[seq,out] = x @ W^T + beta*y (+ b)`: splits the output
 /// columns across the persistent thread pool, one BLAS call per slice. Each
 /// output element is still a single full-K dot product inside one sgemm call.
@@ -1390,19 +1415,10 @@ fn sgemm_nt_pooled(
     out_dim: usize,
     beta: f32,
 ) -> bool {
-    let nt = get_num_threads();
-    // Each slice needs enough columns for an efficient BLAS kernel, and the
-    // whole product enough MACs to amortize the pool dispatch.
-    const MIN_COLS: usize = 128;
-    const MIN_MACS: usize = 1 << 22;
-    if !linear_pooled_gemm()
-        || nt <= 1
-        || seq_len < 2
-        || out_dim < 2 * MIN_COLS
-        || seq_len * in_dim * out_dim < MIN_MACS
-    {
+    if !pooled_linear_shape(seq_len, in_dim, out_dim) {
         return false;
     }
+    const MIN_COLS: usize = 128;
     let y_send = y.as_mut_ptr() as usize;
     let x_send = x.as_ptr() as usize;
     let w_send = w.as_ptr() as usize;
@@ -1693,6 +1709,18 @@ pub unsafe fn linear_nobias_bf16_scratch(
     let _pg = ProfileGuard::new(&PROF.bf16_matvec);
     if seq_len == 1 {
         bf16_matvec_threaded(y, x, w_bf16, None, in_dim, out_dim);
+        return;
+    }
+    // R16-1: SME + NEON hybrid on SME hardware, bit-identical to the pooled
+    // path below. It widens the weights exactly while packing them, so it
+    // replaces the scratch widening as well as the GEMM.
+    #[cfg(all(feature = "blas", target_os = "macos", target_arch = "aarch64"))]
+    if sme::enabled()
+        && out_dim.is_multiple_of(16)
+        && seq_len * in_dim <= sme::MAX_A_ELEMS
+        && pooled_linear_shape(seq_len, in_dim, out_dim)
+    {
+        sme::gemm_bf16(y, x, w_bf16, seq_len, in_dim, out_dim);
         return;
     }
     let n = out_dim * in_dim;
