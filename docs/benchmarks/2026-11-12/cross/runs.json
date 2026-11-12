@@ -1,0 +1,262 @@
+{
+  "rust-current": [
+    {
+      "run": 1,
+      "inference_ms": 529.0,
+      "wall_ms": 1111.2
+    },
+    {
+      "run": 2,
+      "inference_ms": 541.0,
+      "wall_ms": 646.1
+    },
+    {
+      "run": 3,
+      "inference_ms": 531.0,
+      "wall_ms": 633.9
+    },
+    {
+      "run": 4,
+      "inference_ms": 533.0,
+      "wall_ms": 639.5
+    },
+    {
+      "run": 5,
+      "inference_ms": 529.0,
+      "wall_ms": 633.8
+    },
+    {
+      "run": 6,
+      "inference_ms": 534.0,
+      "wall_ms": 636.7
+    },
+    {
+      "run": 7,
+      "inference_ms": 515.0,
+      "wall_ms": 620.7
+    },
+    {
+      "run": 8,
+      "inference_ms": 526.0,
+      "wall_ms": 633.1
+    },
+    {
+      "run": 9,
+      "inference_ms": 528.0,
+      "wall_ms": 630.0
+    },
+    {
+      "run": 10,
+      "inference_ms": 524.0,
+      "wall_ms": 627.1
+    }
+  ],
+  "rust-original": [
+    {
+      "run": 1,
+      "inference_ms": 1604.0,
+      "wall_ms": 2358.4
+    },
+    {
+      "run": 2,
+      "inference_ms": 1571.0,
+      "wall_ms": 1888.0
+    },
+    {
+      "run": 3,
+      "inference_ms": 1590.0,
+      "wall_ms": 1907.5
+    },
+    {
+      "run": 4,
+      "inference_ms": 1591.0,
+      "wall_ms": 1907.2
+    },
+    {
+      "run": 5,
+      "inference_ms": 1586.0,
+      "wall_ms": 1903.5
+    },
+    {
+      "run": 6,
+      "inference_ms": 1584.0,
+      "wall_ms": 1901.8
+    },
+    {
+      "run": 7,
+      "inference_ms": 1593.0,
+      "wall_ms": 1910.8
+    },
+    {
+      "run": 8,
+      "inference_ms": 1602.0,
+      "wall_ms": 1920.7
+    },
+    {
+      "run": 9,
+      "inference_ms": 1604.0,
+      "wall_ms": 1921.0
+    },
+    {
+      "run": 10,
+      "inference_ms": 1592.0,
+      "wall_ms": 1910.1
+    }
+  ],
+  "c-antirez": [
+    {
+      "run": 1,
+      "inference_ms": 1693.0,
+      "wall_ms": 1953.0
+    },
+    {
+      "run": 2,
+      "inference_ms": 1610.0,
+      "wall_ms": 1865.1
+    },
+    {
+      "run": 3,
+      "inference_ms": 1612.0,
+      "wall_ms": 1868.4
+    },
+    {
+      "run": 4,
+      "inference_ms": 1562.0,
+      "wall_ms": 1817.4
+    },
+    {
+      "run": 5,
+      "inference_ms": 1634.0,
+      "wall_ms": 1894.1
+    },
+    {
+      "run": 6,
+      "inference_ms": 1603.0,
+      "wall_ms": 1857.9
+    },
+    {
+      "run": 7,
+      "inference_ms": 1604.0,
+      "wall_ms": 1859.3
+    },
+    {
+      "run": 8,
+      "inference_ms": 1578.0,
+      "wall_ms": 1833.5
+    },
+    {
+      "run": 9,
+      "inference_ms": 1596.0,
+      "wall_ms": 1852.6
+    },
+    {
+      "run": 10,
+      "inference_ms": 1597.0,
+      "wall_ms": 1852.6
+    }
+  ],
+  "mlx-audio": [
+    {
+      "run": 1,
+      "inference_ms": 1473.0,
+      "wall_ms": 2978.7
+    },
+    {
+      "run": 2,
+      "inference_ms": 656.7,
+      "wall_ms": 1462.9
+    },
+    {
+      "run": 3,
+      "inference_ms": 664.6,
+      "wall_ms": 1468.1
+    },
+    {
+      "run": 4,
+      "inference_ms": 659.9,
+      "wall_ms": 1462.2
+    },
+    {
+      "run": 5,
+      "inference_ms": 656.5,
+      "wall_ms": 1460.4
+    },
+    {
+      "run": 6,
+      "inference_ms": 655.8,
+      "wall_ms": 1458.2
+    },
+    {
+      "run": 7,
+      "inference_ms": 660.9,
+      "wall_ms": 1465.4
+    },
+    {
+      "run": 8,
+      "inference_ms": 661.8,
+      "wall_ms": 1464.9
+    },
+    {
+      "run": 9,
+      "inference_ms": 659.0,
+      "wall_ms": 1461.4
+    },
+    {
+      "run": 10,
+      "inference_ms": 656.2,
+      "wall_ms": 1459.2
+    }
+  ],
+  "second-state-mlx": [
+    {
+      "run": 1,
+      "inference_ms": 1306.6,
+      "wall_ms": 2263.6
+    },
+    {
+      "run": 2,
+      "inference_ms": 1300.5,
+      "wall_ms": 1467.4
+    },
+    {
+      "run": 3,
+      "inference_ms": 1294.1,
+      "wall_ms": 1461.2
+    },
+    {
+      "run": 4,
+      "inference_ms": 1290.2,
+      "wall_ms": 1457.1
+    },
+    {
+      "run": 5,
+      "inference_ms": 1293.0,
+      "wall_ms": 1459.7
+    },
+    {
+      "run": 6,
+      "inference_ms": 1292.8,
+      "wall_ms": 1457.5
+    },
+    {
+      "run": 7,
+      "inference_ms": 1302.1,
+      "wall_ms": 1467.0
+    },
+    {
+      "run": 8,
+      "inference_ms": 1301.3,
+      "wall_ms": 1467.5
+    },
+    {
+      "run": 9,
+      "inference_ms": 1294.1,
+      "wall_ms": 1460.1
+    },
+    {
+      "run": 10,
+      "inference_ms": 1297.0,
+      "wall_ms": 1473.2
+    }
+  ]
+}
