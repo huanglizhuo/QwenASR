@@ -1197,6 +1197,70 @@ unsafe fn int8_row_dot_argmax(
     (sum + tail) as f32 * x_scale * w_scale
 }
 
+/// Integer dot sums of two consecutive weight rows (`w0` and `w0 + in_dim`)
+/// with each of `NB` session inputs (R16-2). The rows advance through `k`
+/// together and every weight vector is loaded once for all sessions, so
+/// `2 * NB` independent SDOT chains are in flight instead of one 2-accumulator
+/// chain per (row, session) — the batched kernels were SDOT-latency-bound,
+/// not bandwidth-bound. `NB` is a const so the accumulators stay in registers
+/// (a runtime-sized accumulator array spills and is slower than before).
+/// Integer accumulation is exact, so each sum equals the one
+/// [`int8_row_dot_f32`] / [`int8_row_dot_argmax`] compute. `in_dim % 16 == 0`.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn int8_pair_row_sums<const NB: usize>(
+    w0: *const i8,
+    x: &[*const i8; NB],
+    in_dim: usize,
+) -> ([i32; NB], [i32; NB]) {
+    debug_assert_eq!(in_dim % 16, 0);
+    let w1 = w0.add(in_dim);
+    let mut a0 = [vdupq_n_s32(0); NB];
+    let mut a1 = [vdupq_n_s32(0); NB];
+    let mut k = 0;
+    while k < in_dim {
+        let v0 = vld1q_s8(w0.add(k));
+        let v1 = vld1q_s8(w1.add(k));
+        for bi in 0..NB {
+            let xv = vld1q_s8(x[bi].add(k));
+            a0[bi] = sdot_s32(a0[bi], xv, v0);
+            a1[bi] = sdot_s32(a1[bi], xv, v1);
+        }
+        k += 16;
+    }
+    let mut s0 = [0i32; NB];
+    let mut s1 = [0i32; NB];
+    for bi in 0..NB {
+        s0[bi] = vaddvq_s32(a0[bi]);
+        s1[bi] = vaddvq_s32(a1[bi]);
+    }
+    (s0, s1)
+}
+
+/// Run `$body` with `$nb` bound to the const session count `b` (1..=8) and
+/// `$x` to the session input pointers as a `[*const i8; $nb]`.
+#[cfg(target_arch = "aarch64")]
+macro_rules! with_const_batch {
+    ($b:expr, $x_int8:expr, |$nb:ident, $x:ident| $body:block) => {
+        match $b {
+            1 => with_const_batch!(@arm 1, $x_int8, $nb, $x, $body),
+            2 => with_const_batch!(@arm 2, $x_int8, $nb, $x, $body),
+            3 => with_const_batch!(@arm 3, $x_int8, $nb, $x, $body),
+            4 => with_const_batch!(@arm 4, $x_int8, $nb, $x, $body),
+            5 => with_const_batch!(@arm 5, $x_int8, $nb, $x, $body),
+            6 => with_const_batch!(@arm 6, $x_int8, $nb, $x, $body),
+            7 => with_const_batch!(@arm 7, $x_int8, $nb, $x, $body),
+            8 => with_const_batch!(@arm 8, $x_int8, $nb, $x, $body),
+            _ => unreachable!("lockstep batch size above 8"),
+        }
+    };
+    (@arm $n:literal, $x_int8:expr, $nb:ident, $x:ident, $body:block) => {{
+        const $nb: usize = $n;
+        let $x: [*const i8; $n] = core::array::from_fn(|i| $x_int8[i]);
+        $body
+    }};
+}
+
 /// Batched INT8 matvec: for each output row, stream the weight row once and
 /// apply it to all `b` sessions (each with its own quantized input + scale +
 /// output + optional residual bias). `y[bi]`/`x_int8[bi]`/`bias[bi]` point at
@@ -1219,7 +1283,31 @@ pub unsafe fn matvec_int8_batched(
     in_dim: usize,
     out_dim: usize,
 ) {
-    for (o, &ws) in w_scales.iter().enumerate().take(out_dim) {
+    let mut first_single = 0;
+    if in_dim.is_multiple_of(16) && (1..=8).contains(&b) {
+        // Row pairs: with no scalar tail the per-row value is exactly
+        // `sum as f32 * x_scale * w_scale` (+ bias), as in `int8_row_dot_f32`.
+        let pairs_end = out_dim & !1;
+        with_const_batch!(b, x_int8, |NB, x| {
+            let mut o = 0;
+            while o < pairs_end {
+                let (s0, s1) = int8_pair_row_sums::<NB>(w_int8.add(o * in_dim), &x, in_dim);
+                for bi in 0..NB {
+                    let mut v0 = s0[bi] as f32 * x_scale[bi] * w_scales[o];
+                    let mut v1 = s1[bi] as f32 * x_scale[bi] * w_scales[o + 1];
+                    if let Some(bs) = bias {
+                        v0 += *bs[bi].add(o);
+                        v1 += *bs[bi].add(o + 1);
+                    }
+                    *y[bi].add(o) = v0;
+                    *y[bi].add(o + 1) = v1;
+                }
+                o += 2;
+            }
+        });
+        first_single = pairs_end;
+    }
+    for (o, &ws) in w_scales.iter().enumerate().take(out_dim).skip(first_single) {
         let w_row = w_int8.add(o * in_dim);
         for bi in 0..b {
             let mut val = int8_row_dot_f32(w_row, x_int8[bi], x_scale[bi], ws, in_dim);
@@ -1251,6 +1339,24 @@ pub unsafe fn swiglu_int8_batched(
     in_dim: usize,
     n_rows: usize,
 ) {
+    if in_dim.is_multiple_of(16) && (1..=8).contains(&b) {
+        // The gate/up rows of one intermediate row are adjacent, so they form
+        // the interleaved pair; values are exactly `int8_row_dot_f32`'s.
+        with_const_batch!(b, x_int8, |NB, x| {
+            for j in 0..n_rows {
+                let (sg_sum, su_sum) =
+                    int8_pair_row_sums::<NB>(w_int8.add(2 * j * in_dim), &x, in_dim);
+                let sg = w_scales[2 * j];
+                let su = w_scales[2 * j + 1];
+                for bi in 0..NB {
+                    let g = sg_sum[bi] as f32 * x_scale[bi] * sg;
+                    let u = su_sum[bi] as f32 * x_scale[bi] * su;
+                    *ffn[bi].add(j) = g / (1.0 + (-g).exp()) * u;
+                }
+            }
+        });
+        return;
+    }
     for j in 0..n_rows {
         let wg = w_int8.add(2 * j * in_dim);
         let wu = w_int8.add((2 * j + 1) * in_dim);
@@ -1286,7 +1392,34 @@ pub unsafe fn argmax_int8_batched(
     start: usize,
     end: usize,
 ) {
-    for (o, &ws) in w_scales.iter().enumerate().take(end).skip(start) {
+    let mut first_single = start;
+    if in_dim.is_multiple_of(16) && (1..=8).contains(&b) && end > start {
+        // Row pairs in increasing order, row `o` before `o + 1` per session, so
+        // the strict-`>` updates (and the tie-break) are unchanged. With no
+        // tail the value is exactly `int8_row_dot_argmax`'s.
+        let pairs_end = start + ((end - start) & !1);
+        with_const_batch!(b, x_int8, |NB, x| {
+            let mut o = start;
+            while o < pairs_end {
+                let (s0, s1) = int8_pair_row_sums::<NB>(w_int8.add(o * in_dim), &x, in_dim);
+                for bi in 0..NB {
+                    let v0 = s0[bi] as f32 * x_scale[bi] * w_scales[o];
+                    if v0 > best_val[bi] {
+                        best_val[bi] = v0;
+                        best[bi] = o;
+                    }
+                    let v1 = s1[bi] as f32 * x_scale[bi] * w_scales[o + 1];
+                    if v1 > best_val[bi] {
+                        best_val[bi] = v1;
+                        best[bi] = o + 1;
+                    }
+                }
+                o += 2;
+            }
+        });
+        first_single = pairs_end;
+    }
+    for (o, &ws) in w_scales.iter().enumerate().take(end).skip(first_single) {
         let w_row = w_int8.add(o * in_dim);
         for bi in 0..b {
             let val = int8_row_dot_argmax(w_row, x_int8[bi], x_scale[bi], ws, in_dim);

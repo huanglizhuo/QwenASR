@@ -3907,7 +3907,7 @@ mod tests {
         let mut rng = Rng::new(0xC0FFEE);
         for &in_dim in &[16usize, 32, 48, 64, 17, 33, 1024] {
             for &out_dim in &[1usize, 2, 7, 16, 31] {
-                for &b in &[1usize, 2, 3, 5, 6] {
+                for b in 1usize..=8 {
                     for use_bias in [false, true] {
                         let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
                         let (xi, xs) = gen_inputs(&mut rng, b, in_dim);
@@ -3982,7 +3982,7 @@ mod tests {
         let mut rng = Rng::new(0x5019_1000);
         for &in_dim in &[16usize, 32, 48, 17, 1024] {
             for &n_rows in &[1usize, 3, 8, 15] {
-                for &b in &[1usize, 2, 4, 6] {
+                for b in 1usize..=8 {
                     // gate_up has 2*n_rows weight rows (interleaved gate/up).
                     let (w, ws) = gen_w(&mut rng, 2 * n_rows, in_dim);
                     let (xi, xs) = gen_inputs(&mut rng, b, in_dim);
@@ -4041,7 +4041,7 @@ mod tests {
         let mut rng = Rng::new(0xA11CE);
         let in_dim = 1024usize;
         for &(q_dim, kv_dim) in &[(2048usize, 1024usize), (32, 16), (48, 16)] {
-            for &b in &[1usize, 2, 4, 6] {
+            for b in 1usize..=8 {
                 let total = q_dim + 2 * kv_dim;
                 let (wq, wqs) = gen_w(&mut rng, q_dim, in_dim);
                 let (wk, wks) = gen_w(&mut rng, kv_dim, in_dim);
@@ -4140,50 +4140,94 @@ mod tests {
         let mut rng = Rng::new(0xF00D5);
         for &in_dim in &[16usize, 32, 1024] {
             for &out_dim in &[1usize, 4, 17, 128, 257] {
-                for &b in &[1usize, 2, 3, 5] {
+                for b in 1usize..=8 {
                     let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
                     let (xi, xs) = gen_inputs(&mut rng, b, in_dim);
                     let xi_ptrs: Vec<*const i8> = xi.iter().map(|v| v.as_ptr()).collect();
+                    // Full range plus odd-start / odd-length partial ranges (the
+                    // threaded caller splits rows at arbitrary offsets).
+                    for &(s, e) in &[(0usize, out_dim), (1, out_dim), (out_dim / 3, out_dim)] {
+                        if s >= e {
+                            continue;
+                        }
+                        // Reference: SIMD single-session argmax over the range.
+                        let mut ref_best = vec![0usize; b];
+                        for j in 0..b {
+                            let (best, _) = unsafe {
+                                simd::argmax_int8_range(
+                                    xi[j].as_ptr(),
+                                    xs[j],
+                                    w.as_ptr(),
+                                    &ws,
+                                    in_dim,
+                                    s,
+                                    e,
+                                )
+                            };
+                            ref_best[j] = best;
+                        }
 
-                    // Reference: SIMD single-session argmax over the full range.
-                    let mut ref_best = vec![0usize; b];
-                    for j in 0..b {
-                        let (best, _) = unsafe {
-                            simd::argmax_int8_range(
-                                xi[j].as_ptr(),
-                                xs[j],
+                        // Batched SIMD core (single range).
+                        let mut best = vec![0usize; b];
+                        let mut best_val = vec![-1e30f32; b];
+                        unsafe {
+                            simd::argmax_int8_batched(
+                                b,
+                                &mut best,
+                                &mut best_val,
+                                &xi_ptrs,
+                                &xs,
                                 w.as_ptr(),
                                 &ws,
                                 in_dim,
-                                0,
-                                out_dim,
-                            )
-                        };
-                        ref_best[j] = best;
-                    }
-
-                    // Batched SIMD core (single range).
-                    let mut best = vec![0usize; b];
-                    let mut best_val = vec![-1e30f32; b];
-                    unsafe {
-                        simd::argmax_int8_batched(
-                            b,
-                            &mut best,
-                            &mut best_val,
-                            &xi_ptrs,
-                            &xs,
-                            w.as_ptr(),
-                            &ws,
-                            in_dim,
-                            0,
-                            out_dim,
+                                s,
+                                e,
+                            );
+                        }
+                        assert_eq!(
+                            ref_best, best,
+                            "argmax core mismatch in_dim={in_dim} out_dim={out_dim} b={b} range={s}..{e}"
                         );
                     }
-                    assert_eq!(
-                        ref_best, best,
-                        "argmax core mismatch in_dim={in_dim} out_dim={out_dim} b={b}"
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn batched_argmax_ties_keep_lowest_index() {
+        // Identical rows score identically: the strict-`>` update must keep the
+        // first row of the range for every session and batch size.
+        let mut rng = Rng::new(0x71E5);
+        let in_dim = 64usize;
+        let out_dim = 9usize;
+        let (row, s) = gen_w(&mut rng, 1, in_dim);
+        let w: Vec<i8> = (0..out_dim).flat_map(|_| row.iter().copied()).collect();
+        let ws = vec![s[0]; out_dim];
+        for b in 1usize..=8 {
+            let (xi, xs) = gen_inputs(&mut rng, b, in_dim);
+            let xi_ptrs: Vec<*const i8> = xi.iter().map(|v| v.as_ptr()).collect();
+            for start in 0..3usize {
+                let mut best = vec![usize::MAX; b];
+                let mut best_val = vec![-1e30f32; b];
+                unsafe {
+                    simd::argmax_int8_batched(
+                        b,
+                        &mut best,
+                        &mut best_val,
+                        &xi_ptrs,
+                        &xs,
+                        w.as_ptr(),
+                        &ws,
+                        in_dim,
+                        start,
+                        out_dim,
                     );
                 }
+                assert!(
+                    best.iter().all(|&i| i == start),
+                    "b={b} start={start} {best:?}"
+                );
             }
         }
     }
@@ -4197,7 +4241,7 @@ mod tests {
         let mut rng = Rng::new(0x1234ABCD);
         let in_dim = 1024usize;
         for &out_dim in &[128usize, 1000, 4096] {
-            for &b in &[1usize, 2, 4] {
+            for b in 1usize..=8 {
                 let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
                 let xs_f: Vec<Vec<f32>> = (0..b)
                     .map(|_| (0..in_dim).map(|_| rng.f32_pm1() * 3.0).collect())
