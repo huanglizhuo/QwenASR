@@ -134,13 +134,14 @@ jobs:
           echo "bench binary: $bin"
           cores=$(getconf _NPROCESSORS_ONLN)
 
-          # Bound each A/B reference independently. macOS runners may not have
-          # coreutils; the job-level timeout still bounds that leg.
+          # Bound each A/B reference independently. macOS runners have no
+          # coreutils, so fall back to perl: the alarm survives exec and SIGALRM
+          # ends a wedged leg (rc 142) instead of it eating the step timeout.
           # 180s, not 90s: the oversubscribed `16` leg is legitimately slower
           # on a 3-core runner, and the bound only needs to catch a wedge.
           if command -v timeout >/dev/null 2>&1; then TO="timeout -s KILL 180"
           elif command -v gtimeout >/dev/null 2>&1; then TO="gtimeout -s KILL 180"
-          else TO=""; echo "note: no timeout(1) available, running unbounded"; fi
+          else TO="perl -e alarm(180);exec(@ARGV)or(die)"; fi
 
           # $1 label, $2 test name, $3 required (1 = shipped policy must pass),
           # $4 pool threads ("native" = shipped default), $5 pooled 1/0/"" .
