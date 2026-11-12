@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.11.3](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.11.2...qwen-asr-v0.11.3) (2026-11-12)
+
+
+### Performance Improvements
+
+* bit-exact kernel speedups for prefill, batched decode and encoder (Round 16) ([b95a417](https://github.com/huanglizhuo/QwenASR/commit/b95a4179c9d750175e44ce13b5e49c3cab3b88af))
+* **encoder:** one conv_out GEMM per group of chunks (R16-3) ([46a5c6d](https://github.com/huanglizhuo/QwenASR/commit/46a5c6d2c547bc32a5cd64c495e3e11863330efa))
+* **kernels:** interleave rows and sessions in batched INT8 decode (R16-2) ([49b5137](https://github.com/huanglizhuo/QwenASR/commit/49b513738ae99d92ff2cb47793ea64968f21f813))
+* **prefill:** SME + NEON hybrid GEMM on Apple Silicon with SME (R16-1) ([7e2bdc2](https://github.com/huanglizhuo/QwenASR/commit/7e2bdc2b5a9fc07aaa15c2dd8fb1ed9e0110c996))
+
 ## [0.11.2](https://github.com/huanglizhuo/QwenASR/compare/qwen-asr-v0.11.1...qwen-asr-v0.11.2) (2026-11-07)
 
 
