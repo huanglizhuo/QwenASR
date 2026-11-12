@@ -14,12 +14,48 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - id: release
+      # The PAT shares its owner's GitHub API limits with every other tool on
+      # the account, so Release Please can fail with "API rate limit already
+      # exceeded" (2026-11-12: cleared within 15 minutes). It is idempotent,
+      # so try three times before failing the job.
+      - id: try1
+        continue-on-error: true
         uses: googleapis/release-please-action@v4
         with:
           token: ${{ secrets.PAT }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      - if: steps.try1.outcome == 'failure'
+        run: sleep 300
+
+      - id: try2
+        if: steps.try1.outcome == 'failure'
+        continue-on-error: true
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.PAT }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - if: steps.try2.outcome == 'failure'
+        run: sleep 600
+
+      - id: try3
+        if: steps.try2.outcome == 'failure'
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.PAT }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      # Re-export the successful attempt's release flags, verbatim, under the
+      # step id the publishing steps below read.
+      - id: release
+        env:
+          OUTPUTS: ${{ steps.try1.outcome == 'success' && toJSON(steps.try1.outputs) || steps.try2.outcome == 'success' && toJSON(steps.try2.outputs) || toJSON(steps.try3.outputs) }}
+        run: |
+          jq -r 'to_entries[] | select(.key == "releases_created" or (.key | endswith("--release_created"))) | "\(.key)=\(.value)"' <<<"$OUTPUTS" >> "$GITHUB_OUTPUT"
 
       # The steps below are executed ONLY if release-please creates a new release (PR gets merged)
 
