@@ -123,6 +123,8 @@ Then verify all outputs included in the release:
 
 Inspect the failed step before retrying. Package registries do not allow republishing the same version, so first check whether the package reached crates.io or pub.dev even if the job ended in failure.
 
+Release Please itself is retried twice, after 5 and 10 more minutes, because the `PAT` shares its owner's GitHub API rate limit with every other tool on that account and can fail with `API rate limit already exceeded`. If all three attempts fail, rerun the failed job once the limit clears (`gh run rerun <run-id> --failed`).
+
 If the GitHub Release already exists but registry publishing failed, simply rerunning Release Please may skip publishing because the action no longer reports a newly created release. In that case, publish the already-versioned package manually with the appropriate registry credentials, or use a deliberately scoped recovery workflow. Do not create another tag for the same version.
 
 If CLI binary building failed, rerun `.github/workflows/build-binaries.yml` for the existing CLI Release. If Flutter publishing failed, rerun the original tag-triggered `Publish to pub.dev` workflow after fixing its OIDC or build configuration.
