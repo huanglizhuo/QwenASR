@@ -38,12 +38,14 @@ fn get_pool() -> &'static Arc<ThreadPool> {
     })
 }
 
-fn pool_worker(pool: Arc<ThreadPool>, tid: usize) {
-    // Start from the CURRENT generation: a worker spawned after dispatches
-    // have already happened (set_threads growing the pool mid-process, e.g.
-    // in tests) must not "see" the last long-completed dispatch as new work
-    // and replay its dead closure frame.
-    let mut last_gen: u64 = pool.gen_atomic.load(Ordering::Acquire);
+fn pool_worker(pool: Arc<ThreadPool>, tid: usize, start_gen: u64) {
+    // `start_gen` is the generation at spawn time, read by the dispatching
+    // thread in `ensure_workers`. A worker spawned after earlier dispatches
+    // (set_threads growing the pool mid-process) must not replay the last
+    // completed one. Reading the generation here instead raced the next
+    // dispatch: a worker first scheduled after its bump took it as already
+    // seen, never ran it, and the join waited forever (3-vCPU CI runners).
+    let mut last_gen = start_gen;
     loop {
         // Fast path: spin briefly on atomic generation counter
         let mut found = false;
@@ -76,10 +78,17 @@ fn pool_worker(pool: Arc<ThreadPool>, tid: usize) {
         }
 
         // Read dispatch data from atomics (ordered by gen_atomic Acquire)
+        let n_threads = pool.n_threads_atomic.load(Ordering::Relaxed);
+        // Workers beyond this dispatch's width (the pool shrank) sit it out:
+        // the join counts exactly `n_threads - 1` arrivals, so an extra one
+        // would let it return while this worker still runs the closure that
+        // lives on the dispatcher's stack.
+        if tid >= n_threads {
+            continue;
+        }
         let fn_ptr = pool.fn_ptr_atomic.load(Ordering::Relaxed) as *const ();
         let fn_call: fn(*const (), usize, usize) =
             unsafe { core::mem::transmute(pool.fn_call_atomic.load(Ordering::Relaxed)) };
-        let n_threads = pool.n_threads_atomic.load(Ordering::Relaxed);
 
         fn_call(fn_ptr, tid, n_threads);
         pool.done_atomic.fetch_add(1, Ordering::Release);
@@ -94,11 +103,12 @@ fn ensure_workers(pool: &Arc<ThreadPool>, n_threads: usize) {
         return;
     }
     let start = spawned + 1;
+    let start_gen = pool.gen_atomic.load(Ordering::Acquire);
     for tid in start..n_threads {
         let p = pool.clone();
         thread::Builder::new()
             .name(format!("qwen-worker-{}", tid))
-            .spawn(move || pool_worker(p, tid))
+            .spawn(move || pool_worker(p, tid, start_gen))
             .expect("failed to spawn worker thread");
     }
     SPAWNED_THREADS.store(n_threads - 1, Ordering::Relaxed);
@@ -589,6 +599,58 @@ mod tests {
             }
         });
         assert_eq!(mismatches.load(Ordering::Relaxed), 0);
+    }
+
+    /// A worker first scheduled after a dispatch was published must still run
+    /// it, and a worker beyond the dispatch width must sit it out.
+    #[test]
+    fn late_worker_runs_pending_dispatch_and_extra_worker_sits_out() {
+        use super::{pool_worker, ThreadPool};
+        use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+        use std::sync::{Arc, Condvar, Mutex};
+        use std::time::{Duration, Instant};
+
+        static RAN: AtomicUsize = AtomicUsize::new(0);
+        fn job(_: *const (), tid: usize, _nt: usize) {
+            RAN.fetch_add(1 << (8 * tid), Ordering::Relaxed);
+        }
+        let pool = Arc::new(ThreadPool {
+            state: Mutex::new(false),
+            work_cv: Condvar::new(),
+            gen_atomic: AtomicU64::new(0),
+            done_atomic: AtomicUsize::new(0),
+            fn_ptr_atomic: AtomicUsize::new(0),
+            fn_call_atomic: AtomicUsize::new(job as *const () as usize),
+            n_threads_atomic: AtomicUsize::new(2),
+        });
+        // The generation `ensure_workers` hands out, then a 2-wide dispatch
+        // published before either worker thread has started.
+        let start_gen = pool.gen_atomic.load(Ordering::Acquire);
+        pool.gen_atomic.fetch_add(1, Ordering::Release);
+        let workers = [1, 2].map(|tid| {
+            let p = pool.clone();
+            std::thread::spawn(move || pool_worker(p, tid, start_gen))
+        });
+        let t0 = Instant::now();
+        while pool.done_atomic.load(Ordering::Acquire) < 1 {
+            assert!(
+                t0.elapsed() < Duration::from_secs(10),
+                "worker 1 skipped the dispatch"
+            );
+            std::thread::yield_now();
+        }
+        std::thread::sleep(Duration::from_millis(50)); // room for worker 2 to misbehave
+        *pool.state.lock().unwrap() = true;
+        pool.work_cv.notify_all();
+        for w in workers {
+            w.join().unwrap();
+        }
+        assert_eq!(pool.done_atomic.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            RAN.load(Ordering::Relaxed),
+            1 << 8,
+            "only tid 1 joins a 2-wide dispatch"
+        );
     }
 
     #[test]
