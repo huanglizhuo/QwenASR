@@ -84,6 +84,8 @@ python3 librispeech-wer-bench/librispeech_wer.py \
 
 See the [2026-11-06 run manifest and commands](2026-11-06/README.md) for the
 short/long, streaming, batch, alignment and full-set accuracy matrix.
+The [2026-11-12 Round 16 refresh](2026-11-12/README.md) reran the
+cross-implementation comparison, four long-audio cases and the full-set check.
 Do not run builds, tests or other benchmarks concurrently with measurements.
 
 ### Cross-implementation comparison

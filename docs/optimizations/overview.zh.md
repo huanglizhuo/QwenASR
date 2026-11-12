@@ -68,3 +68,17 @@
 详见[测量与限制](../../bench/r15/history/long-audio/README.md)，空闲机复核仍待完成。
 
 11 月 6–7 日复测中，17 个 benchmark 用例与 main 输出一致。全集逐条比较中，双方 WER 均为 2.7591%，2703 条归一化文本全部一致，原始转写有一处逗号差异。[全集比较](../benchmarks/results.md#accuracy)。
+
+## 7. Round 16：逐位一致的内核优化
+
+三项改动与此前的 main 逐位一致：65 个用例的 encoder 输出与 prefill KV 哈希相同，七用例套件和 63 个扩展用例的转写逐字节相同。
+测量数据与放弃的方案见[实验记录](../research/experiments.md#speed-improvement-experiments--round-16-exact-kernel-follow-up)。
+
+| 项目 | 当前保留实现 |
+|---|---|
+| R16-1 | 在支持 SME 的 CPU（M4/M5）上，decoder 与 aligner 的 prefill 投影改用混合 GEMM：少数线程驱动手写的 FMOPA 内核，其余线程运行 NEON 内核；两者都按 k 递增、每个输出一条融合乘加链累加，与 Accelerate 多行 sgemm 的求和顺序相同。bf16 权重在打包时加宽。仅在打包后的激活能放进 E 簇 L2 时启用；`QWEN_ASR_SME=0` 可关闭。 |
+| R16-2 | lockstep 批量 INT8 内核让两行权重对所有会话同时推进，每个权重向量只加载一次，最多 16 条 SDOT 链并行。 |
+| R16-3 | encoder 的 `conv_out` 投影改为每组最多 160 行做一次 GEMM，不再每个 13 行的块各做一次；只有 1 个 token 的尾块仍单独计算，因为 Accelerate 对 1 行 GEMM 的求和顺序不同。 |
+
+相对此前的 main：28 秒输入墙钟 −4.6…−5.2%（prefill −14%），推流式 −8.4%，10 分钟 `-S 30` −11.4%，12/60 文件批处理 −9.0% / −8.4%。
+LibriSpeech dev-clean 全集 2703 条转写与此前的 main 逐字节一致（WER 2.7591%）。

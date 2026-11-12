@@ -249,6 +249,16 @@ pub fn verbose() -> i32 {
 // ========================================================================
 
 mod pool;
+#[cfg(all(feature = "blas", target_os = "macos", target_arch = "aarch64"))]
+mod sme;
+
+/// Whether the SME + NEON hybrid GEMM (R16-1) is active in this process.
+pub fn sme_gemm_enabled() -> bool {
+    #[cfg(all(feature = "blas", target_os = "macos", target_arch = "aarch64"))]
+    return sme::enabled();
+    #[allow(unreachable_code)]
+    false
+}
 
 pub(crate) use pool::parallel_for;
 pub(crate) use pool::parallel_for_dynamic;
@@ -1371,6 +1381,21 @@ pub(crate) fn seg_parallel_blas() -> bool {
     true
 }
 
+/// Whether `linear` / `linear_accumulate` of this shape take the pooled
+/// multi-threaded GEMM path: each slice needs enough columns for an efficient
+/// BLAS kernel, and the whole product enough MACs to amortize the pool
+/// dispatch. Every pooled sgemm has `seq_len >= 2` rows.
+#[cfg(feature = "blas")]
+fn pooled_linear_shape(seq_len: usize, in_dim: usize, out_dim: usize) -> bool {
+    const MIN_COLS: usize = 128;
+    const MIN_MACS: usize = 1 << 22;
+    linear_pooled_gemm()
+        && get_num_threads() > 1
+        && seq_len >= 2
+        && out_dim >= 2 * MIN_COLS
+        && seq_len * in_dim * out_dim >= MIN_MACS
+}
+
 /// Pool-parallel `y[seq,out] = x @ W^T + beta*y (+ b)`: splits the output
 /// columns across the persistent thread pool, one BLAS call per slice. Each
 /// output element is still a single full-K dot product inside one sgemm call.
@@ -1390,19 +1415,10 @@ fn sgemm_nt_pooled(
     out_dim: usize,
     beta: f32,
 ) -> bool {
-    let nt = get_num_threads();
-    // Each slice needs enough columns for an efficient BLAS kernel, and the
-    // whole product enough MACs to amortize the pool dispatch.
-    const MIN_COLS: usize = 128;
-    const MIN_MACS: usize = 1 << 22;
-    if !linear_pooled_gemm()
-        || nt <= 1
-        || seq_len < 2
-        || out_dim < 2 * MIN_COLS
-        || seq_len * in_dim * out_dim < MIN_MACS
-    {
+    if !pooled_linear_shape(seq_len, in_dim, out_dim) {
         return false;
     }
+    const MIN_COLS: usize = 128;
     let y_send = y.as_mut_ptr() as usize;
     let x_send = x.as_ptr() as usize;
     let w_send = w.as_ptr() as usize;
@@ -1693,6 +1709,18 @@ pub unsafe fn linear_nobias_bf16_scratch(
     let _pg = ProfileGuard::new(&PROF.bf16_matvec);
     if seq_len == 1 {
         bf16_matvec_threaded(y, x, w_bf16, None, in_dim, out_dim);
+        return;
+    }
+    // R16-1: SME + NEON hybrid on SME hardware, bit-identical to the pooled
+    // path below. It widens the weights exactly while packing them, so it
+    // replaces the scratch widening as well as the GEMM.
+    #[cfg(all(feature = "blas", target_os = "macos", target_arch = "aarch64"))]
+    if sme::enabled()
+        && out_dim.is_multiple_of(16)
+        && seq_len * in_dim <= sme::MAX_A_ELEMS
+        && pooled_linear_shape(seq_len, in_dim, out_dim)
+    {
+        sme::gemm_bf16(y, x, w_bf16, seq_len, in_dim, out_dim);
         return;
     }
     let n = out_dim * in_dim;
@@ -3907,7 +3935,7 @@ mod tests {
         let mut rng = Rng::new(0xC0FFEE);
         for &in_dim in &[16usize, 32, 48, 64, 17, 33, 1024] {
             for &out_dim in &[1usize, 2, 7, 16, 31] {
-                for &b in &[1usize, 2, 3, 5, 6] {
+                for b in 1usize..=8 {
                     for use_bias in [false, true] {
                         let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
                         let (xi, xs) = gen_inputs(&mut rng, b, in_dim);
@@ -3982,7 +4010,7 @@ mod tests {
         let mut rng = Rng::new(0x5019_1000);
         for &in_dim in &[16usize, 32, 48, 17, 1024] {
             for &n_rows in &[1usize, 3, 8, 15] {
-                for &b in &[1usize, 2, 4, 6] {
+                for b in 1usize..=8 {
                     // gate_up has 2*n_rows weight rows (interleaved gate/up).
                     let (w, ws) = gen_w(&mut rng, 2 * n_rows, in_dim);
                     let (xi, xs) = gen_inputs(&mut rng, b, in_dim);
@@ -4041,7 +4069,7 @@ mod tests {
         let mut rng = Rng::new(0xA11CE);
         let in_dim = 1024usize;
         for &(q_dim, kv_dim) in &[(2048usize, 1024usize), (32, 16), (48, 16)] {
-            for &b in &[1usize, 2, 4, 6] {
+            for b in 1usize..=8 {
                 let total = q_dim + 2 * kv_dim;
                 let (wq, wqs) = gen_w(&mut rng, q_dim, in_dim);
                 let (wk, wks) = gen_w(&mut rng, kv_dim, in_dim);
@@ -4140,50 +4168,94 @@ mod tests {
         let mut rng = Rng::new(0xF00D5);
         for &in_dim in &[16usize, 32, 1024] {
             for &out_dim in &[1usize, 4, 17, 128, 257] {
-                for &b in &[1usize, 2, 3, 5] {
+                for b in 1usize..=8 {
                     let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
                     let (xi, xs) = gen_inputs(&mut rng, b, in_dim);
                     let xi_ptrs: Vec<*const i8> = xi.iter().map(|v| v.as_ptr()).collect();
+                    // Full range plus odd-start / odd-length partial ranges (the
+                    // threaded caller splits rows at arbitrary offsets).
+                    for &(s, e) in &[(0usize, out_dim), (1, out_dim), (out_dim / 3, out_dim)] {
+                        if s >= e {
+                            continue;
+                        }
+                        // Reference: SIMD single-session argmax over the range.
+                        let mut ref_best = vec![0usize; b];
+                        for j in 0..b {
+                            let (best, _) = unsafe {
+                                simd::argmax_int8_range(
+                                    xi[j].as_ptr(),
+                                    xs[j],
+                                    w.as_ptr(),
+                                    &ws,
+                                    in_dim,
+                                    s,
+                                    e,
+                                )
+                            };
+                            ref_best[j] = best;
+                        }
 
-                    // Reference: SIMD single-session argmax over the full range.
-                    let mut ref_best = vec![0usize; b];
-                    for j in 0..b {
-                        let (best, _) = unsafe {
-                            simd::argmax_int8_range(
-                                xi[j].as_ptr(),
-                                xs[j],
+                        // Batched SIMD core (single range).
+                        let mut best = vec![0usize; b];
+                        let mut best_val = vec![-1e30f32; b];
+                        unsafe {
+                            simd::argmax_int8_batched(
+                                b,
+                                &mut best,
+                                &mut best_val,
+                                &xi_ptrs,
+                                &xs,
                                 w.as_ptr(),
                                 &ws,
                                 in_dim,
-                                0,
-                                out_dim,
-                            )
-                        };
-                        ref_best[j] = best;
-                    }
-
-                    // Batched SIMD core (single range).
-                    let mut best = vec![0usize; b];
-                    let mut best_val = vec![-1e30f32; b];
-                    unsafe {
-                        simd::argmax_int8_batched(
-                            b,
-                            &mut best,
-                            &mut best_val,
-                            &xi_ptrs,
-                            &xs,
-                            w.as_ptr(),
-                            &ws,
-                            in_dim,
-                            0,
-                            out_dim,
+                                s,
+                                e,
+                            );
+                        }
+                        assert_eq!(
+                            ref_best, best,
+                            "argmax core mismatch in_dim={in_dim} out_dim={out_dim} b={b} range={s}..{e}"
                         );
                     }
-                    assert_eq!(
-                        ref_best, best,
-                        "argmax core mismatch in_dim={in_dim} out_dim={out_dim} b={b}"
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn batched_argmax_ties_keep_lowest_index() {
+        // Identical rows score identically: the strict-`>` update must keep the
+        // first row of the range for every session and batch size.
+        let mut rng = Rng::new(0x71E5);
+        let in_dim = 64usize;
+        let out_dim = 9usize;
+        let (row, s) = gen_w(&mut rng, 1, in_dim);
+        let w: Vec<i8> = (0..out_dim).flat_map(|_| row.iter().copied()).collect();
+        let ws = vec![s[0]; out_dim];
+        for b in 1usize..=8 {
+            let (xi, xs) = gen_inputs(&mut rng, b, in_dim);
+            let xi_ptrs: Vec<*const i8> = xi.iter().map(|v| v.as_ptr()).collect();
+            for start in 0..3usize {
+                let mut best = vec![usize::MAX; b];
+                let mut best_val = vec![-1e30f32; b];
+                unsafe {
+                    simd::argmax_int8_batched(
+                        b,
+                        &mut best,
+                        &mut best_val,
+                        &xi_ptrs,
+                        &xs,
+                        w.as_ptr(),
+                        &ws,
+                        in_dim,
+                        start,
+                        out_dim,
                     );
                 }
+                assert!(
+                    best.iter().all(|&i| i == start),
+                    "b={b} start={start} {best:?}"
+                );
             }
         }
     }
@@ -4197,7 +4269,7 @@ mod tests {
         let mut rng = Rng::new(0x1234ABCD);
         let in_dim = 1024usize;
         for &out_dim in &[128usize, 1000, 4096] {
-            for &b in &[1usize, 2, 4] {
+            for b in 1usize..=8 {
                 let (w, ws) = gen_w(&mut rng, out_dim, in_dim);
                 let xs_f: Vec<Vec<f32>> = (0..b)
                     .map(|_| (0..in_dim).map(|_| rng.f32_pm1() * 3.0).collect())

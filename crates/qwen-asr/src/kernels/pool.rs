@@ -401,7 +401,7 @@ pub(crate) struct RegionBarrier {
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 impl RegionBarrier {
     #[inline]
-    fn new(nt: usize) -> Self {
+    pub(crate) fn new(nt: usize) -> Self {
         RegionBarrier {
             arrived: CachePadded(AtomicUsize::new(0)),
             generation: CachePadded(AtomicUsize::new(0)),

@@ -1,5 +1,31 @@
 # Benchmark Results
 
+## 2026-11-12 refresh (Round 16)
+
+Commit `b6ed4ea4`, binary `c86d2194333b…`, on the same M5 Pro with lighter
+background load than on November 6. [Run record](2026-11-12/README.md) ·
+[Cross-implementation comparison](comparison.md).
+
+- 28.16 s clip, cross-implementation cohort: 529.0 ms median inference,
+  633.9 ms median process wall, 53.23×.
+- Full dev-clean offline: every hypothesis matches the November 6 full run
+  byte for byte; WER 2.7591%, CER 0.7542%, no failures.
+
+Long audio, three alternating pairs against main `6a88ff62`:
+
+| Case | Current median inference | Current median wall | Wall range | Paired median wall change vs main |
+|---|---:|---:|---:|---:|
+| 120.705 s offline | 4.042 s | 4.141 s | 3.742–4.251 s | −4.09% |
+| 120.705 s segmented (-S30) | 2.449 s | 2.562 s | 2.416–2.585 s | −2.51% |
+| 602.465 s offline | 48.158 s | 48.324 s | 46.839–54.454 s | −14.95% |
+| 602.465 s segmented (-S30) | 9.744 s | 9.910 s | 9.779–9.910 s | −10.78% |
+
+Only the 602 s segmented change clears the run-to-run spread; main's ranges
+are in the run record. Everything below is the November 6 run and was not
+repeated.
+
+## 2026-11-06 run (Round 15)
+
 Measured on 2026-11-06 (run start), Apple M5 Pro / 15 cores / 48 GiB.
 Current build: `r15-speedups` working tree with the wait-backoff fix, binary
 `de15033ee6e7…`; this is **not clean HEAD**. Default release features, native

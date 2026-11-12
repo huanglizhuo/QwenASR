@@ -1,19 +1,19 @@
 # Cross-Implementation Comparison
 
-Fresh 2026-11-06 run on Apple M5 Pro (15 cores, 48 GiB). Each implementation
+Fresh 2026-11-12 run on Apple M5 Pro (15 cores, 48 GiB). Each implementation
 completed **10 successful standalone offline runs** on the same 28.16-second,
 44.1 kHz mono WAV. No discarded warmup, no forced thread count; each engine
 uses its shipped defaults. qwen-asr current selects 12 global threads and 10
-single-token decode participants. Background desktop load and a booted iOS
-simulator were present; this is not a controlled idle-machine ranking.
+single-token decode participants. Desktop processes kept running (1-minute
+load average 2.0 at the start); this is not a controlled idle-machine ranking.
 
 | Implementation | Median inference | Median process wall | Inference throughput |
 |---|---:|---:|---:|
-| qwen-asr (current CPU) | 581.0 ms | 693.4 ms | 48.47× |
-| mlx-audio Python (GPU) | 746.3 ms | 1,630.4 ms | 37.73× |
-| second-state MLX (GPU) | 1,439.7 ms | 1,679.7 ms | 19.56× |
-| qwen-asr first port (CPU) | 1,647.0 ms | 1,984.2 ms | 17.10× |
-| pure C upstream (CPU) | 1,653.5 ms | 1,922.5 ms | 17.03× |
+| qwen-asr (current CPU) | 529.0 ms | 633.9 ms | 53.23× |
+| mlx-audio Python (GPU) | 659.5 ms | 1,462.6 ms | 42.70× |
+| second-state MLX (GPU) | 1,295.6 ms | 1,464.1 ms | 21.74× |
+| qwen-asr first port (CPU) | 1,591.5 ms | 1,908.8 ms | 17.69× |
+| pure C upstream (CPU) | 1,603.5 ms | 1,858.6 ms | 17.56× |
 
 
 ## Interpretation
@@ -25,35 +25,40 @@ simulator were present; this is not a controlled idle-machine ranking.
   while MLX file-path APIs include input preprocessing after model load. GPU
   work is synchronized for its inference timer. Process wall includes startup,
   model/input loading, inference and exit and is provided alongside inference.
-- The first mlx-audio invocation took 19.2154 s inference / 22.8444 s wall
+- The first mlx-audio invocation took 1.473 s inference / 2.979 s wall
   and remains included in the ten-run statistics. Medians describe typical
   runs here, not guaranteed first-use latency; OS/runtime caches are uncontrolled.
-- Throughput is 28.16 s divided by inference duration. CPU/C and Python MLX
-  were measured in sequential cohorts; second-state was retried later after
-  installing a missing Metal Toolchain and rebuilding its temporary clone.
-  Do not interpret small differences as a statistically established ranking.
+- Throughput is 28.16 s divided by inference duration. All five engines ran
+  sequentially in one script invocation. Do not interpret small differences
+  as a statistically established ranking.
+- Every engine measured faster than on 2026-11-06 (unchanged C upstream −3%,
+  first port −3%, mlx-audio −12%, second-state −10%), so lighter background
+  load explains part of qwen-asr's 581.0 → 529.0 ms. Interleaved A/B on this
+  clip attributes −7.9% inference to the Round 16 code alone
+  ([experiment log](../research/experiments.md)).
 - Transcripts are not identical across all implementations; this speed comparison
   does not establish accuracy equivalence. Current-project WER and streaming
   limitations are documented in [results.md](results.md).
 
 ## Versions and evidence
 
-- qwen-asr (current CPU): `binary-de15033ee6e7`.
+- qwen-asr (current CPU): `binary-c86d2194333b`.
 - mlx-audio Python (GPU): `0.4.5`.
 - second-state MLX (GPU): `0226270`.
 - qwen-asr first port (CPU): `bf52dafe`.
 - pure C upstream (CPU): `9246942`.
 
 The current binary SHA256 is
-`de15033ee6e7034f46264ac6fea7cec16789d7845e3950c6fdefa9e3298845e6`.
-It includes local changes beyond `ef62a79d`; it is not attributed to clean HEAD.
+`c86d2194333bbb578bbf8ea107c194faef14ff2c4c816ddef921991047e057d2`, a clean
+release build of `b6ed4ea4`.
 mlx-audio is pinned to 0.4.5; its cached model revision is
 `89e96d92ba34aca20b3e29fb10cc284097d1219f`.
 
-[Normalized results](2026-11-06/cross/summary.json) ·
-[System information](2026-11-06/cross/system_info.json) ·
-[Source, binaries and model inputs](2026-11-06/provenance.json) ·
-[Complete run record](2026-11-06/README.md).
+[Normalized results](2026-11-12/cross/summary.json) ·
+[All 50 timings](2026-11-12/cross/runs.json) ·
+[System information](2026-11-12/cross/system_info.json) ·
+[Complete run record](2026-11-12/README.md).
+The previous [2026-11-06 run](2026-11-06/README.md) is kept for reference.
 
 <p float="left">
   <img src="charts/benchmark-unified-latency.png" width="48%" alt="Measured inference latency by implementation" />

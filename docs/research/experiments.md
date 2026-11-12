@@ -22,6 +22,7 @@ This file collects the optimization experiment diaries.
 - [Speed Improvement Experiments — Round 13 (multi-token greedy verifier)](#speed-improvement-experiments--round-13-multi-token-greedy-verifier)
 - [Speed Improvement Experiments — Round 14 (A-layer micro-opts + B1 offline speculative decode)](#speed-improvement-experiments--round-14-a-layer-micro-opts--b1-offline-speculative-decode)
 - [Speed Improvement Experiments — Round 15 (exact-only audit follow-up)](#speed-improvement-experiments--round-15-exact-only-audit-follow-up)
+- [Speed Improvement Experiments — Round 16 (exact kernel follow-up)](#speed-improvement-experiments--round-16-exact-kernel-follow-up)
 - [Autoresearch Program Baseline Experiments](#autoresearch-program-baseline-experiments)
 - [Historical Commit Ledger (perf-opt-1 branch)](#historical-commit-ledger-perf-opt-1-branch)
 - [Opportunity Backlog](#opportunity-backlog)
@@ -8340,6 +8341,170 @@ on `1272-141231-0009` reproduces at `3c0b6f9a` (R15-10), while `76bf6add`
 suite as evidence about exact output. The file-streaming path on both builds
 returns partial content on the long samples (91.8% / 98.4% WER).
 [Full report and evidence](../benchmarks/results.md).
+
+---
+
+## Speed Improvement Experiments — Round 16 (exact kernel follow-up)
+
+Branch `r16-exact-kernels` from main `6a88ff62`. Source: the 2026-11-12
+read-only audit and its probes (Accelerate summation order, SME/NEON hybrid
+GEMM, batched INT8 interleave, conv_out stacking). Scope: changes whose
+output is bit-identical to main; numerics-changing ideas stay out.
+
+Method:
+- `Tensor identity` (new this round): a temporary trace hook, never
+  committed, hashes every encoder output and every prefill's KV rows (plus
+  the final hidden states of full prefills). Trace builds of the baseline and
+  the candidate are compared as multisets on 65 cases: 24 clips cut from
+  `clip60s.wav` so the trailing encoder chunk takes every edge width
+  (1, 4, 8, 9, 13, 50, 99 and 0 frames, at 3/10/28 s) at `-t 12` and `-t 1`;
+  `audio.wav`, `mixed_zh_en.wav` and three fixtures offline and at `-t 1`;
+  `clip60s` with `-S 10` (lockstep) and `--stream`; long-2min offline and
+  `-S 30`; the 12-file batch; push streaming of `clip28s` and `clip60s`.
+  Transcript checks alone are too weak: a negative control (R16-3 without its
+  1-row rule) changed encoder tensors on three clips while every transcript
+  stayed byte-identical.
+- `Transcripts`: the 7-case suite (`bench/r15/ident.sh`), 63 extra cases (the
+  inputs above), `multi60` and the aligner JSON (`srt_2min`).
+- `Speed`: `bench/r15/ab.py` interleaved pairs against the previous kept
+  binary, or the same binary with an environment toggle where one exists.
+  M5 Pro (5 + 10 cores), macOS 26.7, load average 4–17 during measurements
+  (an iOS simulator, BTLEServer, WindowServer). Under this load single-session
+  decode drifts by 10–30% between runs, so the phase that a change touches
+  (encoder, prefill, batch counters) is the primary metric.
+
+Audit facts this round relies on (scratchpad probes, results recorded here):
+- Accelerate's multi-row `cblas_sgemm` on this machine accumulates every
+  output in increasing k with one fused multiply-add chain, starting from 0
+  (`beta = 0`) or the existing C (`beta = 1`), with alpha applied afterwards.
+  Bitwise against a scalar `fmaf` reference on 26 engine shapes (prefill
+  q/k/v/o/gate/down, encoder q/o/fc1/fc2, conv_out, conv2/conv3, 2- and
+  7-row streaming deltas, attention tiles, mel), for 128-column pooled slices
+  and single calls alike. A 1-row call uses a different, unidentified order:
+  it differed from the multi-row result on every tested shape, while 2–8 rows
+  matched.
+- One thread nearly saturates a cluster's SME unit: a hand FMOPA kernel ran
+  0.91 G MAC/ms on 1 thread and 1.22 on 12.
+- The batched INT8 kernels streamed 80–85 GB/s of weights at B = 8: each
+  (row, session) dot was its own 2-accumulator SDOT chain (latency-bound).
+  A register-resident 2-row × B-session interleave reached 175–217 GB/s.
+
+### R16-3: one conv_out GEMM per group of chunks — KEPT
+
+- `Change`: the encoder projected each 100-frame chunk (13 rows) with its own
+  GEMM, re-streaming the 27.5 MB f32 `conv_out` weight 29 times for a 28 s
+  clip. Consecutive chunks now share one GEMM per group of at most 160 rows
+  (a 4.7 MB buffer per session); a 1-token chunk (only ever the trailing
+  partial chunk, `mel_frames % 100` in 1..8) keeps its own 1-row GEMM.
+- `Probe` (29 chunks, 12 threads): per chunk 14.25 ms, groups of 10 chunks
+  3.66 ms, one GEMM 3.08 ms; 1 thread 21.73 / 5.52 / 4.27 ms. Stacked rows
+  are bitwise equal to per-chunk rows except for 1-row GEMMs.
+- `Exactness`: 65/65 tensor-identical; 14/14 for both the no-BLAS and the
+  Android INT8 (`int8-encoder,int8-prefill`) builds, whose GEMMs are per-row
+  exact anyway. Negative control above. `projection_groups` unit test pins the
+  grouping (cover, cap, 1-row isolation).
+- `Results` (A = main, 5 pairs): encoder `audio.wav` 163 → 154 ms (−5.5%),
+  `clip28s` 165 → 157 ms (−4.9%); inference within noise. Lockstep cases were
+  noisy (12-file batch 2.4–4.1 s per run in both builds); long-2min `-S 30`
+  paired median −3.9% in a second 7-pair session.
+- `Decision`: kept (`46a5c6d2`).
+
+### R16-2: interleaved rows × sessions in the batched INT8 kernels — KEPT
+
+- `Change`: `matvec_int8_batched`, `swiglu_int8_batched` and
+  `argmax_int8_batched` advance two weight rows through k together for all
+  sessions (`int8_pair_row_sums::<NB>`), loading each weight vector once and
+  keeping `2 × NB` SDOT chains in flight. The session count is a const
+  generic (1..=8); a runtime-sized accumulator array spilled and was slower in
+  the C probe. Inputs with `in_dim % 16 != 0` keep the previous path.
+- `Exactness`: integer sums are exact and the float epilogues are the same
+  expressions. The batched-vs-single exactness tests now cover B = 1..8,
+  odd-offset row ranges and argmax ties (lowest index wins); transcripts
+  identical on the 7-case suite, 63 extra cases, `multi60` and the aligner
+  JSON.
+- `Results`: long-10min `-S 30` batch counters qkv 605 → 368 ms, ffn
+  1293 → 941 ms, lm_head 494 → 256 ms, batch decode 4698 → 3954 ms (attention
+  unchanged at ~1.28 s). Wall vs R16-3: long-10min `-S 30` −10.4%, 12 files
+  −8.9%, 60 files −5.4%, long-2min `-S 30` + aligner −4.3%, push streaming
+  −2.5% / −2.9% (verifier path), file `--stream` −0.8%.
+- `Decision`: kept (`49b51373`).
+
+### R16-1: SME + NEON hybrid GEMM for the decoder prefill — KEPT (prefill only)
+
+- `Change` (`kernels/sme.rs`): on CPUs with FEAT_SME and a 512-bit streaming
+  vector length, `linear_nobias_bf16_scratch` (decoder and aligner prefill)
+  replaces "widen bf16 into scratch + pool-sliced sgemm" with one pool
+  dispatch that packs X and W into 32-wide panels (widening bf16 exactly),
+  then four threads run a hand-written FMOPA kernel (`global_asm!`, streaming
+  mode) from the front of the column range while the others run a 4 × 16
+  NEON lane-FMA kernel from the back; NEON stops when 8 slots remain. Only
+  calls that took the pooled path, with `n % 16 == 0` and
+  `m × k ≤ 2^21`. `QWEN_ASR_SME=0` disables it; the CLI banner shows `SME`.
+- `Exactness`: both kernels form each output with one fused multiply-add per
+  k in increasing k from +0 — Accelerate's multi-row order. Unit tests pin
+  the kernels (NEON-only, SME-only, mixed, edge shapes) to a scalar FMA
+  reference and the hybrid to Accelerate on prefill shapes; 65/65 tensor
+  hashes identical; transcripts identical.
+- `Isolated bench` (12 threads, per call incl. packing): gate
+  (383 × 1024 → 3072) 0.845 vs 1.034 ms, down (383 × 3072 → 1024) 1.021 vs
+  1.346 ms; across m = 383…7800 the hybrid was 1.04–1.33× faster.
+- `Size limit`: every column item re-reads all packed rows. Without a limit,
+  the same binary with `QWEN_ASR_SME=0` vs on measured long-2min single pass
+  prefill +4.3% and long-10min +7.4% at load 7–11, but −4…−9% for long-2min
+  at load ~5: the extra row traffic makes large m load-sensitive. Packed rows
+  must fit an E-cluster L2 (`m × k ≤ 2^21`, 8 MB); larger calls stay on
+  Accelerate.
+- `Results` (same binary, `QWEN_ASR_SME=0` vs on, 3 pairs): `audio.wav`
+  prefill 206 → 174 ms (−15.5%), inference −3.5%, wall −3.8%; `clip28s`
+  prefill −13.7%, inference −4.5%; long-2min single pass prefill −4.2%;
+  long-10min single pass prefill unchanged (above the limit).
+- `Rejected variants` (measured, then removed):
+  - Encoder linears through the hybrid with per-call f32 weight packing:
+    isolated q 0.73–1.4× (noisy), fc1 0.96×, fc2 1.02×; in the pipeline the
+    encoder's sgemm time was unchanged. Packing costs 0.04–0.18 ms per call
+    and the encoder has no widening pass for it to replace, cancelling the
+    1.2–1.3× compute gain. Re-entry: panel-packed encoder weights at load,
+    with a row-major reconstruction for 1-row calls and an SME-only path for
+    `-t 1` workers.
+  - Conv2/conv3 through the hybrid (im2col columns as the k-major operand):
+    conv2 1.00×, conv3 0.42×. Column-only work items give conv3 (208
+    columns) too little parallelism; Accelerate slices the 480 channels.
+    Re-entry: channel × column work items.
+  - `BFMOPA` (bf16 activations): +6–8% over FMOPA in the probe and 1.6e-3
+    relative RMS error — not worth a numerics gate.
+- `Decision`: kept for the decoder/aligner prefill (`7e2bdc2b`).
+
+### Round 16 cumulative (main `6a88ff62` vs `7e2bdc2b`)
+
+Interleaved pairs (3, or 5 for long-2min single pass; 2 for the long
+batches), load average 5–17. All outputs, including the aligner JSON, are
+byte-identical.
+
+Full dev-clean (2,703 utterances, offline, 12 threads) with `7e2bdc2b`: every
+raw hypothesis matches the recorded main/R15 hash (2,703/2,703), corpus WER
+2.7591% (1,501 / 54,402 words) and CER 0.7542%, unchanged; no failures.
+
+| Case | Wall | Inference | Phase detail |
+|------|-----:|----------:|--------------|
+| `audio.wav` offline | −5.2% | −7.9% | encoder −3.7%, prefill −13.8% |
+| `clip28s` offline | −4.6% | −5.4% | encoder −3.8%, prefill −14.2% |
+| `clip4s` offline | −3.6% | −6.1% | prefill −12.7% |
+| `audio.wav --stream` | −4.7% | −5.8% | |
+| push streaming `clip28s` | −8.4% | −8.9% | |
+| long-2min single pass | −1.0% | −1.1% | encoder −4.3%, prefill −4.8%, decode ±0 |
+| long-2min `-S 30` | +1.7% (paired −1.3%) | | noisy |
+| long-2min `-S 30` + aligner | −1.9% | −1.9% | |
+| long-10min `-S 30` | −11.4% | −11.6% | |
+| 12-file batch | −9.0% | | |
+| 60-file batch | −8.4% | | |
+
+Open follow-ups, all exact-class: panel-packed encoder weights for the
+hybrid (estimated −15 ms per 28 s clip); channel × column items for the conv
+stem; row-group × column items so the hybrid stays cache-resident for long
+single passes; the batched attention stage (~1.3 s of the 4 s batch decode
+on long-10min `-S 30`). Unifying `linear_accumulate`'s bias order (which
+would make `-t 1` paths match `-t 12`) changes numerics on the
+single-threaded paths and needs an accuracy-gate decision.
 
 ---
 

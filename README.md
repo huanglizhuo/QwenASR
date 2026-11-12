@@ -9,47 +9,52 @@ Supports the 0.6B and 1.7B models, offline and streaming transcription, live cap
 ## Performance
 
 On an Apple M5 Pro, the current 0.6B CPU build transcribes the **28.16-second**
-benchmark clip in **581 ms inference / 693 ms end to end**
-(medians of 10 standalone runs): **48.47× realtime** by inference time.
+benchmark clip in **529 ms inference / 634 ms end to end**
+(medians of 10 standalone runs): **53.23× realtime** by inference time.
 
 | Implementation | Median inference | Median process wall | Inference throughput |
 |---|---:|---:|---:|
-| qwen-asr (current CPU) | 581.0 ms | 693.4 ms | 48.47× |
-| mlx-audio Python (GPU) | 746.3 ms | 1,630.4 ms | 37.73× |
-| second-state MLX (GPU) | 1,439.7 ms | 1,679.7 ms | 19.56× |
-| qwen-asr first port (CPU) | 1,647.0 ms | 1,984.2 ms | 17.10× |
-| pure C upstream (CPU) | 1,653.5 ms | 1,922.5 ms | 17.03× |
+| qwen-asr (current CPU) | 529.0 ms | 633.9 ms | 53.23× |
+| mlx-audio Python (GPU) | 659.5 ms | 1,462.6 ms | 42.70× |
+| second-state MLX (GPU) | 1,295.6 ms | 1,464.1 ms | 21.74× |
+| qwen-asr first port (CPU) | 1,591.5 ms | 1,908.8 ms | 17.69× |
+| pure C upstream (CPU) | 1,603.5 ms | 1,858.6 ms | 17.56× |
 
 <p float="left">
   <img src="docs/benchmarks/charts/benchmark-unified-latency.png" width="48%" alt="Measured inference latency comparison" />
   <img src="docs/benchmarks/charts/benchmark-unified-rtf.png" width="48%" alt="Measured inference throughput comparison" />
 </p>
 
-> Run started 2026-11-06; Apple M5 Pro, 15 cores, 48 GiB; 0.6B model family,
-> each implementation's default configuration. Current build is the
-> `r15-speedups` working tree, binary `de15033ee6e7…`, including uncommitted fixes.
-> Background load was present. Native inference boundaries and quantization
-> differ between implementations; wall time includes process startup/load/exit.
+> Run started 2026-11-12; Apple M5 Pro, 15 cores, 48 GiB; 0.6B model family,
+> each implementation's default configuration. Current build is commit
+> `b6ed4ea4` (Round 16), binary `c86d2194333b…`. Desktop processes kept
+> running, but the load was lighter than on November 6 and every implementation
+> measured faster. Native inference boundaries and quantization differ between
+> implementations; wall time includes process startup/load/exit.
 > See [versions, methodology and full comparison](docs/benchmarks/comparison.md).
 
-Long-audio results (three measured runs per side, alternating against main):
+Long-audio results (three measured runs per side, alternating against main `6a88ff62`):
 
 | Audio / mode | Median inference | Median process wall |
 |---|---:|---:|
-| 120.705 s offline | 4.18 s | 4.29 s |
-| 120.705 s segmented (-S30) | 2.52 s | 2.69 s |
-| 602.465 s offline | 57.67 s | 57.87 s |
-| 602.465 s segmented (-S30) | 11.13 s | 11.31 s |
+| 120.705 s offline | 4.04 s | 4.14 s |
+| 120.705 s segmented (-S30) | 2.45 s | 2.56 s |
+| 602.465 s offline | 48.16 s | 48.32 s |
+| 602.465 s segmented (-S30) | 9.74 s | 9.91 s |
 
-In the November 6 R15 benchmark, all **17 cases** matched its main baseline,
-including forced-alignment JSON.
-On full LibriSpeech dev-clean, both builds scored **2.7591% offline WER**.
-Of 2,703 utterances, 2,702 transcriptions matched exactly and one differed by
-a comma. All 2,703 matched after WER normalization.
+Against main, the 602 s segmented run was 10.8% faster. The other three cases
+stayed within run-to-run spread. The 602 s single pass is especially
+load-sensitive: 46.8–54.5 s wall here, versus 51.9–57.4 s for main.
 
-An unreleased source fix completes the final file `--stream` decode, which
-previously stopped after 32 tokens. November 7 follow-up results (three measured
-runs per side on a loaded M5 Pro, 0.6B model, 12 threads):
+Round 16 changes no output. On edge-length clips, encoder outputs and prefill
+KV tensors hash identically to main, and transcripts and forced-alignment JSON
+match byte for byte. All 2,703 LibriSpeech dev-clean transcripts match the
+November 6 full run byte for byte, so offline WER stays **2.7591%**.
+[Round 16 run record](docs/benchmarks/2026-11-12/README.md).
+
+qwen-asr 0.11.2 fixed the final file `--stream` decode, which previously
+stopped after 32 tokens. November 7 results, measured before Round 16 (three
+measured runs per side on a loaded M5 Pro, 0.6B model, 12 threads):
 
 | File `--stream` | WER before → after | Fixed median inference | Fixed median process wall |
 |---|---:|---:|---:|
@@ -95,7 +100,7 @@ Or download a pre-built binary from [GitHub Releases](https://github.com/huangli
 
 ## Why qwen-asr is fast
 
-- Hand-tuned NEON, Accelerate, and AMX-aware kernels for Apple Silicon
+- Hand-tuned NEON, SME, Accelerate, and AMX-aware kernels for Apple Silicon
 - Quantized decode weights and batched decoding paths that reduce memory traffic
 - Dynamic scheduling across performance and efficiency cores
 - No tensor framework, Python runtime, GPU dispatch, or server process
