@@ -84,3 +84,22 @@ as the cause of the historical +21% regression. See the
 validation remains pending.
 
 The November 6–7 rerun matched main on all 17 benchmark cases. On full dev-clean, both builds scored 2.7591% WER. All 2,703 normalized texts matched and one recorded transcription differed by a comma. [Full-set comparison](../benchmarks/results.md#accuracy).
+
+## 7. Round 16: exact kernel follow-up
+
+All three changes are bit-identical to the previous main: encoder outputs and
+prefill KV hashes match on 65 cases, and transcripts match on the 7-case suite
+plus 63 extra cases. Measurements and rejected variants are in
+[the experiment log](../research/experiments.md#speed-improvement-experiments--round-16-exact-kernel-follow-up).
+
+| Item | Retained implementation |
+|---|---|
+| R16-1 | On CPUs with SME (M4/M5), decoder and aligner prefill projections run a hybrid GEMM: a few pool threads drive a hand-written FMOPA kernel while the rest run a NEON kernel, both summing each output in increasing k with one fused multiply-add chain (the order Accelerate's multi-row sgemm uses). The bf16 weights are widened while being packed. Used while the packed activations fit an E-cluster L2; `QWEN_ASR_SME=0` disables it. |
+| R16-2 | The lockstep batched INT8 kernels advance two weight rows for all sessions together, so each weight vector is loaded once and up to 16 SDOT chains are in flight. |
+| R16-3 | The encoder's `conv_out` projection runs once per group of up to 160 rows instead of once per 13-row chunk; a 1-token trailing chunk keeps its own GEMM because Accelerate sums 1-row GEMMs in a different order. |
+
+Against the previous main: 28 s inputs −4.6…−5.2% wall (prefill −14%),
+push streaming −8.4%, long-10min `-S 30` −11.4%, 12/60-file batches
+−9.0% / −8.4%.
+All 2,703 full dev-clean hypotheses are byte-identical to the previous main
+(WER 2.7591%).
